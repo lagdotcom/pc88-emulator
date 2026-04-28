@@ -30,7 +30,13 @@ yarn test                # vitest (full suite)
 yarn test:z80            # SingleStepTests Z80 harness only
 yarn test:programs       # hand-assembled program tests (fast)
 yarn test:zex            # Frank Cringle's zexdoc.com (slow; sets ZEX=1)
+yarn zex zexdoc          # standalone zex runner with streamed output
+yarn zex zexall          # same, all-behaviour variant
 ```
+
+`test:zex` uses `cross-env` so the `ZEX=1` env var works on both
+POSIX and Windows shells. The dev environment is Windows; if you add
+new scripts that need an env var, route them through `cross-env`.
 
 The Z80 harness fetches per-opcode JSON test cases from
 [SingleStepTests/z80](https://github.com/SingleStepTests/z80) on first run
@@ -60,9 +66,11 @@ records (`{type, tStates, process}`). `Z80.runOneOp()`:
 3. Iterates the `mCycles` list, calling each `process(cpu)` and totalling
    `tStates`.
 
-Six opcode tables exist; all are exported from `src/chips/z80/ops.ts`:
-`opCodes`, `edOpCodes`, `cbOpCodes`, `ddOpCodes`, `fdOpCodes`,
-`ddcbOpCodes`, `fdcbOpCodes`.
+Seven opcode tables are declared and exported from
+`src/chips/z80/ops.ts`: `opCodes`, `edOpCodes`, `cbOpCodes`,
+`ddOpCodes`, `fdOpCodes`, `ddcbOpCodes`, `fdcbOpCodes`. The first
+five are populated; the DDCB/FDCB tables are placeholders (an empty
+`makeOpTable()`) — adding them is a known TODO.
 
 ### RegSet pattern
 
@@ -84,10 +92,11 @@ For (HL)-style memory access the `indexed_prefix(set)` and
 to `[fetch_disp_to_wz(set), internal_delay(5), mem_read("WZ", …)]`. WZ is
 loaded with `IX/IY + d` so MEMPTR comes out right.
 
-`buildCbTable(HL_SET)` produces `cbOpCodes`. `buildIndexedCbTable(IX_SET)`
-and `(IY_SET)` produce `ddcbOpCodes` / `fdcbOpCodes` — note these tables
-also implement the undocumented "register copy" side effect for non-(HL)
-target slots.
+`buildCbTable(HL_SET)` produces `cbOpCodes`. The DDCB/FDCB tables are
+not yet generated; when written, they will reuse `buildCbTable` with
+`IX_SET` / `IY_SET` plus the undocumented "register copy" side effect
+for non-(HL) target slots, and a different decode path that consumes
+the displacement byte before the op byte.
 
 ### Sean Young's H/L substitution rule
 
@@ -125,11 +134,22 @@ naturally on the next instruction.
 ### R register increment
 
 `Z80.incR()` increments the low 7 bits of R only — bit 7 is preserved
-because real silicon never auto-modifies it. The opcode_fetch_and M1
-cycle calls `incR()` unconditionally; DDCB/FDCB op-byte fetches
-deliberately use a no-op INT cycle as their first MCycle so R doesn't
-increment for the post-displacement byte (which is MR, not M1, on real
-hardware).
+because real silicon never auto-modifies it. The `opcode_fetch_and`
+M1 cycle calls `incR()` unconditionally.
+
+### Prefix dispatch
+
+`Z80.decode()` clears `cpu.prefix` as part of dispatching the
+prefixed opcode (the prefix is consumed by the M1 fetch, not left
+hanging). This matters for code running multiple instructions in a
+row — the SingleStepTests harness was masking the bug for a while
+by force-clearing prefix between tests, but real programs (LDIR
+loops, sequential CB ops on (HL)) ran into immediate corruption.
+
+Both the SingleStepTests harness and `runUntilHalt`/`runCpm` follow
+the same termination rule for multi-byte instructions: keep calling
+`runOneOp` while `cpu.prefix !== undefined` (each prefix byte sets
+it, the effective opcode clears it).
 
 ## Register file
 
@@ -170,21 +190,23 @@ PC-88 BIOS to boot, but not while the focus is correctness.
 
 ## Test status (as of last commit)
 
-| prefix    | sampled | passing |
-| --------- | ------- | ------- |
-| base      | 6800    | 6800    |
-| ED        | depends | mostly  |
-| CB        | 6400    | 6400    |
-| DD / FD   | 12800   | 12800   |
-| DDCB/FDCB | 12800   | 12800   |
+SingleStepTests sample size 25 per opcode → 40100 total cases run by
+`yarn test:z80`. **40023 / 40100** pass. The 77 remaining failures
+are entirely in the **H and PV flags during INIR/INDR/OTIR/OTDR
+repeating iterations**:
 
-ED is ~99.5% passing at the time of writing. The remaining open area is
-the **H and PV flags during INIR/INDR/OTIR/OTDR repeating iterations** —
-the X/Y rule and WZ rule are correct (X/Y from `(PC+1).high`,
-WZ = `PC + 1` after `PC -= 2`). H/PV during these repeating iterations
-follow undocumented hardware-traced rules involving B_post, the I/O
-"base" value, and possibly C-flag adjustment that aren't fully decoded in
-this codebase yet. The non-repeat INI/IND/OUTI/OUTD all pass.
+- The X/Y rule and WZ rule for these block I/O repeats *are* correct:
+  X/Y come from `(PC+1).high`, WZ = `PC + 1` after `PC -= 2`.
+- The H/PV rules during repeat follow undocumented hardware-traced
+  silicon quirks. Empirical fitting against the test data gets to
+  941/995 with a `(C ? bp_lo == 0 : bp_lo == 0xf)` rule for H, but
+  the remaining ~5% don't fit any simple formula over `(B_post,
+  C_flag, base, value)`. Cracking this needs a known-correct
+  reference implementation (FUSE / mame / Patrik Rak's z80core).
+
+All non-repeat INI/IND/OUTI/OUTD pass, as do every other ED, base,
+CB, DD, and FD opcode family. The `tests/programs/` hand-assembled
+suite passes 18/18.
 
 ## Style
 
@@ -222,12 +244,14 @@ propagates after a session restart.
 
 - The harness skips opcodes whose mnemonic starts with `PREFIX`
   (DD/FD/CB/ED themselves) — those don't have their own test files.
-- DDCB/FDCB filenames are `<prefix> cb __ XX.json` where `__` is a
-  placeholder for the displacement (which varies per case in the file).
-- `step()` calls `runOneOp` up to 5 times until `cpu.prefix` stops
-  changing, so a single test that exercises e.g. `DD CB d xx` runs three
-  dispatches in one harness invocation.
-- The harness clears `cpu.prefix` between tests defensively. Real-game
-  emulation will need the dispatcher to clear `prefix` itself once it
-  consumes the indirected opcode — currently `decode()` doesn't, and
-  there's a TODO note about it.
+- DDCB/FDCB filenames in SingleStepTests are `<prefix> cb __ XX.json`
+  where `__` is a placeholder for the displacement (which varies per
+  case in the file). Reading those needs the DDCB/FDCB tables to be
+  built first; they're empty placeholders for now.
+- `step()` calls `runOneOp` up to 5 times and stops when `cpu.prefix`
+  is undefined, which signals that the prefix has been consumed and
+  the effective opcode dispatched. A `DD CB d xx` instruction takes
+  three calls to `runOneOp` (DD prefix, CB sub-prefix, then the op
+  byte), all inside one `step()` invocation.
+- The harness still defensively force-clears `cpu.prefix` after each
+  test, which is harmless but no longer load-bearing.
