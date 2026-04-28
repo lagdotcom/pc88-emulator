@@ -57,6 +57,9 @@ export interface RunOptions {
   // tests). Defaults to ten million, which is enough for most small
   // programs but won't accidentally hang vitest forever.
   maxOps?: number;
+  // Print a progress message to console.error every N instructions
+  // (helps when running long programs like zexdoc). 0 disables.
+  progressEvery?: number;
 }
 
 export interface RunResult {
@@ -144,6 +147,8 @@ export function runCpm(
   let output = "";
   let ops = 0;
   let exitReason: CpmResult["exitReason"] = "max-ops";
+  const progressEvery = opts.progressEvery ?? 0;
+  const startTime = Date.now();
 
   while (ops < max) {
     if (cpu.regs.PC === 0x0005) {
@@ -182,6 +187,15 @@ export function runCpm(
     }
     cpu.runOneOp();
     ops++;
+    if (progressEvery > 0 && ops % progressEvery === 0) {
+      const sec = (Date.now() - startTime) / 1000;
+      const rate = (ops / sec / 1_000_000).toFixed(2);
+      // eslint-disable-next-line no-console
+      console.error(
+        `[cpm] ${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ` +
+          `${rate} Mops/s, output so far: ${JSON.stringify(output.slice(-80))}`,
+      );
+    }
   }
 
   return { output, ops, cycles: cpu.cycles, exitReason };
