@@ -567,7 +567,10 @@ function rst(vector: u16) {
     opcode_fetch,
     dec_sp,
     mem_write("SP", "PCH", dec_sp.process),
-    mem_write("SP", "PCL", (cpu) => (cpu.regs.PC = vector)),
+    mem_write("SP", "PCL", (cpu) => {
+      cpu.regs.PC = vector;
+      cpu.regs.WZ = vector;
+    }),
   ];
 }
 
