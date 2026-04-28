@@ -12,6 +12,8 @@
     "lint:fix": "eslint --fix",
     "test": "vitest",
     "test:z80": "vitest run tests/z80",
+    "test:programs": "vitest run tests/programs",
+    "test:zex": "ZEX=1 vitest run tests/programs/zexdoc.test.ts",
     "start": "tsx src/main.ts"
   },
   "devDependencies": {
