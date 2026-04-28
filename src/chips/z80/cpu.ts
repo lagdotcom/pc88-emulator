@@ -52,7 +52,10 @@ export class Z80 {
   iff1: boolean;
   iff2: boolean;
   im: number;
-  mCycleIndex: number;
+  // Set by an MCycle that wants the rest of an opcode's cycle list to be
+  // skipped (the conditional branch in JP/CALL/RET, etc). Read and reset
+  // by the per-opcode compiled `execute` function.
+  aborted: boolean;
   prefix: Prefix | undefined;
   // Q is a latch of "the F value last written by an instruction." It's read
   // by SCF and CCF to compute their X/Y bits as (A | Q) & {X,Y}. The value
@@ -72,7 +75,7 @@ export class Z80 {
     this.iff1 = false;
     this.iff2 = false;
     this.im = 0;
-    this.mCycleIndex = NaN;
+    this.aborted = false;
     this.q = 0;
     this.qWritten = false;
     this.regs = makeRegs();
@@ -104,21 +107,16 @@ export class Z80 {
     // will set qWritten if F is modified; if no flag write happened by the
     // end of dispatch, Q is cleared so the next instruction sees 0.
     this.qWritten = false;
-    const pc = this.regs.PC;
-    this.regs.OP = this.mem.read(pc);
-    this.regs.PC++;
+    const regs = this.regs;
+    const pc = regs.PC;
+    regs.OP = this.mem.read(pc);
+    regs.PC = pc + 1;
 
     const inst = this.decode();
     if (inst) {
-      this.mCycleIndex = 0;
-      while (this.mCycleIndex < inst.mCycles.length) {
-        const cycle = inst.mCycles[this.mCycleIndex]!;
-        cycle.process(this);
-        this.cycles += cycle.tStates;
-        this.mCycleIndex++;
-      }
+      inst.execute(this);
     } else {
-      log.warn(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
+      log.warn(`${word(pc)}: INVALID ${byte(regs.OP)}`);
     }
 
     if (!this.qWritten) this.q = 0;

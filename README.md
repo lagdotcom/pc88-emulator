@@ -118,11 +118,18 @@ Roughly ordered by what's blocking what.
   request source yet.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [ ] **Performance: per-opcode switch dispatcher**. Current
-  M-cycle list at ~3 Mops/s is correctness-focused; a giant per-
-  opcode switch with inlined code typically gets V8 to 50–100
-  Mops/s. Worth doing once correctness is settled — needed before
-  the user can wait through a real BIOS boot.
+- [ ] **Performance: per-opcode switch dispatcher**. Each opcode's
+  M-cycle list is now pre-composed into a single specialised
+  `execute(cpu)` function at table-build time, with a no-branch
+  fast path for the ~95% of opcodes that can't abort, and the
+  MemoryBus has a single-provider fast path that maps directly to
+  the underlying `Uint8Array`. The `tests/programs/bench.ts`
+  benchmark measures (Linux V8) ~33 Mops/s for a NOP-heavy loop,
+  ~24 Mops/s for register arithmetic, ~10 Mops/s for LDIR — up
+  from baselines of 28 / 12 / 7. Next step is a giant per-opcode
+  switch with inlined memory ops, which typically gets V8 to
+  50–100 Mops/s and would mean a real BIOS boots in seconds rather
+  than tens of seconds.
 
 ### Machine layer
 

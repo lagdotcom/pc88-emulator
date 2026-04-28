@@ -19,12 +19,185 @@ export interface MCycle {
   type: "M1" | "MR" | "MW" | "IOR" | "IOW" | "INT";
   tStates: number;
   process: (cpu: Z80) => void;
+  // Set on cycles that may set cpu.aborted to skip the rest of the
+  // opcode (the conditional check in JR/JP/CALL/RET). compile() omits
+  // the per-cycle abort check on the ~95% of opcodes that can't abort.
+  canAbort?: boolean;
 }
 
 export interface OpCode {
   code: u8;
   mnemonic: string;
   mCycles: MCycle[];
+  // Pre-composed dispatcher that runs all of mCycles in order, advances
+  // cpu.cycles, and respects cpu.aborted as an early-exit signal.
+  // Lifted out of runOneOp so each instruction's hot path is one indirect
+  // call into a length-specialised function instead of a generic loop.
+  execute: (cpu: Z80) => void;
+}
+
+// Compose a cycle list into a single function. Specialised for the common
+// short lengths (most opcodes have ≤4 cycles, the longest in this codebase
+// is CALL nn at 6) so V8 sees a flat function body it can inline aggressively.
+// When no cycle in the list can abort, emits a no-branch fast path that
+// adds the total t-states once at the end instead of per cycle.
+function compile(cycles: MCycle[]): (cpu: Z80) => void {
+  const n = cycles.length;
+  let totalT = 0;
+  let canAbort = false;
+  for (let i = 0; i < n; i++) {
+    totalT += cycles[i]!.tStates;
+    if (cycles[i]!.canAbort) canAbort = true;
+  }
+
+  if (!canAbort) {
+    if (n === 1) {
+      const a = cycles[0]!.process;
+      return (cpu) => {
+        a(cpu);
+        cpu.cycles += totalT;
+      };
+    }
+    if (n === 2) {
+      const a = cycles[0]!.process;
+      const b = cycles[1]!.process;
+      return (cpu) => {
+        a(cpu);
+        b(cpu);
+        cpu.cycles += totalT;
+      };
+    }
+    if (n === 3) {
+      const a = cycles[0]!.process;
+      const b = cycles[1]!.process;
+      const c = cycles[2]!.process;
+      return (cpu) => {
+        a(cpu);
+        b(cpu);
+        c(cpu);
+        cpu.cycles += totalT;
+      };
+    }
+    if (n === 4) {
+      const a = cycles[0]!.process;
+      const b = cycles[1]!.process;
+      const c = cycles[2]!.process;
+      const d = cycles[3]!.process;
+      return (cpu) => {
+        a(cpu);
+        b(cpu);
+        c(cpu);
+        d(cpu);
+        cpu.cycles += totalT;
+      };
+    }
+    if (n === 5) {
+      const a = cycles[0]!.process;
+      const b = cycles[1]!.process;
+      const c = cycles[2]!.process;
+      const d = cycles[3]!.process;
+      const e = cycles[4]!.process;
+      return (cpu) => {
+        a(cpu);
+        b(cpu);
+        c(cpu);
+        d(cpu);
+        e(cpu);
+        cpu.cycles += totalT;
+      };
+    }
+    const procs = cycles.map((c) => c.process);
+    return (cpu) => {
+      for (let i = 0; i < n; i++) procs[i]!(cpu);
+      cpu.cycles += totalT;
+    };
+  }
+
+  // Abortable variants — must add cycles per-step and check the flag.
+  if (n === 2) {
+    const a = cycles[0]!.process;
+    const tA = cycles[0]!.tStates;
+    const b = cycles[1]!.process;
+    const tB = cycles[1]!.tStates;
+    return (cpu) => {
+      a(cpu);
+      cpu.cycles += tA;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      b(cpu);
+      cpu.cycles += tB;
+    };
+  }
+  if (n === 3) {
+    const a = cycles[0]!.process;
+    const tA = cycles[0]!.tStates;
+    const b = cycles[1]!.process;
+    const tB = cycles[1]!.tStates;
+    const c = cycles[2]!.process;
+    const tC = cycles[2]!.tStates;
+    return (cpu) => {
+      a(cpu);
+      cpu.cycles += tA;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      b(cpu);
+      cpu.cycles += tB;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      c(cpu);
+      cpu.cycles += tC;
+    };
+  }
+  if (n === 4) {
+    const a = cycles[0]!.process;
+    const tA = cycles[0]!.tStates;
+    const b = cycles[1]!.process;
+    const tB = cycles[1]!.tStates;
+    const c = cycles[2]!.process;
+    const tC = cycles[2]!.tStates;
+    const d = cycles[3]!.process;
+    const tD = cycles[3]!.tStates;
+    return (cpu) => {
+      a(cpu);
+      cpu.cycles += tA;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      b(cpu);
+      cpu.cycles += tB;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      c(cpu);
+      cpu.cycles += tC;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+      d(cpu);
+      cpu.cycles += tD;
+    };
+  }
+  const procs = cycles.map((c) => c.process);
+  const tStates = cycles.map((c) => c.tStates);
+  return (cpu) => {
+    for (let i = 0; i < n; i++) {
+      procs[i]!(cpu);
+      cpu.cycles += tStates[i]!;
+      if (cpu.aborted) {
+        cpu.aborted = false;
+        return;
+      }
+    }
+  };
 }
 
 // A RegSet describes the substitution applied to opcodes where HL/H/L/(HL)
@@ -46,20 +219,26 @@ const op = (code: u8, mnemonic: string, mCycles: MCycle[]): OpCode => ({
   code,
   mnemonic,
   mCycles,
+  execute: compile(mCycles),
 });
 
+// Every opcode begins with an M1 fetch — runOneOp already read the byte at
+// PC into regs.OP and bumped PC, so this cycle just increments R and runs
+// the per-opcode post hook (e.g. setting prefix, reading flags, etc).
 const opcode_fetch_and = (
   post?: (cpu: Z80, op: u8) => void,
   tStates = 4,
 ): MCycle => ({
   type: "M1",
   tStates,
-  process: (cpu) => {
-    if (cpu.mCycleIndex > 0) cpu.regs.OP = cpu.mem.read(cpu.regs.PC++);
-
-    cpu.incR();
-    post?.(cpu, cpu.regs.OP);
-  },
+  process: post
+    ? (cpu) => {
+        cpu.incR();
+        post(cpu, cpu.regs.OP);
+      }
+    : (cpu) => {
+        cpu.incR();
+      },
 });
 const opcode_fetch = opcode_fetch_and();
 
@@ -720,14 +899,17 @@ const dec_b_set_skip_relative_jump: MCycle = {
   },
 };
 
-const fetch_displacement_respect_skip_jump = fetch_byte((cpu, data) => {
-  if (cpu.regs.OPx === skip_jump) {
-    cpu.mCycleIndex = Infinity;
-    cpu.regs.OPx = no_op;
-    return;
-  }
-  cpu.regs.WZ = asU16(asS8(data));
-});
+const fetch_displacement_respect_skip_jump: MCycle = {
+  ...fetch_byte((cpu, data) => {
+    if (cpu.regs.OPx === skip_jump) {
+      cpu.aborted = true;
+      cpu.regs.OPx = no_op;
+      return;
+    }
+    cpu.regs.WZ = asU16(asS8(data));
+  }),
+  canAbort: true,
+};
 
 const relative_jump_wz: MCycle = {
   type: "INT",
@@ -745,30 +927,40 @@ const jump_if_flag_not_set = (mask: u8) => (cpu: Z80) => {
   cpu.regs.OPx = cpu.regs.F & mask ? skip_jump : no_op;
 };
 
-const opcode_fetch_ret_if_flag_set = (flag: u8) =>
-  opcode_fetch_and((cpu) => {
-    if (!(cpu.regs.F & flag)) cpu.mCycleIndex = Infinity;
-  }, 5);
-const opcode_fetch_ret_if_flag_not_set = (flag: u8) =>
-  opcode_fetch_and((cpu) => {
-    if (cpu.regs.F & flag) cpu.mCycleIndex = Infinity;
-  }, 5);
-
-const fetch_w_goto_wz_respect_skip_jump = fetch_byte((cpu, data) => {
-  cpu.regs.W = data;
-  if (cpu.regs.OPx === skip_jump) {
-    cpu.mCycleIndex = Infinity;
-    cpu.regs.OPx = no_op;
-  } else cpu.regs.PC = cpu.regs.WZ;
+const opcode_fetch_ret_if_flag_set = (flag: u8): MCycle => ({
+  ...opcode_fetch_and((cpu) => {
+    if (!(cpu.regs.F & flag)) cpu.aborted = true;
+  }, 5),
+  canAbort: true,
+});
+const opcode_fetch_ret_if_flag_not_set = (flag: u8): MCycle => ({
+  ...opcode_fetch_and((cpu) => {
+    if (cpu.regs.F & flag) cpu.aborted = true;
+  }, 5),
+  canAbort: true,
 });
 
-const fetch_w_respect_skip_jump = fetch_byte((cpu, data) => {
-  cpu.regs.W = data;
-  if (cpu.regs.OPx === skip_jump) {
-    cpu.mCycleIndex = Infinity;
-    cpu.regs.OPx = no_op;
-  }
-});
+const fetch_w_goto_wz_respect_skip_jump: MCycle = {
+  ...fetch_byte((cpu, data) => {
+    cpu.regs.W = data;
+    if (cpu.regs.OPx === skip_jump) {
+      cpu.aborted = true;
+      cpu.regs.OPx = no_op;
+    } else cpu.regs.PC = cpu.regs.WZ;
+  }),
+  canAbort: true,
+};
+
+const fetch_w_respect_skip_jump: MCycle = {
+  ...fetch_byte((cpu, data) => {
+    cpu.regs.W = data;
+    if (cpu.regs.OPx === skip_jump) {
+      cpu.aborted = true;
+      cpu.regs.OPx = no_op;
+    }
+  }),
+  canAbort: true,
+};
 
 const add_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) =>
   do_add_a(cpu, cpu.regs[src], useCarry);
