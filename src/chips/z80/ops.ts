@@ -606,10 +606,7 @@ export const opCodes = makeOpTable(
   ]),
   op(0x0a, "LD A,(BC)", [
     opcode_fetch,
-    mem_read("BC", "A", (cpu) => {
-      cpu.regs.Z = cpu.regs.C + 1;
-      cpu.regs.W = cpu.regs.A;
-    }),
+    mem_read("BC", "A", (cpu) => (cpu.regs.WZ = cpu.regs.BC + 1)),
   ]),
   op(0x0b, "DEC BC", [opcode_fetch, dec_r16("BC")]),
   op(0x0c, "INC C", [opcode_fetch_and_inc_r8("C")]),
@@ -648,10 +645,7 @@ export const opCodes = makeOpTable(
   ]),
   op(0x1a, "LD A,(DE)", [
     opcode_fetch,
-    mem_read("DE", "A", (cpu) => {
-      cpu.regs.Z = cpu.regs.E + 1;
-      cpu.regs.W = cpu.regs.A;
-    }),
+    mem_read("DE", "A", (cpu) => (cpu.regs.WZ = cpu.regs.DE + 1)),
   ]),
   op(0x1b, "DEC DE", [opcode_fetch, dec_r16("DE")]),
   op(0x1c, "INC E", [opcode_fetch_and_inc_r8("E")]),
