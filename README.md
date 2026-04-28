@@ -118,18 +118,32 @@ Roughly ordered by what's blocking what.
   request source yet.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [ ] **Performance: per-opcode switch dispatcher**. Each opcode's
-  M-cycle list is now pre-composed into a single specialised
-  `execute(cpu)` function at table-build time, with a no-branch
-  fast path for the ~95% of opcodes that can't abort, and the
-  MemoryBus has a single-provider fast path that maps directly to
-  the underlying `Uint8Array`. The `tests/programs/bench.ts`
-  benchmark measures (Linux V8) ~33 Mops/s for a NOP-heavy loop,
-  ~24 Mops/s for register arithmetic, ~10 Mops/s for LDIR — up
-  from baselines of 28 / 12 / 7. Next step is a giant per-opcode
-  switch with inlined memory ops, which typically gets V8 to
-  50–100 Mops/s and would mean a real BIOS boots in seconds rather
-  than tens of seconds.
+- [ ] **Performance: per-opcode switch dispatcher**. The dispatcher
+  has been progressively unwrapped: each opcode's M-cycle list is
+  pre-composed at table-build time into a length-specialised
+  `execute(cpu)` function with no-branch and abortable variants;
+  the universal M1 fetch (read OP, advance PC, incR, charge 4
+  t-states) is hoisted into `runOneOp` so simple opcodes like NOP
+  have an empty execute body; and `MemoryBus` exposes a fast-path
+  `Uint8Array` for single-provider RAM setups. `tests/programs/
+  bench.ts` measures (Linux V8, warm):
+
+  ```
+                     baseline   now      gain
+    NOP×16 loop      28         46       +65%
+    ADD HL,DE loop   12         24       +103%
+    LDIR 256 bytes   7          10       +43%
+  ```
+
+  Next step is a hand-written giant per-opcode switch in `runOneOp`
+  with inlined register and memory accesses (no closures, no
+  property accesses through the regs accessors). That's the
+  standard pattern in 50–100 Mops/s Z80 emulators and would
+  collapse a real BIOS boot from tens of seconds to a couple. It
+  needs ~1600 opcode bodies (256 base + 256 ED + 256 CB + 256 DD
+  + 256 FD + 256 DDCB + 256 FDCB) — most of them generated from
+  templates the way `buildOpTable` does today, but emitted as raw
+  function bodies rather than MCycle arrays.
 
 ### Machine layer
 
