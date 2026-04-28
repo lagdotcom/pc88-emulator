@@ -357,7 +357,7 @@ function addr_mnemonic(set: RegSet): string {
   return set.addr === "hl" ? "HL" : `${set.rp}+d`;
 }
 
-function do_add_a(cpu: Z80, value: u8, useCarry: boolean) {
+export function do_add_a(cpu: Z80, value: u8, useCarry: boolean) {
   const a = cpu.regs.A;
   const c = useCarry ? carry(cpu.regs.F) : 0;
   const sum = a + value + c;
@@ -375,7 +375,7 @@ function do_add_a(cpu: Z80, value: u8, useCarry: boolean) {
   });
 }
 
-function do_sub_a(cpu: Z80, value: u8, useCarry: boolean) {
+export function do_sub_a(cpu: Z80, value: u8, useCarry: boolean) {
   const a = cpu.regs.A;
   const c = useCarry ? carry(cpu.regs.F) : 0;
   const diff = a - value - c;
@@ -393,7 +393,7 @@ function do_sub_a(cpu: Z80, value: u8, useCarry: boolean) {
   });
 }
 
-function do_cp_a(cpu: Z80, value: u8) {
+export function do_cp_a(cpu: Z80, value: u8) {
   const a = cpu.regs.A;
   const diff = a - value;
   const result = diff & 0xff;
@@ -410,7 +410,7 @@ function do_cp_a(cpu: Z80, value: u8) {
   });
 }
 
-function inc8(cpu: Z80, old: u8): u8 {
+export function inc8(cpu: Z80, old: u8): u8 {
   const result = (old + 1) & 0xff;
   cpu.updateFlags({
     n: 0,
@@ -424,7 +424,7 @@ function inc8(cpu: Z80, old: u8): u8 {
   return result;
 }
 
-function dec8(cpu: Z80, old: u8): u8 {
+export function dec8(cpu: Z80, old: u8): u8 {
   const result = (old - 1) & 0xff;
   cpu.updateFlags({
     n: 1,
@@ -438,7 +438,7 @@ function dec8(cpu: Z80, old: u8): u8 {
   return result;
 }
 
-function do_add16(cpu: Z80, dst: Reg16, value: u16) {
+export function do_add16(cpu: Z80, dst: Reg16, value: u16) {
   const old = cpu.regs[dst];
   cpu.regs.WZ = (old + 1) & 0xffff;
   const sum = old + value;
@@ -517,7 +517,7 @@ const sbc_hl_rr = (src: Reg16): MCycle => ({
 });
 
 // NEG: A = -A. Equivalent to "SUB A from 0" with full flag effect.
-function do_neg(cpu: Z80) {
+export function do_neg(cpu: Z80) {
   const a = cpu.regs.A;
   const diff = 0 - a;
   const result = diff & 0xff;
@@ -535,7 +535,7 @@ function do_neg(cpu: Z80) {
 }
 
 // LD A,I and LD A,R both load A and update flags including PV from IFF2.
-function do_ld_a_ir(cpu: Z80, value: u8) {
+export function do_ld_a_ir(cpu: Z80, value: u8) {
   cpu.regs.A = value;
   cpu.updateFlags({
     n: 0,
@@ -551,7 +551,7 @@ function do_ld_a_ir(cpu: Z80, value: u8) {
 // RRD: rotate the lower nibble of A and the (HL) byte one digit to the
 // right.  A_lo <- (HL)_lo;  (HL)_lo <- (HL)_hi;  (HL)_hi <- old A_lo.
 // A's high nibble is unchanged. Flags are derived from the new A.
-function do_rrd(cpu: Z80, value: u8) {
+export function do_rrd(cpu: Z80, value: u8) {
   const aLo = cpu.regs.A & 0x0f;
   const aHi = cpu.regs.A & 0xf0;
   const newMem = (aLo << 4) | (value >> 4);
@@ -572,7 +572,7 @@ function do_rrd(cpu: Z80, value: u8) {
 
 // RLD: rotate the lower nibble of A and the (HL) byte one digit to the
 // left.  A_lo <- (HL)_hi;  (HL)_hi <- (HL)_lo;  (HL)_lo <- old A_lo.
-function do_rld(cpu: Z80, value: u8) {
+export function do_rld(cpu: Z80, value: u8) {
   const aLo = cpu.regs.A & 0x0f;
   const aHi = cpu.regs.A & 0xf0;
   const newMem = ((value << 4) | aLo) & 0xff;
@@ -709,7 +709,7 @@ const dec_opx: MCycle = {
   process: (cpu) => (cpu.regs.OPx = dec8(cpu, cpu.regs.OPx)),
 };
 
-function rla(cpu: Z80) {
+export function rla(cpu: Z80) {
   const c = cpu.regs.A >> 7;
   cpu.regs.A = (cpu.regs.A << 1) | carry(cpu.regs.F);
   cpu.updateFlags({
@@ -721,7 +721,7 @@ function rla(cpu: Z80) {
   });
 }
 
-function rlca(cpu: Z80) {
+export function rlca(cpu: Z80) {
   const c = cpu.regs.A >> 7;
   cpu.regs.A = (cpu.regs.A << 1) | c;
   cpu.updateFlags({
@@ -733,7 +733,7 @@ function rlca(cpu: Z80) {
   });
 }
 
-function rra(cpu: Z80) {
+export function rra(cpu: Z80) {
   const c = cpu.regs.A & 0x01;
   cpu.regs.A = (cpu.regs.A >> 1) | (carry(cpu.regs.F) << 7);
   cpu.updateFlags({
@@ -745,7 +745,7 @@ function rra(cpu: Z80) {
   });
 }
 
-function rrca(cpu: Z80) {
+export function rrca(cpu: Z80) {
   const c = cpu.regs.A & 0x01;
   cpu.regs.A = (cpu.regs.A >> 1) | (c << 7);
   cpu.updateFlags({
@@ -763,11 +763,11 @@ function exchange_regs(cpu: Z80, a: Reg16, b: Reg16) {
   cpu.regs[b] = temp;
 }
 
-function ex_af(cpu: Z80) {
+export function ex_af(cpu: Z80) {
   exchange_regs(cpu, "AF", "AF_");
 }
 
-function cpl(cpu: Z80) {
+export function cpl(cpu: Z80) {
   cpu.regs.A = ~cpu.regs.A;
   cpu.updateFlags({
     n: 1,
@@ -777,7 +777,7 @@ function cpl(cpu: Z80) {
   });
 }
 
-function daa(cpu: Z80) {
+export function daa(cpu: Z80) {
   const oldA = cpu.regs.A;
   const f = cpu.regs.F;
   const c = (f & FLAG_C) !== 0;
@@ -807,7 +807,7 @@ function daa(cpu: Z80) {
   });
 }
 
-function scf(cpu: Z80) {
+export function scf(cpu: Z80) {
   // F[5,3] = (A | (F ^ Q)) & 0x28 — bits "leak" from F when the previous
   // instruction didn't write F (Q=0 so F^Q = F), and zero out when it did
   // (Q=F so F^Q = 0, leaving only A).
@@ -821,7 +821,7 @@ function scf(cpu: Z80) {
   });
 }
 
-function ccf(cpu: Z80) {
+export function ccf(cpu: Z80) {
   const c = carry(cpu.regs.F);
   const xy = cpu.regs.A | (cpu.regs.F ^ cpu.q);
   cpu.updateFlags({
@@ -833,7 +833,7 @@ function ccf(cpu: Z80) {
   });
 }
 
-function halt(cpu: Z80) {
+export function halt(cpu: Z80) {
   cpu.halted = true;
   // now we wait until an interrupt is handled, then do cpu.regs.PC++
 }
@@ -844,19 +844,19 @@ const jp_hl =
     cpu.regs.PC = cpu.regs[set.rp];
   };
 
-function di(cpu: Z80) {
+export function di(cpu: Z80) {
   cpu.iff1 = false;
   cpu.iff2 = false;
   cpu.eiDelay = false;
 }
 
-function ei(cpu: Z80) {
+export function ei(cpu: Z80) {
   cpu.iff1 = true;
   cpu.iff2 = true;
   cpu.eiDelay = true;
 }
 
-function exx(cpu: Z80) {
+export function exx(cpu: Z80) {
   exchange_regs(cpu, "BC", "BC_");
   exchange_regs(cpu, "DE", "DE_");
   exchange_regs(cpu, "HL", "HL_");
@@ -864,23 +864,23 @@ function exx(cpu: Z80) {
 
 // EX DE,HL is unaffected by DD/FD prefixes — it always swaps DE with HL,
 // not IX/IY. (Sean Young, "The Undocumented Z80 Documented".)
-function ex_de_hl(cpu: Z80) {
+export function ex_de_hl(cpu: Z80) {
   exchange_regs(cpu, "DE", "HL");
 }
 
-function prefix_ed(cpu: Z80) {
+export function prefix_ed(cpu: Z80) {
   cpu.prefix = { type: "ED" };
 }
 
-function prefix_dd(cpu: Z80) {
+export function prefix_dd(cpu: Z80) {
   cpu.prefix = { type: "DD" };
 }
 
-function prefix_fd(cpu: Z80) {
+export function prefix_fd(cpu: Z80) {
   cpu.prefix = { type: "FD" };
 }
 
-function prefix_cb(cpu: Z80) {
+export function prefix_cb(cpu: Z80) {
   cpu.prefix = { type: "CB" };
 }
 
@@ -998,7 +998,7 @@ const cp_a_r8 = (src: Reg8) => (cpu: Z80) => do_cp_a(cpu, cpu.regs[src]);
 
 const cp_a_imm = (cpu: Z80, data: u8) => do_cp_a(cpu, data);
 
-function and_a(cpu: Z80, value: u8) {
+export function and_a(cpu: Z80, value: u8) {
   const result = cpu.regs.A & value;
   cpu.regs.A = result;
   cpu.updateFlags({
@@ -1014,7 +1014,7 @@ function and_a(cpu: Z80, value: u8) {
 }
 const and_a_r8 = (src: Reg8) => (cpu: Z80) => and_a(cpu, cpu.regs[src]);
 
-function or_a(cpu: Z80, value: u8) {
+export function or_a(cpu: Z80, value: u8) {
   const result = cpu.regs.A | value;
   cpu.regs.A = result;
   cpu.updateFlags({
@@ -1030,7 +1030,7 @@ function or_a(cpu: Z80, value: u8) {
 }
 const or_a_r8 = (src: Reg8) => (cpu: Z80) => or_a(cpu, cpu.regs[src]);
 
-function xor_a(cpu: Z80, value: u8) {
+export function xor_a(cpu: Z80, value: u8) {
   const result = cpu.regs.A ^ value;
   cpu.regs.A = result;
   cpu.updateFlags({

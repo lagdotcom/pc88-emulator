@@ -12,6 +12,7 @@ import {
   fdOpCodes,
   opCodes,
 } from "./ops.js";
+import { dispatchBase } from "./ops2.js";
 import {
   FLAG_C,
   FLAG_H,
@@ -56,6 +57,15 @@ export class Z80 {
   // skipped (the conditional branch in JP/CALL/RET, etc). Read and reset
   // by the per-opcode compiled `execute` function.
   aborted: boolean;
+  // When true, runOneOp routes the unprefixed opcode through ops2's
+  // hand-written giant switch instead of the table-driven dispatcher.
+  // The two paths are equivalent — same flag rules, same WZ updates —
+  // but the switch path is roughly 2-3x faster on simple opcodes by
+  // avoiding the indirect call through `inst.execute` and the closure
+  // wrappers around each MCycle. Off by default so the behaviour we
+  // ship matches what's been tested through SingleStepTests via the
+  // table; flip on per-Z80-instance once you trust ops2.
+  useDispatchBase: boolean;
   prefix: Prefix | undefined;
   // Q is a latch of "the F value last written by an instruction." It's read
   // by SCF and CCF to compute their X/Y bits as (A | Q) & {X,Y}. The value
@@ -76,6 +86,7 @@ export class Z80 {
     this.iff2 = false;
     this.im = 0;
     this.aborted = false;
+    this.useDispatchBase = false;
     this.q = 0;
     this.qWritten = false;
     this.regs = makeRegs();
@@ -133,104 +144,11 @@ export class Z80 {
       this.cycles += 4;
     }
 
-    // Inlined hot-path for unprefixed common opcodes. The complete table
-    // is still in ops.ts; this is only a peephole for ops the bench /
-    // zexdoc spend most of their time in. Anything not handled here
-    // falls through to the table-driven dispatcher. Every case ends with
-    // `break` and the post-switch tail handles the Q-register reset and
-    // is shared with the table-dispatch path.
-    let handled = false;
-    if (prefixType === undefined) {
-      handled = true;
-      const op = regs.OP;
-      switch (op) {
-        case 0x00:
-          // NOP
-          break;
-        case 0x03:
-          regs.BC = regs.BC + 1;
-          this.cycles += 2;
-          break;
-        case 0x0b:
-          regs.BC = regs.BC - 1;
-          this.cycles += 2;
-          break;
-        case 0x10: {
-          // DJNZ d
-          const b = (regs.B - 1) & 0xff;
-          regs.B = b;
-          const d = this.mem.read(regs.PC);
-          regs.PC = regs.PC + 1;
-          this.cycles += 4;
-          if (b !== 0) {
-            const target = (regs.PC + (d < 0x80 ? d : d - 0x100)) & 0xffff;
-            regs.WZ = target;
-            regs.PC = target;
-            this.cycles += 5;
-          } else {
-            this.cycles += 1;
-          }
-          break;
-        }
-        case 0x13:
-          regs.DE = regs.DE + 1;
-          this.cycles += 2;
-          break;
-        case 0x18: {
-          // JR d
-          const d = this.mem.read(regs.PC);
-          regs.PC = regs.PC + 1;
-          const target = (regs.PC + (d < 0x80 ? d : d - 0x100)) & 0xffff;
-          regs.WZ = target;
-          regs.PC = target;
-          this.cycles += 8;
-          break;
-        }
-        case 0x19: {
-          // ADD HL,DE
-          const old = regs.HL;
-          const value = regs.DE;
-          regs.WZ = (old + 1) & 0xffff;
-          const sum = old + value;
-          const result = sum & 0xffff;
-          regs.HL = result;
-          const high = result >> 8;
-          this.updateFlags({
-            c: sum > 0xffff,
-            n: 0,
-            h: ((old & 0xfff) + (value & 0xfff)) & 0x1000,
-            x: high & FLAG_X,
-            y: high & FLAG_Y,
-          });
-          this.cycles += 7;
-          break;
-        }
-        case 0x23:
-          regs.HL = regs.HL + 1;
-          this.cycles += 2;
-          break;
-        case 0x2b:
-          regs.HL = regs.HL - 1;
-          this.cycles += 2;
-          break;
-        case 0x33:
-          regs.SP = regs.SP + 1;
-          this.cycles += 2;
-          break;
-        case 0x3b:
-          regs.SP = regs.SP - 1;
-          this.cycles += 2;
-          break;
-        case 0x76:
-          // HALT
-          this.halted = true;
-          break;
-        default:
-          handled = false;
-      }
-    }
-
-    if (!handled) {
+    if (this.useDispatchBase && prefixType === undefined) {
+      // ops2.dispatchBase handles every unprefixed opcode inline. Nothing
+      // further to do here.
+      dispatchBase(this);
+    } else {
       const inst = this.decode();
       if (inst) {
         inst.execute(this);
