@@ -84,6 +84,8 @@ export function loadState(h: Harness, st: State): void {
   cpu.iff2 = !!st.iff2;
   cpu.im = st.im;
   cpu.eiDelay = !!st.ei;
+  cpu.q = st.q;
+  cpu.qWritten = false;
   cpu.cycles = 0;
   cpu.halted = false;
   cpu.prefix = undefined;

@@ -54,6 +54,12 @@ export class Z80 {
   im: number;
   mCycleIndex: number;
   prefix: Prefix | undefined;
+  // Q is a latch of "the F value last written by an instruction." It's read
+  // by SCF and CCF to compute their X/Y bits as (A | Q) & {X,Y}. The value
+  // visible at the start of an instruction is whatever the previous
+  // instruction left there: F if F was written, 0 otherwise.
+  q: u8;
+  qWritten: boolean;
   regs: Z80Regs;
 
   constructor(
@@ -67,6 +73,8 @@ export class Z80 {
     this.iff2 = false;
     this.im = 0;
     this.mCycleIndex = NaN;
+    this.q = 0;
+    this.qWritten = false;
     this.regs = makeRegs();
   }
 
@@ -84,12 +92,18 @@ export class Z80 {
     if (s || (!isDefined(s) && f & FLAG_S)) flags |= FLAG_S;
 
     this.regs.F = flags;
+    this.q = flags;
+    this.qWritten = true;
   }
 
   runOneOp() {
     // Consume any pending EI grace period at the start of each instruction.
     // The EI handler will re-set eiDelay during dispatch if this opcode is EI.
     this.eiDelay = false;
+    // Q remains visible to this instruction (SCF/CCF read it). updateFlags
+    // will set qWritten if F is modified; if no flag write happened by the
+    // end of dispatch, Q is cleared so the next instruction sees 0.
+    this.qWritten = false;
     const pc = this.regs.PC;
     this.regs.OP = this.mem.read(pc);
     this.regs.PC++;
@@ -107,6 +121,8 @@ export class Z80 {
     } else {
       log.debug(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
     }
+
+    if (!this.qWritten) this.q = 0;
   }
 
   decode() {

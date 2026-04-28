@@ -332,23 +332,28 @@ function daa(cpu: Z80) {
 }
 
 function scf(cpu: Z80) {
+  // F[5,3] = (A | (F ^ Q)) & 0x28 — bits "leak" from F when the previous
+  // instruction didn't write F (Q=0 so F^Q = F), and zero out when it did
+  // (Q=F so F^Q = 0, leaving only A).
+  const xy = cpu.regs.A | (cpu.regs.F ^ cpu.q);
   cpu.updateFlags({
     c: 1,
     n: 0,
-    x: cpu.regs.A & FLAG_X,
+    x: xy & FLAG_X,
     h: 0,
-    y: cpu.regs.A & FLAG_Y,
+    y: xy & FLAG_Y,
   });
 }
 
 function ccf(cpu: Z80) {
   const c = carry(cpu.regs.F);
+  const xy = cpu.regs.A | (cpu.regs.F ^ cpu.q);
   cpu.updateFlags({
     c: !c,
     n: 0,
-    x: cpu.regs.A & FLAG_X,
+    x: xy & FLAG_X,
     h: c,
-    y: cpu.regs.A & FLAG_Y,
+    y: xy & FLAG_Y,
   });
 }
 
