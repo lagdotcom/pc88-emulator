@@ -107,6 +107,11 @@ export class Z80 {
     // will set qWritten if F is modified; if no flag write happened by the
     // end of dispatch, Q is cleared so the next instruction sees 0.
     this.qWritten = false;
+    // Cycle-list early-abort flag: belongs to the current instruction only.
+    // The compiled execute function resets it on early return, but the
+    // last-cycle abort case never gets there (it returns through the
+    // bottom of the body), so we reset here too.
+    this.aborted = false;
     const regs = this.regs;
     const pc = regs.PC;
     regs.OP = this.mem.read(pc);
