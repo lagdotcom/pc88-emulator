@@ -363,6 +363,129 @@ describe("16-bit arithmetic via ADC HL,DE", () => {
   });
 });
 
+describe("nested CALL / RET", () => {
+  // outer calls middle, middle calls inner. inner sets A=1,
+  // middle increments A, outer increments A again. End: A=3, SP back
+  // to start.
+  //         CALL outer        ; 0x0100 → 0x0108
+  //         HALT              ; 0x0103
+  //         ...
+  // outer:  CALL middle       ; 0x0108 → 0x0110
+  //         INC  A
+  //         RET               ; 0x010c (CALL=3, INC=1, RET=1, total=5)
+  // middle: CALL inner        ; 0x0110 → 0x0118
+  //         INC  A
+  //         RET               ; 0x0114
+  // inner:  LD   A,1
+  //         RET               ; 0x0118
+  it("returns A=3 with SP restored", () => {
+    const h = makeProgramHarness();
+    runUntilHalt(
+      h,
+      [
+        // 0x0100
+        0xcd, 0x08, 0x01,    // CALL outer
+        0x76,                // HALT
+        0x00, 0x00, 0x00, 0x00,
+        // 0x0108: outer
+        0xcd, 0x10, 0x01,    // CALL middle
+        0x3c,                // INC A
+        0xc9,                // RET
+        0x00, 0x00, 0x00,
+        // 0x0110: middle
+        0xcd, 0x18, 0x01,    // CALL inner
+        0x3c,                // INC A
+        0xc9,                // RET
+        0x00, 0x00, 0x00,
+        // 0x0118: inner
+        0x3e, 0x01,          // LD A,1
+        0xc9,                // RET
+      ],
+      { loadAddr: 0x0100, sp: 0xffff },
+    );
+    expect(h.cpu.regs.A).toBe(3);
+    expect(h.cpu.regs.SP).toBe(0xffff);
+  });
+});
+
+describe("RST 0x18 reaches the rst handler", () => {
+  // RST n is a one-byte CALL n. Plant a handler at 0x0018, fire RST 18,
+  // and verify the handler ran.
+  it("handler increments B; final B=1", () => {
+    const h = makeProgramHarness();
+    runUntilHalt(
+      h,
+      [
+        // 0x0000-0x0017: low memory contains the RST 18 stub at 0x18.
+        // The first 24 bytes get filled with NOP; we put HALT at 0x16
+        // so if the RST handler returns to the wrong place we trap.
+        ...new Array(0x0018).fill(0x00),
+        // 0x0018: RST 18 handler
+        0x04,    // INC B
+        0xc9,    // RET
+        // padding to 0x0100
+        ...new Array(0x0100 - 0x001a).fill(0x00),
+        // 0x0100: program
+        0x06, 0x00,    // LD B,0
+        0xdf,          // RST 18
+        0x76,          // HALT
+      ],
+      { loadAddr: 0x0000, startPc: 0x0100, sp: 0xffff },
+    );
+    expect(h.cpu.regs.B).toBe(1);
+    expect(h.cpu.regs.SP).toBe(0xffff);
+  });
+});
+
+describe("conditional JP and JR via JR Z / JR NZ", () => {
+  // Jump table flow control: execute one of two paths based on a
+  // comparison.
+  //         LD   A,5
+  //         CP   5
+  //         JR   Z,equal
+  //         LD   A,0xff      ; not-equal path: A = 0xff
+  //         JR   end
+  // equal:  LD   A,0x42      ; equal path: A = 0x42
+  // end:    HALT
+  it("JR Z taken when Z set", () => {
+    const h = makeProgramHarness();
+    runUntilHalt(
+      h,
+      [
+        0x3e, 0x05,          // LD A,5
+        0xfe, 0x05,           // CP 5
+        0x28, 0x04,           // JR Z, +4
+        0x3e, 0xff,           // LD A,0xff
+        0x18, 0x02,           // JR +2
+        // equal:
+        0x3e, 0x42,           // LD A,0x42
+        // end:
+        0x76,                 // HALT
+      ],
+      { loadAddr: 0x0100 },
+    );
+    expect(h.cpu.regs.A).toBe(0x42);
+  });
+
+  it("JR Z not taken when Z clear", () => {
+    const h = makeProgramHarness();
+    runUntilHalt(
+      h,
+      [
+        0x3e, 0x05,           // LD A,5
+        0xfe, 0x06,           // CP 6
+        0x28, 0x04,           // JR Z, +4
+        0x3e, 0xff,           // LD A,0xff
+        0x18, 0x02,           // JR +2
+        0x3e, 0x42,           // LD A,0x42
+        0x76,                 // HALT
+      ],
+      { loadAddr: 0x0100 },
+    );
+    expect(h.cpu.regs.A).toBe(0xff);
+  });
+});
+
 describe("BIT / RES / SET on (HL)", () => {
   // Walk the bits of a memory byte:
   //         LD   HL,0x0110
