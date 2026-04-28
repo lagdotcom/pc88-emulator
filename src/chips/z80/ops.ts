@@ -451,6 +451,10 @@ function prefix_fd(cpu: Z80) {
   cpu.prefix = { type: "FD" };
 }
 
+function prefix_cb(cpu: Z80) {
+  cpu.prefix = { type: "CB" };
+}
+
 const no_op: u8 = 0;
 const skip_jump: u8 = 0xe0;
 
@@ -1148,7 +1152,7 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xc8, "RET z", ret(opcode_fetch_ret_if_flag_set(FLAG_Z))),
   op(0xc9, "RET", ret()),
   op(0xca, "JP z,nn", jp(jump_if_flag_set(FLAG_Z))),
-  // 0xcb: bit ops
+  op(0xcb, "PREFIX CB", [opcode_fetch_and(prefix_cb)]),
   op(0xcc, "CALL z,nn", call(jump_if_flag_set(FLAG_Z))),
   op(0xcd, "CALL nn", call()),
   op(0xce, "ADC A,n", [opcode_fetch, fetch_byte(add_a_imm(true))]),
@@ -1274,7 +1278,262 @@ export const edOpCodes = makeOpTable(
   op(0x69, "OUT (C),L", [opcode_fetch, io_write_bc("L")]),
 );
 
-export const cbOpCodes = makeOpTable();
+// CB-prefixed opcode generation. The 256 ops divide into four groups by the
+// upper two bits: rotates/shifts (0x00–0x3f), BIT (0x40–0x7f), RES (0x80–
+// 0xbf), SET (0xc0–0xff). Each group has 8 sub-ops × 8 targets where the
+// target is B/C/D/E/H/L/(HL)/A indexed by op & 7.
+
+type CbOp = (cpu: Z80, value: u8) => u8;
+
+function setShiftFlags(cpu: Z80, result: u8, carry: number) {
+  cpu.updateFlags({
+    c: carry,
+    n: 0,
+    pv: parity(result),
+    h: 0,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+}
+
+const cb_rlc: CbOp = (cpu, v) => {
+  const c = (v >> 7) & 1;
+  const result = ((v << 1) | c) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_rrc: CbOp = (cpu, v) => {
+  const c = v & 1;
+  const result = ((v >> 1) | (c << 7)) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_rl: CbOp = (cpu, v) => {
+  const carryIn = cpu.regs.F & FLAG_C ? 1 : 0;
+  const c = (v >> 7) & 1;
+  const result = ((v << 1) | carryIn) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_rr: CbOp = (cpu, v) => {
+  const carryIn = cpu.regs.F & FLAG_C ? 0x80 : 0;
+  const c = v & 1;
+  const result = ((v >> 1) | carryIn) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_sla: CbOp = (cpu, v) => {
+  const c = (v >> 7) & 1;
+  const result = (v << 1) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_sra: CbOp = (cpu, v) => {
+  const c = v & 1;
+  const result = ((v >> 1) | (v & 0x80)) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+// Undocumented: Shift Left Logical (also called SLI/SLS). Bit 0 is set to 1
+// instead of cleared. Real software occasionally relies on this.
+const cb_sll: CbOp = (cpu, v) => {
+  const c = (v >> 7) & 1;
+  const result = ((v << 1) | 1) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const cb_srl: CbOp = (cpu, v) => {
+  const c = v & 1;
+  const result = (v >> 1) & 0xff;
+  setShiftFlags(cpu, result, c);
+  return result;
+};
+
+const CB_OPS: ReadonlyArray<CbOp> = [
+  cb_rlc,
+  cb_rrc,
+  cb_rl,
+  cb_rr,
+  cb_sla,
+  cb_sra,
+  cb_sll,
+  cb_srl,
+];
+const CB_OP_NAMES = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SLL", "SRL"];
+
+// Targets at offset 0..7 in any CB row. Slot 6 is (HL) — null marks it so
+// the generator dispatches to the indirect path.
+const CB_TARGETS: ReadonlyArray<Reg8 | null> = [
+  "B",
+  "C",
+  "D",
+  "E",
+  "H",
+  "L",
+  null,
+  "A",
+];
+
+function setBitFlagsFromValue(cpu: Z80, bit: number, value: u8) {
+  const isSet = (value & (1 << bit)) !== 0;
+  cpu.updateFlags({
+    n: 0,
+    pv: !isSet,
+    h: 1,
+    z: !isSet,
+    s: bit === 7 && isSet ? 1 : 0,
+    x: value & FLAG_X,
+    y: value & FLAG_Y,
+  });
+}
+
+// BIT b,(HL) takes its X/Y bits from W (the high half of WZ), not from the
+// fetched memory byte. For DDCB/FDCB the prefix has already loaded WZ with
+// IX/IY+d, so W is the high byte of that address.
+function setBitFlagsFromIndirect(cpu: Z80, bit: number, value: u8) {
+  const isSet = (value & (1 << bit)) !== 0;
+  cpu.updateFlags({
+    n: 0,
+    pv: !isSet,
+    h: 1,
+    z: !isSet,
+    s: bit === 7 && isSet ? 1 : 0,
+    x: cpu.regs.W & FLAG_X,
+    y: cpu.regs.W & FLAG_Y,
+  });
+}
+
+function modify_opx(operation: (cpu: Z80) => void): MCycle {
+  return { type: "INT", tStates: 1, process: operation };
+}
+
+export function buildCbTable(set: RegSet): Record<u8, OpCode> {
+  const ops: OpCode[] = [];
+  const addr = indexed_addr(set);
+  const addrName = addr_mnemonic(set);
+
+  for (let code = 0; code < 256; code++) {
+    const target = code & 7;
+    const reg = CB_TARGETS[target];
+
+    if (code < 0x40) {
+      // Rotate / shift
+      const opIdx = code >> 3;
+      const operation = CB_OPS[opIdx]!;
+      const opName = CB_OP_NAMES[opIdx];
+
+      if (reg) {
+        ops.push(
+          op(code, `${opName} ${reg}`, [
+            opcode_fetch_and((cpu) => {
+              cpu.regs[reg] = operation(cpu, cpu.regs[reg]);
+            }),
+          ]),
+        );
+      } else {
+        ops.push(
+          op(code, `${opName} (${addrName})`, [
+            opcode_fetch,
+            ...indexed_prefix(set),
+            mem_read(addr, "OPx"),
+            modify_opx((cpu) => {
+              cpu.regs.OPx = operation(cpu, cpu.regs.OPx);
+            }),
+            mem_write(addr, "OPx"),
+          ]),
+        );
+      }
+    } else if (code < 0x80) {
+      // BIT b,target
+      const bit = (code >> 3) & 7;
+
+      if (reg) {
+        ops.push(
+          op(code, `BIT ${bit},${reg}`, [
+            opcode_fetch_and((cpu) => {
+              setBitFlagsFromValue(cpu, bit, cpu.regs[reg]);
+            }),
+          ]),
+        );
+      } else {
+        ops.push(
+          op(code, `BIT ${bit},(${addrName})`, [
+            opcode_fetch,
+            ...indexed_prefix(set),
+            mem_read(addr, "OPx", (cpu) => {
+              setBitFlagsFromIndirect(cpu, bit, cpu.regs.OPx);
+            }),
+          ]),
+        );
+      }
+    } else if (code < 0xc0) {
+      // RES b,target
+      const bit = (code >> 3) & 7;
+      const mask = ~(1 << bit) & 0xff;
+
+      if (reg) {
+        ops.push(
+          op(code, `RES ${bit},${reg}`, [
+            opcode_fetch_and((cpu) => {
+              cpu.regs[reg] = cpu.regs[reg] & mask;
+            }),
+          ]),
+        );
+      } else {
+        ops.push(
+          op(code, `RES ${bit},(${addrName})`, [
+            opcode_fetch,
+            ...indexed_prefix(set),
+            mem_read(addr, "OPx"),
+            modify_opx((cpu) => {
+              cpu.regs.OPx = cpu.regs.OPx & mask;
+            }),
+            mem_write(addr, "OPx"),
+          ]),
+        );
+      }
+    } else {
+      // SET b,target
+      const bit = (code >> 3) & 7;
+      const mask = 1 << bit;
+
+      if (reg) {
+        ops.push(
+          op(code, `SET ${bit},${reg}`, [
+            opcode_fetch_and((cpu) => {
+              cpu.regs[reg] = cpu.regs[reg] | mask;
+            }),
+          ]),
+        );
+      } else {
+        ops.push(
+          op(code, `SET ${bit},(${addrName})`, [
+            opcode_fetch,
+            ...indexed_prefix(set),
+            mem_read(addr, "OPx"),
+            modify_opx((cpu) => {
+              cpu.regs.OPx = cpu.regs.OPx | mask;
+            }),
+            mem_write(addr, "OPx"),
+          ]),
+        );
+      }
+    }
+  }
+
+  return makeOpTable(...ops);
+}
+
+export const cbOpCodes = buildCbTable(HL_SET);
 
 export const ddOpCodes = buildOpTable(IX_SET);
 
