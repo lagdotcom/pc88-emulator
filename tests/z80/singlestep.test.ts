@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   cbOpCodes,
+  ddcbOpCodes,
   ddOpCodes,
   edOpCodes,
+  fdcbOpCodes,
   fdOpCodes,
   opCodes,
 } from "../../src/chips/z80/ops.js";
@@ -68,6 +70,21 @@ function gatherOps(): OpGroup[] {
         prefix,
         filename: `${prefix} ${hex2(code)}`,
         description: `${prefix.toUpperCase()} ${hex2(code)} ${table[code]!.mnemonic}`,
+      });
+    }
+  }
+
+  // DDCB / FDCB share the same filename convention "<prefix> cb __ XX.json"
+  // where __ is the displacement placeholder (varies per case in the file).
+  for (const [prefix, table] of [
+    ["dd", ddcbOpCodes],
+    ["fd", fdcbOpCodes],
+  ] as const) {
+    for (const code of Object.keys(table).map(Number)) {
+      groups.push({
+        prefix: `${prefix}cb`,
+        filename: `${prefix} cb __ ${hex2(code)}`,
+        description: `${prefix.toUpperCase()} CB __ ${hex2(code)} ${table[code]!.mnemonic}`,
       });
     }
   }

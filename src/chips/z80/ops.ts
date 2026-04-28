@@ -455,6 +455,27 @@ function prefix_cb(cpu: Z80) {
   cpu.prefix = { type: "CB" };
 }
 
+// CB after DD/FD opens the DDCB/FDCB family. Unlike plain CB, this fetches
+// a signed displacement byte before the actual op byte and parks IX/IY+d in
+// WZ. The op byte is then dispatched on the next runOneOp via the DDCB or
+// FDCB table. Note: real Z80 fetches the op byte as MR (no R increment),
+// which the DDCB ops handle by using a no-op first MCycle instead of
+// opcode_fetch_and.
+function prefix_cb_for(set: RegSet): MCycle[] {
+  if (set.addr === "hl") {
+    return [opcode_fetch_and(prefix_cb)];
+  }
+  const target = set.addr === "ix-d" ? "DDCB" : "FDCB";
+  return [
+    opcode_fetch,
+    fetch_byte((cpu, d) => {
+      const disp = asS8(d);
+      cpu.regs.WZ = (cpu.regs[set.rp] + disp) & 0xffff;
+      cpu.prefix = { type: target, displacement: disp };
+    }),
+  ];
+}
+
 const no_op: u8 = 0;
 const skip_jump: u8 = 0xe0;
 
@@ -1152,7 +1173,7 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xc8, "RET z", ret(opcode_fetch_ret_if_flag_set(FLAG_Z))),
   op(0xc9, "RET", ret()),
   op(0xca, "JP z,nn", jp(jump_if_flag_set(FLAG_Z))),
-  op(0xcb, "PREFIX CB", [opcode_fetch_and(prefix_cb)]),
+  op(0xcb, "PREFIX CB", prefix_cb_for(set)),
   op(0xcc, "CALL z,nn", call(jump_if_flag_set(FLAG_Z))),
   op(0xcd, "CALL nn", call()),
   op(0xce, "ADC A,n", [opcode_fetch, fetch_byte(add_a_imm(true))]),
@@ -1533,12 +1554,101 @@ export function buildCbTable(set: RegSet): Record<u8, OpCode> {
   return makeOpTable(...ops);
 }
 
+// DDCB / FDCB ops always operate on (IX+d) / (IY+d). The displacement and
+// effective address (in WZ) were established by the DD/FD CB-prefix
+// transition before this table is consulted. The op byte itself is fetched
+// as MR in real hardware, so the first MCycle is a no-op rather than
+// opcode_fetch_and (no R increment, no t-state cost — runOneOp already
+// read the byte into OP).
+//
+// Non-(HL) target slots (0..5, 7) carry an undocumented "register copy"
+// side effect: the modified value is also written into the named register.
+// BIT b ignores the target slot entirely — every slot behaves identically
+// as BIT b,(IX+d) with no register write-back.
+export function buildIndexedCbTable(set: RegSet): Record<u8, OpCode> {
+  if (set.addr === "hl") {
+    throw new Error("buildIndexedCbTable requires an indexed RegSet");
+  }
+  const ops: OpCode[] = [];
+  const rp = set.rp;
+  const dispatch: MCycle = { type: "INT", tStates: 0, process: () => {} };
+  const copy_opx_to = (reg: Reg8): MCycle => ({
+    type: "INT",
+    tStates: 0,
+    process: (cpu) => {
+      cpu.regs[reg] = cpu.regs.OPx;
+    },
+  });
+
+  for (let code = 0; code < 256; code++) {
+    const target = code & 7;
+    const reg = CB_TARGETS[target];
+    const regSuffix = reg ? `,${reg}` : "";
+
+    if (code < 0x40) {
+      const opIdx = code >> 3;
+      const operation = CB_OPS[opIdx]!;
+      const opName = CB_OP_NAMES[opIdx];
+      const cycles: MCycle[] = [
+        dispatch,
+        mem_read("WZ", "OPx"),
+        modify_opx((cpu) => {
+          cpu.regs.OPx = operation(cpu, cpu.regs.OPx);
+        }),
+        mem_write("WZ", "OPx"),
+      ];
+      if (reg) cycles.push(copy_opx_to(reg));
+      ops.push(op(code, `${opName} (${rp}+d)${regSuffix}`, cycles));
+    } else if (code < 0x80) {
+      // BIT b,(IX+d): same flag set regardless of target slot, no register
+      // write. X/Y come from W (the high byte of WZ = IX+d).
+      const bit = (code >> 3) & 7;
+      ops.push(
+        op(code, `BIT ${bit},(${rp}+d)`, [
+          dispatch,
+          mem_read("WZ", "OPx", (cpu) => {
+            setBitFlagsFromIndirect(cpu, bit, cpu.regs.OPx);
+          }),
+        ]),
+      );
+    } else if (code < 0xc0) {
+      const bit = (code >> 3) & 7;
+      const mask = ~(1 << bit) & 0xff;
+      const cycles: MCycle[] = [
+        dispatch,
+        mem_read("WZ", "OPx"),
+        modify_opx((cpu) => {
+          cpu.regs.OPx = cpu.regs.OPx & mask;
+        }),
+        mem_write("WZ", "OPx"),
+      ];
+      if (reg) cycles.push(copy_opx_to(reg));
+      ops.push(op(code, `RES ${bit},(${rp}+d)${regSuffix}`, cycles));
+    } else {
+      const bit = (code >> 3) & 7;
+      const mask = 1 << bit;
+      const cycles: MCycle[] = [
+        dispatch,
+        mem_read("WZ", "OPx"),
+        modify_opx((cpu) => {
+          cpu.regs.OPx = cpu.regs.OPx | mask;
+        }),
+        mem_write("WZ", "OPx"),
+      ];
+      if (reg) cycles.push(copy_opx_to(reg));
+      ops.push(op(code, `SET ${bit},(${rp}+d)${regSuffix}`, cycles));
+    }
+  }
+
+  return makeOpTable(...ops);
+}
+
 export const cbOpCodes = buildCbTable(HL_SET);
 
 export const ddOpCodes = buildOpTable(IX_SET);
 
-export const ddcbOpCodes = makeOpTable();
+export const ddcbOpCodes = buildIndexedCbTable(IX_SET);
 
 export const fdOpCodes = buildOpTable(IY_SET);
 
-export const fdcbOpCodes = makeOpTable();
+export const fdcbOpCodes = buildIndexedCbTable(IY_SET);
