@@ -1,7 +1,7 @@
 import logLib from "log";
 
 import type { u8, u16 } from "../flavours.js";
-import { byte, word } from "../tools.js";
+import { word } from "../tools.js";
 
 const log = logLib.get("bus");
 
@@ -20,15 +20,15 @@ export class MemoryBus {
   ) {}
 
   read(address: number): u8 {
-    for (const provider of this.providers) {
+    const providers = this.providers;
+    for (let i = 0; i < providers.length; i++) {
+      const provider = providers[i]!;
       if (
         address >= provider.start &&
         address < provider.end &&
         provider.read
       ) {
-        const value = provider.read(address - provider.start);
-        log.debug(`read ${byte(value)} from ${word(address)}`);
-        return value;
+        return provider.read(address - provider.start);
       }
     }
 
@@ -43,14 +43,16 @@ export class MemoryBus {
   }
 
   write(address: number, value: u8) {
-    for (const provider of this.providers) {
+    const providers = this.providers;
+    for (let i = 0; i < providers.length; i++) {
+      const provider = providers[i]!;
       if (
         address >= provider.start &&
         address < provider.end &&
         provider.write
       ) {
-        log.debug(`wrote ${byte(value)} to ${word(address)}`);
-        return provider.write(address - provider.start, value);
+        provider.write(address - provider.start, value);
+        return;
       }
     }
 

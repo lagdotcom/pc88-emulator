@@ -110,7 +110,6 @@ export class Z80 {
 
     const inst = this.decode();
     if (inst) {
-      log.debug(`${word(pc)}: ${inst.mnemonic}`);
       this.mCycleIndex = 0;
       while (this.mCycleIndex < inst.mCycles.length) {
         const cycle = inst.mCycles[this.mCycleIndex]!;
@@ -119,7 +118,7 @@ export class Z80 {
         this.mCycleIndex++;
       }
     } else {
-      log.debug(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
+      log.warn(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
     }
 
     if (!this.qWritten) this.q = 0;
