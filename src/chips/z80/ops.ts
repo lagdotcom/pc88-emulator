@@ -42,6 +42,12 @@ export interface OpCode {
 // When no cycle in the list can abort, emits a no-branch fast path that
 // adds the total t-states once at the end instead of per cycle.
 function compile(cycles: MCycle[]): (cpu: Z80) => void {
+  // Drop a plain opcode_fetch (process === noop, no extra t-states) from
+  // the head — runOneOp already does the M1 work for it. opcode_fetch_and
+  // with a post hook is kept so the post still runs.
+  if (cycles.length > 0 && cycles[0]!.process === noop) {
+    cycles = cycles.slice(1);
+  }
   const n = cycles.length;
   let totalT = 0;
   let canAbort = false;
@@ -51,6 +57,11 @@ function compile(cycles: MCycle[]): (cpu: Z80) => void {
   }
 
   if (!canAbort) {
+    if (n === 0) {
+      return totalT === 0 ? noop : (cpu) => {
+        cpu.cycles += totalT;
+      };
+    }
     if (n === 1) {
       const a = cycles[0]!.process;
       return (cpu) => {
@@ -222,23 +233,30 @@ const op = (code: u8, mnemonic: string, mCycles: MCycle[]): OpCode => ({
   execute: compile(mCycles),
 });
 
-// Every opcode begins with an M1 fetch — runOneOp already read the byte at
-// PC into regs.OP and bumped PC, so this cycle just increments R and runs
-// the per-opcode post hook (e.g. setting prefix, reading flags, etc).
+const noop = () => {};
+
+// Every opcode begins with an M1 fetch. runOneOp already does the work
+// common to every opcode (read byte into OP, advance PC, incR, charge 4
+// t-states); this MCycle exists to attach a per-opcode post hook (e.g.
+// the prefix setter for ED/CB or the flag check for JR cc / RET cc) and
+// to reserve cycle accounting for the rare conditional check that costs
+// 5 t-states instead of 4.
+//
+// The base-case `opcode_fetch` (no post, no extra t-states) is detected
+// by reference equality in compile() and dropped entirely — the cycle
+// list it would otherwise contribute to is empty for ops like NOP,
+// shrinking the compiled execute body to nothing more than the cycles
+// the opcode actually does.
 const opcode_fetch_and = (
   post?: (cpu: Z80, op: u8) => void,
   tStates = 4,
 ): MCycle => ({
   type: "M1",
-  tStates,
-  process: post
-    ? (cpu) => {
-        cpu.incR();
-        post(cpu, cpu.regs.OP);
-      }
-    : (cpu) => {
-        cpu.incR();
-      },
+  // tStates here is the *additional* cost beyond runOneOp's base 4. The
+  // conditional fetch helpers pass 5; we subtract 4 so totalT only counts
+  // the extra. Plain (4-state) opcode_fetch has tStates=0 in this scheme.
+  tStates: tStates - 4,
+  process: post ? (cpu) => post(cpu, cpu.regs.OP) : noop,
 });
 const opcode_fetch = opcode_fetch_and();
 

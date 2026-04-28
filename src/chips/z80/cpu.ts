@@ -112,10 +112,26 @@ export class Z80 {
     // last-cycle abort case never gets there (it returns through the
     // bottom of the body), so we reset here too.
     this.aborted = false;
+    // Inline the universal M1 work: read the opcode byte, advance PC,
+    // increment R, charge 4 t-states. compile() relies on this — it drops
+    // the leading "plain opcode_fetch" MCycle from each opcode's compiled
+    // execute body so simple ops like NOP have an empty body.
+    //
+    // DDCB / FDCB are the exception: by the time we get here the prefix
+    // has already been resolved to {type:"DDCB",...} and what remains is
+    // the operation byte, which on real Z80 is read as MR (not M1) — no
+    // R increment, no 4-state charge. Those ops account their own cycle
+    // cost in the per-opcode body.
     const regs = this.regs;
     const pc = regs.PC;
     regs.OP = this.mem.read(pc);
     regs.PC = pc + 1;
+    const prefixType = this.prefix?.type;
+    if (prefixType !== "DDCB" && prefixType !== "FDCB") {
+      const r = regs.R;
+      regs.R = (r & 0x80) | ((r + 1) & 0x7f);
+      this.cycles += 4;
+    }
 
     const inst = this.decode();
     if (inst) {
