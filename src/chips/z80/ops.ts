@@ -1,5 +1,5 @@
 import type { u8, u16 } from "../../flavours.js";
-import { asS8, asU8, asU16, parity, u8Max } from "../../numbers.js";
+import { asS8, asU16, parity } from "../../numbers.js";
 import type { Z80 } from "./cpu.js";
 import {
   carry,
@@ -113,60 +113,172 @@ const inc_r16 = (reg: Reg16): MCycle => ({
   process: (cpu) => cpu.regs[reg]++,
 });
 
-const add_r8 = (cpu: Z80, reg: Reg8, value: number) => {
-  const oldValue = cpu.regs[reg];
-  const newValue = oldValue + value;
-  const byte = asU8(newValue);
-
-  cpu.regs[reg] = byte;
+function do_add_a(cpu: Z80, value: u8, useCarry: boolean) {
+  const a = cpu.regs.A;
+  const c = useCarry ? carry(cpu.regs.F) : 0;
+  const sum = a + value + c;
+  const result = sum & 0xff;
+  cpu.regs.A = result;
   cpu.updateFlags({
-    n: value < 0,
-    pv: byte - value !== oldValue,
-    h: 3, // TODO
-    z: byte === 0,
-    s: byte & 0x80,
+    c: sum > 0xff,
+    n: 0,
+    pv: ((~(a ^ value) & (a ^ result)) >> 7) & 1,
+    h: ((a & 0xf) + (value & 0xf) + c) & 0x10,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
   });
-};
+}
+
+function do_sub_a(cpu: Z80, value: u8, useCarry: boolean) {
+  const a = cpu.regs.A;
+  const c = useCarry ? carry(cpu.regs.F) : 0;
+  const diff = a - value - c;
+  const result = diff & 0xff;
+  cpu.regs.A = result;
+  cpu.updateFlags({
+    c: diff < 0,
+    n: 1,
+    pv: (((a ^ value) & (a ^ result)) >> 7) & 1,
+    h: ((a & 0xf) - (value & 0xf) - c) & 0x10,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+}
+
+function do_cp_a(cpu: Z80, value: u8) {
+  const a = cpu.regs.A;
+  const diff = a - value;
+  const result = diff & 0xff;
+  cpu.updateFlags({
+    c: diff < 0,
+    n: 1,
+    pv: (((a ^ value) & (a ^ result)) >> 7) & 1,
+    h: ((a & 0xf) - (value & 0xf)) & 0x10,
+    z: result === 0,
+    s: result & 0x80,
+    // CP takes X/Y from the operand, not the result.
+    x: value & FLAG_X,
+    y: value & FLAG_Y,
+  });
+}
+
+function inc8(cpu: Z80, old: u8): u8 {
+  const result = (old + 1) & 0xff;
+  cpu.updateFlags({
+    n: 0,
+    pv: old === 0x7f,
+    h: (old & 0xf) === 0xf,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+  return result;
+}
+
+function dec8(cpu: Z80, old: u8): u8 {
+  const result = (old - 1) & 0xff;
+  cpu.updateFlags({
+    n: 1,
+    pv: old === 0x80,
+    h: (old & 0xf) === 0,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+  return result;
+}
+
+function do_add16(cpu: Z80, dst: Reg16, value: u16) {
+  const old = cpu.regs[dst];
+  cpu.regs.WZ = (old + 1) & 0xffff;
+  const sum = old + value;
+  const result = sum & 0xffff;
+  cpu.regs[dst] = result;
+  const high = result >> 8;
+  cpu.updateFlags({
+    c: sum > 0xffff,
+    n: 0,
+    h: ((old & 0xfff) + (value & 0xfff)) & 0x1000,
+    x: high & FLAG_X,
+    y: high & FLAG_Y,
+  });
+}
+
+const add_hl_rr = (src: Reg16): MCycle => ({
+  type: "INT",
+  tStates: 7,
+  process: (cpu) => do_add16(cpu, "HL", cpu.regs[src]),
+});
 
 const opcode_fetch_and_inc_r8 = (reg: Reg8) =>
-  opcode_fetch_and((cpu: Z80) => add_r8(cpu, reg, 1));
+  opcode_fetch_and((cpu: Z80) => (cpu.regs[reg] = inc8(cpu, cpu.regs[reg])));
 
 const opcode_fetch_and_dec_r8 = (reg: Reg8) =>
-  opcode_fetch_and((cpu: Z80) => add_r8(cpu, reg, -1));
+  opcode_fetch_and((cpu: Z80) => (cpu.regs[reg] = dec8(cpu, cpu.regs[reg])));
 
 const inc_opx: MCycle = {
   type: "INT",
   tStates: 1,
-  process: (cpu) => add_r8(cpu, "OPx", 1),
+  process: (cpu) => (cpu.regs.OPx = inc8(cpu, cpu.regs.OPx)),
 };
 const dec_opx: MCycle = {
   type: "INT",
   tStates: 1,
-  process: (cpu) => add_r8(cpu, "OPx", -1),
+  process: (cpu) => (cpu.regs.OPx = dec8(cpu, cpu.regs.OPx)),
 };
 
 function rla(cpu: Z80) {
   const c = cpu.regs.A >> 7;
   cpu.regs.A = (cpu.regs.A << 1) | carry(cpu.regs.F);
-  cpu.updateFlags({ c, n: 0, h: 0 });
+  cpu.updateFlags({
+    c,
+    n: 0,
+    h: 0,
+    x: cpu.regs.A & FLAG_X,
+    y: cpu.regs.A & FLAG_Y,
+  });
 }
 
 function rlca(cpu: Z80) {
   const c = cpu.regs.A >> 7;
   cpu.regs.A = (cpu.regs.A << 1) | c;
-  cpu.updateFlags({ c, n: 0, h: 0 });
+  cpu.updateFlags({
+    c,
+    n: 0,
+    h: 0,
+    x: cpu.regs.A & FLAG_X,
+    y: cpu.regs.A & FLAG_Y,
+  });
 }
 
 function rra(cpu: Z80) {
   const c = cpu.regs.A & 0x01;
-  cpu.regs.A = (cpu.regs.A >> 1) | carry(cpu.regs.F);
-  cpu.updateFlags({ c, n: 0, h: 0 });
+  cpu.regs.A = (cpu.regs.A >> 1) | (carry(cpu.regs.F) << 7);
+  cpu.updateFlags({
+    c,
+    n: 0,
+    h: 0,
+    x: cpu.regs.A & FLAG_X,
+    y: cpu.regs.A & FLAG_Y,
+  });
 }
 
 function rrca(cpu: Z80) {
   const c = cpu.regs.A & 0x01;
   cpu.regs.A = (cpu.regs.A >> 1) | (c << 7);
-  cpu.updateFlags({ c, n: 0, h: 0 });
+  cpu.updateFlags({
+    c,
+    n: 0,
+    h: 0,
+    x: cpu.regs.A & FLAG_X,
+    y: cpu.regs.A & FLAG_Y,
+  });
 }
 
 function exchange_regs(cpu: Z80, a: Reg16, b: Reg16) {
@@ -181,44 +293,41 @@ function ex_af(cpu: Z80) {
 
 function cpl(cpu: Z80) {
   cpu.regs.A = ~cpu.regs.A;
-  cpu.updateFlags({ n: 1, h: 1 });
+  cpu.updateFlags({
+    n: 1,
+    h: 1,
+    x: cpu.regs.A & FLAG_X,
+    y: cpu.regs.A & FLAG_Y,
+  });
 }
 
 function daa(cpu: Z80) {
   const oldA = cpu.regs.A;
-  let a = oldA;
   const f = cpu.regs.F;
-  const c = f & FLAG_C;
-  const h = f & FLAG_H;
-  const n = f & FLAG_N;
+  const c = (f & FLAG_C) !== 0;
+  const h = (f & FLAG_H) !== 0;
+  const n = (f & FLAG_N) !== 0;
 
-  let setC = false;
-
-  if (!n) {
-    if (h || (a & 0x0f) > 9) a += 6;
-    if (c || a > 0x99) {
-      a += 0x60;
-      setC = true;
-    }
-  } else {
-    if (h || (a & 0x0f) > 9) a -= 6;
-    if (c || a > 0x99) {
-      a -= 0x60;
-      setC = true;
-    }
+  let correction = 0;
+  let setC = c;
+  if (h || (oldA & 0xf) > 9) correction |= 0x06;
+  if (c || oldA > 0x99) {
+    correction |= 0x60;
+    setC = true;
   }
 
-  cpu.regs.A = a;
-  const byte = cpu.regs.A;
+  const raw = n ? oldA - correction : oldA + correction;
+  const result = raw & 0xff;
+  cpu.regs.A = result;
 
   cpu.updateFlags({
     c: setC,
-    pv: 3, // TODO
-    h: !n ? h && (oldA & 0x0f) < 6 : h || (oldA & 0x0f) > 9,
-    z: byte === 0,
-    s: byte & 0x80,
-    x: byte & 0x20,
-    y: byte & 0x08,
+    pv: parity(result),
+    h: (oldA ^ correction ^ raw) & FLAG_H,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
   });
 }
 
@@ -279,7 +388,6 @@ function prefix_ed(cpu: Z80) {
 }
 
 const no_op: u8 = 0;
-const internal_carry: u8 = 0x10;
 const skip_jump: u8 = 0xe0;
 
 const dec_b_set_skip_relative_jump: MCycle = {
@@ -292,11 +400,12 @@ const dec_b_set_skip_relative_jump: MCycle = {
 };
 
 const fetch_displacement_respect_skip_jump = fetch_byte((cpu, data) => {
-  cpu.regs.WZ = asU16(asS8(data));
   if (cpu.regs.OPx === skip_jump) {
     cpu.mCycleIndex = Infinity;
     cpu.regs.OPx = no_op;
+    return;
   }
+  cpu.regs.WZ = asU16(asS8(data));
 });
 
 const relative_jump_wz: MCycle = {
@@ -307,35 +416,6 @@ const relative_jump_wz: MCycle = {
     cpu.regs.PC = cpu.regs.WZ;
   },
 };
-
-const add_r8_to_r8_set_internal_carry = (dst: Reg8, src: Reg8): MCycle => ({
-  type: "INT",
-  tStates: 4,
-  process: (cpu) => {
-    const total = cpu.regs[dst] + cpu.regs[src];
-    cpu.regs.OPx = total > u8Max ? internal_carry : no_op;
-    cpu.regs[dst] = total;
-  },
-});
-
-const add_r8_to_r8_use_internal_carry_set_flags = (
-  dst: Reg8,
-  src: Reg8,
-): MCycle => ({
-  type: "INT",
-  tStates: 3,
-  process: (cpu) => {
-    const carry = cpu.regs.OPx === internal_carry ? 1 : 0;
-    const total = cpu.regs[dst] + cpu.regs[src] + carry;
-    cpu.regs[dst] = total;
-    cpu.regs.OPx = no_op;
-    cpu.updateFlags({
-      c: total > u8Max,
-      n: 0,
-      h: 3, // TODO
-    });
-  },
-});
 
 const jump_if_flag_set = (mask: u8) => (cpu: Z80) => {
   cpu.regs.OPx = cpu.regs.F & mask ? no_op : skip_jump;
@@ -369,73 +449,68 @@ const fetch_w_respect_skip_jump = fetch_byte((cpu, data) => {
   }
 });
 
-const add_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) => {
-  const value = cpu.regs[src] + (useCarry ? carry(cpu.regs.F) : 0);
-  add_r8(cpu, "A", value);
-};
+const add_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) =>
+  do_add_a(cpu, cpu.regs[src], useCarry);
 
-const add_a_imm = (useCarry: boolean) => (cpu: Z80, data: u8) => {
-  const value = data + (useCarry ? carry(cpu.regs.F) : 0);
-  add_r8(cpu, "A", value);
-};
+const add_a_imm =
+  (useCarry: boolean) => (cpu: Z80, data: u8) =>
+    do_add_a(cpu, data, useCarry);
 
-const sub_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) => {
-  const value = cpu.regs[src] + (useCarry ? carry(cpu.regs.F) : 0);
-  add_r8(cpu, "A", -value);
-};
+const sub_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) =>
+  do_sub_a(cpu, cpu.regs[src], useCarry);
 
-const sub_a_imm = (useCarry: boolean) => (cpu: Z80, data: u8) => {
-  const value = data + (useCarry ? carry(cpu.regs.F) : 0);
-  add_r8(cpu, "A", -value);
-};
+const sub_a_imm =
+  (useCarry: boolean) => (cpu: Z80, data: u8) =>
+    do_sub_a(cpu, data, useCarry);
 
-const cp_a_r8 = (src: Reg8) => (cpu: Z80) => {
-  const temp = cpu.regs.A;
-  sub_a_r8(src, false)(cpu);
-  cpu.regs.A = temp;
-};
+const cp_a_r8 = (src: Reg8) => (cpu: Z80) => do_cp_a(cpu, cpu.regs[src]);
 
-const cp_a_imm = (cpu: Z80, data: u8) => {
-  const temp = cpu.regs.A;
-  sub_a_imm(false)(cpu, data);
-  cpu.regs.A = temp;
-};
+const cp_a_imm = (cpu: Z80, data: u8) => do_cp_a(cpu, data);
 
 function and_a(cpu: Z80, value: u8) {
-  cpu.regs.A = cpu.regs.A & value;
+  const result = cpu.regs.A & value;
+  cpu.regs.A = result;
   cpu.updateFlags({
     c: 0,
     n: 0,
-    pv: parity(cpu.regs.A),
+    pv: parity(result),
     h: 1,
-    z: cpu.regs.A === 0,
-    s: cpu.regs.A & 0x80,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
   });
 }
 const and_a_r8 = (src: Reg8) => (cpu: Z80) => and_a(cpu, cpu.regs[src]);
 
 function or_a(cpu: Z80, value: u8) {
-  cpu.regs.A = cpu.regs.A | value;
+  const result = cpu.regs.A | value;
+  cpu.regs.A = result;
   cpu.updateFlags({
     c: 0,
     n: 0,
-    pv: parity(cpu.regs.A),
+    pv: parity(result),
     h: 0,
-    z: cpu.regs.A === 0,
-    s: cpu.regs.A & 0x80,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
   });
 }
 const or_a_r8 = (src: Reg8) => (cpu: Z80) => or_a(cpu, cpu.regs[src]);
 
 function xor_a(cpu: Z80, value: u8) {
-  cpu.regs.A = cpu.regs.A ^ value;
+  const result = cpu.regs.A ^ value;
+  cpu.regs.A = result;
   cpu.updateFlags({
     c: 0,
     n: 0,
-    pv: parity(cpu.regs.A),
+    pv: parity(result),
     h: 0,
-    z: cpu.regs.A === 0,
-    s: cpu.regs.A & 0x80,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
   });
 }
 const xor_a_r8 = (src: Reg8) => (cpu: Z80) => xor_a(cpu, cpu.regs[src]);
@@ -471,8 +546,19 @@ const io_read_bc = (dst: Reg8): MCycle => ({
   type: "IOR",
   tStates: 4,
   process: (cpu) => {
-    cpu.regs[dst] = cpu.io.read(cpu.regs.BC);
-    cpu.regs.WZ = cpu.regs.BC + 1;
+    const port = cpu.regs.BC;
+    const value = cpu.io.read(port);
+    cpu.regs.WZ = port + 1;
+    cpu.regs[dst] = value;
+    cpu.updateFlags({
+      n: 0,
+      pv: parity(value),
+      h: 0,
+      z: value === 0,
+      s: value & 0x80,
+      x: value & FLAG_X,
+      y: value & FLAG_Y,
+    });
   },
 });
 
@@ -599,11 +685,7 @@ export const opCodes = makeOpTable(
   op(0x06, "LD B,n", [opcode_fetch, fetch_b]),
   op(0x07, "RLCA", [opcode_fetch_and(rlca)]),
   op(0x08, "EX AF,AF'", [opcode_fetch_and(ex_af)]),
-  op(0x09, "ADD HL,BC", [
-    opcode_fetch,
-    add_r8_to_r8_set_internal_carry("L", "C"),
-    add_r8_to_r8_use_internal_carry_set_flags("H", "B"),
-  ]),
+  op(0x09, "ADD HL,BC", [opcode_fetch, add_hl_rr("BC")]),
   op(0x0a, "LD A,(BC)", [
     opcode_fetch,
     mem_read("BC", "A", (cpu) => (cpu.regs.WZ = cpu.regs.BC + 1)),
@@ -638,11 +720,7 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x19, "ADD HL,DE", [
-    opcode_fetch,
-    add_r8_to_r8_set_internal_carry("L", "E"),
-    add_r8_to_r8_use_internal_carry_set_flags("H", "D"),
-  ]),
+  op(0x19, "ADD HL,DE", [opcode_fetch, add_hl_rr("DE")]),
   op(0x1a, "LD A,(DE)", [
     opcode_fetch,
     mem_read("DE", "A", (cpu) => (cpu.regs.WZ = cpu.regs.DE + 1)),
@@ -676,11 +754,7 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x29, "ADD HL,HL", [
-    opcode_fetch,
-    add_r8_to_r8_set_internal_carry("L", "L"),
-    add_r8_to_r8_use_internal_carry_set_flags("H", "H"),
-  ]),
+  op(0x29, "ADD HL,HL", [opcode_fetch, add_hl_rr("HL")]),
   op(0x2a, "LD HL,(nn)", [
     opcode_fetch,
     fetch_z,
@@ -729,11 +803,7 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x39, "ADD HL,SP", [
-    opcode_fetch,
-    add_r8_to_r8_set_internal_carry("L", "SPL"),
-    add_r8_to_r8_use_internal_carry_set_flags("H", "SPH"),
-  ]),
+  op(0x39, "ADD HL,SP", [opcode_fetch, add_hl_rr("SP")]),
   op(0x3a, "LD A,(nn)", [
     opcode_fetch,
     fetch_z,
@@ -999,7 +1069,21 @@ export const edOpCodes = makeOpTable(
   op(0x58, "IN E,(C)", [opcode_fetch, io_read_bc("E")]),
   op(0x59, "OUT (C),E", [opcode_fetch, io_write_bc("E")]),
   op(0x5e, "IM 2", [opcode_fetch_and(set_im(2))]),
-  op(0x5f, "LD A,R", [opcode_fetch_and_load_r8_from_r8("A", "R")]),
+  op(0x5f, "LD A,R", [
+    opcode_fetch_and((cpu) => {
+      const value = cpu.regs.R;
+      cpu.regs.A = value;
+      cpu.updateFlags({
+        n: 0,
+        pv: cpu.iff2 ? 1 : 0,
+        h: 0,
+        z: value === 0,
+        s: value & 0x80,
+        x: value & FLAG_X,
+        y: value & FLAG_Y,
+      });
+    }),
+  ]),
 
   op(0x60, "IN H,(C)", [opcode_fetch, io_read_bc("H")]),
   op(0x61, "OUT (C),H", [opcode_fetch, io_write_bc("H")]),

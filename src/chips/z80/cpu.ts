@@ -87,7 +87,9 @@ export class Z80 {
   }
 
   runOneOp() {
-    const ei = this.eiDelay;
+    // Consume any pending EI grace period at the start of each instruction.
+    // The EI handler will re-set eiDelay during dispatch if this opcode is EI.
+    this.eiDelay = false;
     const pc = this.regs.PC;
     this.regs.OP = this.mem.read(pc);
     this.regs.PC++;
@@ -105,8 +107,6 @@ export class Z80 {
     } else {
       log.debug(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
     }
-
-    if (ei) this.eiDelay = false;
   }
 
   decode() {
