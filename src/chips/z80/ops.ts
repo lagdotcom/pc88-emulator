@@ -469,7 +469,10 @@ const io_read_az: MCycle = {
 const io_read_bc = (dst: Reg8): MCycle => ({
   type: "IOR",
   tStates: 4,
-  process: (cpu) => (cpu.regs[dst] = cpu.io.read(cpu.regs.BC)),
+  process: (cpu) => {
+    cpu.regs[dst] = cpu.io.read(cpu.regs.BC);
+    cpu.regs.WZ = cpu.regs.BC + 1;
+  },
 });
 
 const io_write_az: MCycle = {
@@ -486,7 +489,10 @@ const io_write_az: MCycle = {
 const io_write_bc = (src: Reg8): MCycle => ({
   type: "IOW",
   tStates: 4,
-  process: (cpu) => cpu.io.write(cpu.regs.BC, cpu.regs[src]),
+  process: (cpu) => {
+    cpu.io.write(cpu.regs.BC, cpu.regs[src]);
+    cpu.regs.WZ = cpu.regs.BC + 1;
+  },
 });
 
 const mem_read_sp_plus_1_to_w: MCycle = {
