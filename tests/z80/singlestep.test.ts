@@ -36,11 +36,19 @@ interface OpGroup {
   description: string;
 }
 
+// Opcodes that only set up another prefix don't have their own SingleStepTests
+// JSON file (e.g. DD followed by DD just resets the prefix). Detect them by
+// the "PREFIX" mnemonic the table generator emits.
+function isPrefixOp(mnemonic: string): boolean {
+  return mnemonic.startsWith("PREFIX");
+}
+
 function gatherOps(): OpGroup[] {
   const groups: OpGroup[] = [];
 
   for (const code of Object.keys(opCodes).map(Number)) {
     if (PREFIX_BYTES.has(code)) continue;
+    if (isPrefixOp(opCodes[code]!.mnemonic)) continue;
     groups.push({
       prefix: "base",
       filename: hex2(code),
@@ -55,6 +63,7 @@ function gatherOps(): OpGroup[] {
     ["fd", fdOpCodes],
   ] as const) {
     for (const code of Object.keys(table).map(Number)) {
+      if (isPrefixOp(table[code]!.mnemonic)) continue;
       groups.push({
         prefix,
         filename: `${prefix} ${hex2(code)}`,

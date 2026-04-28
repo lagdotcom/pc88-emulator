@@ -39,6 +39,8 @@ export interface RegSet {
 }
 
 const HL_SET: RegSet = { rp: "HL", rh: "H", rl: "L", addr: "hl" };
+const IX_SET: RegSet = { rp: "IX", rh: "IXH", rl: "IXL", addr: "ix-d" };
+const IY_SET: RegSet = { rp: "IY", rh: "IYH", rl: "IYL", addr: "iy-d" };
 
 const op = (code: u8, mnemonic: string, mCycles: MCycle[]): OpCode => ({
   code,
@@ -125,6 +127,38 @@ const inc_r16 = (reg: Reg16): MCycle => ({
   tStates: 2,
   process: (cpu) => cpu.regs[reg]++,
 });
+
+// Indexed-mode helpers used by buildOpTable. For HL_SET they collapse to
+// plain (HL) addressing; for IX_SET/IY_SET they emit a displacement fetch
+// followed by an internal-delay cycle, with the resolved address in WZ.
+
+const fetch_disp_to_wz = (set: RegSet): MCycle =>
+  fetch_byte((cpu, d) => {
+    cpu.regs.WZ = (cpu.regs[set.rp] + asS8(d)) & 0xffff;
+  });
+
+const internal_delay = (tStates: number): MCycle => ({
+  type: "INT",
+  tStates,
+  process: () => {},
+});
+
+// MCycles to run before an indexed memory access. Empty for plain HL.
+function indexed_prefix(set: RegSet): MCycle[] {
+  if (set.addr === "hl") return [];
+  return [fetch_disp_to_wz(set), internal_delay(5)];
+}
+
+// The address register holding the resolved memory location during the
+// access. For HL it's HL itself; for indexed sets WZ was set by the prefix.
+function indexed_addr(set: RegSet): Reg16 {
+  return set.addr === "hl" ? "HL" : "WZ";
+}
+
+// Mnemonic fragment for indexed addressing.
+function addr_mnemonic(set: RegSet): string {
+  return set.addr === "hl" ? "HL" : `${set.rp}+d`;
+}
 
 function do_add_a(cpu: Z80, value: u8, useCarry: boolean) {
   const a = cpu.regs.A;
@@ -399,14 +433,22 @@ function exx(cpu: Z80) {
   exchange_regs(cpu, "HL", "HL_");
 }
 
-const ex_de_hl =
-  (set: RegSet) =>
-  (cpu: Z80): void => {
-    exchange_regs(cpu, "DE", set.rp);
-  };
+// EX DE,HL is unaffected by DD/FD prefixes — it always swaps DE with HL,
+// not IX/IY. (Sean Young, "The Undocumented Z80 Documented".)
+function ex_de_hl(cpu: Z80) {
+  exchange_regs(cpu, "DE", "HL");
+}
 
 function prefix_ed(cpu: Z80) {
   cpu.prefix = { type: "ED" };
+}
+
+function prefix_dd(cpu: Z80) {
+  cpu.prefix = { type: "DD" };
+}
+
+function prefix_fd(cpu: Z80) {
+  cpu.prefix = { type: "FD" };
 }
 
 const no_op: u8 = 0;
@@ -815,19 +857,30 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
     }),
   ]),
   op(0x33, "INC SP", [opcode_fetch, inc_r16("SP")]),
-  op(0x34, "INC (HL)", [
+  op(0x34, `INC (${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx"),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx"),
     inc_opx,
-    mem_write("HL", "OPx"),
+    mem_write(indexed_addr(set), "OPx"),
   ]),
-  op(0x35, "DEC (HL)", [
+  op(0x35, `DEC (${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx"),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx"),
     dec_opx,
-    mem_write("HL", "OPx"),
+    mem_write(indexed_addr(set), "OPx"),
   ]),
-  op(0x36, "LD (HL),n", [opcode_fetch, fetch_opx, mem_write("HL", "OPx")]),
+  // LD (HL),n: opcode, fetch n, write. LD (IX+d),n: opcode, fetch d, fetch n,
+  // 2-cycle pause, write. The disp comes BEFORE n, the delay is shorter than
+  // the usual 5 because n's fetch overlaps with the address calculation.
+  op(0x36, `LD (${addr_mnemonic(set)}),n`, [
+    opcode_fetch,
+    ...(set.addr === "hl"
+      ? [fetch_opx]
+      : [fetch_disp_to_wz(set), fetch_opx, internal_delay(2)]),
+    mem_write(indexed_addr(set), "OPx"),
+  ]),
   op(0x37, "SCF", [opcode_fetch_and(scf)]),
   op(0x38, "JR c,d", [
     opcode_fetch_and(jump_if_flag_set(FLAG_C)),
@@ -853,7 +906,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x43, "LD B,E", [opcode_fetch_and_load_r8_from_r8("B", "E")]),
   op(0x44, `LD B,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("B", set.rh)]),
   op(0x45, `LD B,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("B", set.rl)]),
-  op(0x46, "LD B,(HL)", [opcode_fetch, mem_read("HL", "B")]),
+  op(0x46, `LD B,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "B"),
+  ]),
   op(0x47, "LD B,A", [opcode_fetch_and_load_r8_from_r8("B", "A")]),
   op(0x48, "LD C,B", [opcode_fetch_and_load_r8_from_r8("C", "B")]),
   op(0x49, "LD C,C", [opcode_fetch_and_load_r8_from_r8("C", "C")]),
@@ -861,7 +918,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x4b, "LD C,E", [opcode_fetch_and_load_r8_from_r8("C", "E")]),
   op(0x4c, `LD C,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("C", set.rh)]),
   op(0x4d, `LD C,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("C", set.rl)]),
-  op(0x4e, "LD C,(HL)", [opcode_fetch, mem_read("HL", "C")]),
+  op(0x4e, `LD C,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "C"),
+  ]),
   op(0x4f, "LD C,A", [opcode_fetch_and_load_r8_from_r8("C", "A")]),
 
   op(0x50, "LD D,B", [opcode_fetch_and_load_r8_from_r8("D", "B")]),
@@ -870,7 +931,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x53, "LD D,E", [opcode_fetch_and_load_r8_from_r8("D", "E")]),
   op(0x54, `LD D,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("D", set.rh)]),
   op(0x55, `LD D,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("D", set.rl)]),
-  op(0x56, "LD D,(HL)", [opcode_fetch, mem_read("HL", "D")]),
+  op(0x56, `LD D,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "D"),
+  ]),
   op(0x57, "LD D,A", [opcode_fetch_and_load_r8_from_r8("D", "A")]),
   op(0x58, "LD E,B", [opcode_fetch_and_load_r8_from_r8("E", "B")]),
   op(0x59, "LD E,C", [opcode_fetch_and_load_r8_from_r8("E", "C")]),
@@ -878,7 +943,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x5b, "LD E,E", [opcode_fetch_and_load_r8_from_r8("E", "E")]),
   op(0x5c, `LD E,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("E", set.rh)]),
   op(0x5d, `LD E,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("E", set.rl)]),
-  op(0x5e, "LD E,(HL)", [opcode_fetch, mem_read("HL", "E")]),
+  op(0x5e, `LD E,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "E"),
+  ]),
   op(0x5f, "LD E,A", [opcode_fetch_and_load_r8_from_r8("E", "A")]),
 
   // 0x60-67: LD H,r — H is destination (swaps to IXH/IYH for indexed sets);
@@ -894,7 +963,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x65, `LD ${set.rh},${set.rl}`, [
     opcode_fetch_and_load_r8_from_r8(set.rh, set.rl),
   ]),
-  op(0x66, "LD H,(HL)", [opcode_fetch, mem_read("HL", "H")]),
+  op(0x66, `LD H,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "H"),
+  ]),
   op(0x67, `LD ${set.rh},A`, [opcode_fetch_and_load_r8_from_r8(set.rh, "A")]),
   op(0x68, `LD ${set.rl},B`, [opcode_fetch_and_load_r8_from_r8(set.rl, "B")]),
   op(0x69, `LD ${set.rl},C`, [opcode_fetch_and_load_r8_from_r8(set.rl, "C")]),
@@ -906,26 +979,62 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x6d, `LD ${set.rl},${set.rl}`, [
     opcode_fetch_and_load_r8_from_r8(set.rl, set.rl),
   ]),
-  op(0x6e, "LD L,(HL)", [opcode_fetch, mem_read("HL", "L")]),
+  op(0x6e, `LD L,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "L"),
+  ]),
   op(0x6f, `LD ${set.rl},A`, [opcode_fetch_and_load_r8_from_r8(set.rl, "A")]),
 
   // 0x70-77: LD (HL),r — (HL) is the memory operand, so r stays literal
   // (the H/L source registers in 0x74/75 do NOT become IXH/IXL).
-  op(0x70, "LD (HL),B", [opcode_fetch, mem_write("HL", "B")]),
-  op(0x71, "LD (HL),C", [opcode_fetch, mem_write("HL", "C")]),
-  op(0x72, "LD (HL),D", [opcode_fetch, mem_write("HL", "D")]),
-  op(0x73, "LD (HL),E", [opcode_fetch, mem_write("HL", "E")]),
-  op(0x74, "LD (HL),H", [opcode_fetch, mem_write("HL", "H")]),
-  op(0x75, "LD (HL),L", [opcode_fetch, mem_write("HL", "L")]),
+  op(0x70, `LD (${addr_mnemonic(set)}),B`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "B"),
+  ]),
+  op(0x71, `LD (${addr_mnemonic(set)}),C`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "C"),
+  ]),
+  op(0x72, `LD (${addr_mnemonic(set)}),D`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "D"),
+  ]),
+  op(0x73, `LD (${addr_mnemonic(set)}),E`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "E"),
+  ]),
+  op(0x74, `LD (${addr_mnemonic(set)}),H`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "H"),
+  ]),
+  op(0x75, `LD (${addr_mnemonic(set)}),L`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "L"),
+  ]),
   op(0x76, "HALT", [opcode_fetch_and(halt)]),
-  op(0x77, "LD (HL),A", [opcode_fetch, mem_write("HL", "A")]),
+  op(0x77, `LD (${addr_mnemonic(set)}),A`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_write(indexed_addr(set), "A"),
+  ]),
   op(0x78, "LD A,B", [opcode_fetch_and_load_r8_from_r8("A", "B")]),
   op(0x79, "LD A,C", [opcode_fetch_and_load_r8_from_r8("A", "C")]),
   op(0x7a, "LD A,D", [opcode_fetch_and_load_r8_from_r8("A", "D")]),
   op(0x7b, "LD A,E", [opcode_fetch_and_load_r8_from_r8("A", "E")]),
   op(0x7c, `LD A,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("A", set.rh)]),
   op(0x7d, `LD A,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("A", set.rl)]),
-  op(0x7e, "LD A,(HL)", [opcode_fetch, mem_read("HL", "A")]),
+  op(0x7e, `LD A,(${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "A"),
+  ]),
   op(0x7f, "LD A,A", [opcode_fetch_and_load_r8_from_r8("A", "A")]),
 
   op(0x80, "ADD A,B", [opcode_fetch_and(add_a_r8("B", false))]),
@@ -934,9 +1043,10 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x83, "ADD A,E", [opcode_fetch_and(add_a_r8("E", false))]),
   op(0x84, `ADD A,${set.rh}`, [opcode_fetch_and(add_a_r8(set.rh, false))]),
   op(0x85, `ADD A,${set.rl}`, [opcode_fetch_and(add_a_r8(set.rl, false))]),
-  op(0x86, "ADD A,(HL)", [
+  op(0x86, `ADD A,(${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx", add_a_r8("OPx", false)),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", add_a_r8("OPx", false)),
   ]),
   op(0x87, "ADD A,A", [opcode_fetch_and(add_a_r8("A", false))]),
   op(0x88, "ADC A,B", [opcode_fetch_and(add_a_r8("B", true))]),
@@ -945,9 +1055,10 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x8b, "ADC A,E", [opcode_fetch_and(add_a_r8("E", true))]),
   op(0x8c, `ADC A,${set.rh}`, [opcode_fetch_and(add_a_r8(set.rh, true))]),
   op(0x8d, `ADC A,${set.rl}`, [opcode_fetch_and(add_a_r8(set.rl, true))]),
-  op(0x8e, "ADC A,(HL)", [
+  op(0x8e, `ADC A,(${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx", add_a_r8("OPx", true)),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", add_a_r8("OPx", true)),
   ]),
   op(0x8f, "ADC A,A", [opcode_fetch_and(add_a_r8("A", true))]),
 
@@ -957,9 +1068,10 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x93, "SUB E", [opcode_fetch_and(sub_a_r8("E", false))]),
   op(0x94, `SUB ${set.rh}`, [opcode_fetch_and(sub_a_r8(set.rh, false))]),
   op(0x95, `SUB ${set.rl}`, [opcode_fetch_and(sub_a_r8(set.rl, false))]),
-  op(0x96, "SUB (HL)", [
+  op(0x96, `SUB (${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx", sub_a_r8("OPx", false)),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", sub_a_r8("OPx", false)),
   ]),
   op(0x97, "SUB A", [opcode_fetch_and(sub_a_r8("A", false))]),
   op(0x98, "SBC A,B", [opcode_fetch_and(sub_a_r8("B", true))]),
@@ -968,9 +1080,10 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0x9b, "SBC A,E", [opcode_fetch_and(sub_a_r8("E", true))]),
   op(0x9c, `SBC A,${set.rh}`, [opcode_fetch_and(sub_a_r8(set.rh, true))]),
   op(0x9d, `SBC A,${set.rl}`, [opcode_fetch_and(sub_a_r8(set.rl, true))]),
-  op(0x9e, "SBC A,(HL)", [
+  op(0x9e, `SBC A,(${addr_mnemonic(set)})`, [
     opcode_fetch,
-    mem_read("HL", "OPx", sub_a_r8("OPx", true)),
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", sub_a_r8("OPx", true)),
   ]),
   op(0x9f, "SBC A,A", [opcode_fetch_and(sub_a_r8("A", true))]),
 
@@ -980,7 +1093,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xa3, "AND E", [opcode_fetch_and(and_a_r8("E"))]),
   op(0xa4, `AND ${set.rh}`, [opcode_fetch_and(and_a_r8(set.rh))]),
   op(0xa5, `AND ${set.rl}`, [opcode_fetch_and(and_a_r8(set.rl))]),
-  op(0xa6, "AND (HL)", [opcode_fetch, mem_read("HL", "OPx", and_a_r8("OPx"))]),
+  op(0xa6, `AND (${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", and_a_r8("OPx")),
+  ]),
   op(0xa7, "AND A", [opcode_fetch_and(and_a_r8("A"))]),
   op(0xa8, "XOR B", [opcode_fetch_and(xor_a_r8("B"))]),
   op(0xa9, "XOR C", [opcode_fetch_and(xor_a_r8("C"))]),
@@ -988,7 +1105,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xab, "XOR E", [opcode_fetch_and(xor_a_r8("E"))]),
   op(0xac, `XOR ${set.rh}`, [opcode_fetch_and(xor_a_r8(set.rh))]),
   op(0xad, `XOR ${set.rl}`, [opcode_fetch_and(xor_a_r8(set.rl))]),
-  op(0xae, "XOR (HL)", [opcode_fetch, mem_read("HL", "OPx", xor_a_r8("OPx"))]),
+  op(0xae, `XOR (${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", xor_a_r8("OPx")),
+  ]),
   op(0xaf, "XOR A", [opcode_fetch_and(xor_a_r8("A"))]),
 
   op(0xb0, "OR B", [opcode_fetch_and(or_a_r8("B"))]),
@@ -997,7 +1118,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xb3, "OR E", [opcode_fetch_and(or_a_r8("E"))]),
   op(0xb4, `OR ${set.rh}`, [opcode_fetch_and(or_a_r8(set.rh))]),
   op(0xb5, `OR ${set.rl}`, [opcode_fetch_and(or_a_r8(set.rl))]),
-  op(0xb6, "OR (HL)", [opcode_fetch, mem_read("HL", "OPx", or_a_r8("OPx"))]),
+  op(0xb6, `OR (${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", or_a_r8("OPx")),
+  ]),
   op(0xb7, "OR A", [opcode_fetch_and(or_a_r8("A"))]),
   op(0xb8, "CP B", [opcode_fetch_and(cp_a_r8("B"))]),
   op(0xb9, "CP C", [opcode_fetch_and(cp_a_r8("C"))]),
@@ -1005,7 +1130,11 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xbb, "CP E", [opcode_fetch_and(cp_a_r8("E"))]),
   op(0xbc, `CP ${set.rh}`, [opcode_fetch_and(cp_a_r8(set.rh))]),
   op(0xbd, `CP ${set.rl}`, [opcode_fetch_and(cp_a_r8(set.rl))]),
-  op(0xbe, "CP (HL)", [opcode_fetch, mem_read("HL", "OPx", cp_a_r8("OPx"))]),
+  op(0xbe, `CP (${addr_mnemonic(set)})`, [
+    opcode_fetch,
+    ...indexed_prefix(set),
+    mem_read(indexed_addr(set), "OPx", cp_a_r8("OPx")),
+  ]),
   op(0xbf, "CP A", [opcode_fetch_and(cp_a_r8("A"))]),
 
   op(0xc0, "RET nz", ret(opcode_fetch_ret_if_flag_not_set(FLAG_Z))),
@@ -1038,7 +1167,7 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xda, "JP c,nn", jp(jump_if_flag_set(FLAG_C))),
   op(0xdb, "IN A,(n)", [opcode_fetch, fetch_z, io_read_az]),
   op(0xdc, "CALL c,nn", call(jump_if_flag_set(FLAG_C))),
-  // 0xdd: IX ops
+  op(0xdd, "PREFIX DD", [opcode_fetch_and(prefix_dd)]),
   op(0xde, "SBC A,n", [opcode_fetch, fetch_byte(sub_a_imm(true))]),
   op(0xdf, "RST 18", rst(0x18)),
 
@@ -1059,7 +1188,7 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xe8, "RET pe", ret(opcode_fetch_ret_if_flag_set(FLAG_PV))),
   op(0xe9, `JP (${set.rp})`, [opcode_fetch_and(jp_hl(set))]),
   op(0xea, "JP pe,nn", jp(jump_if_flag_set(FLAG_PV))),
-  op(0xeb, `EX DE,${set.rp}`, [opcode_fetch_and(ex_de_hl(set))]),
+  op(0xeb, "EX DE,HL", [opcode_fetch_and(ex_de_hl)]),
   op(0xec, "CALL pe,nn", call(jump_if_flag_set(FLAG_PV))),
   op(0xed, "PREFIX ED", [opcode_fetch_and(prefix_ed)]),
   op(0xee, "XOR n", [opcode_fetch, fetch_byte(xor_a)]),
@@ -1078,7 +1207,7 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   op(0xfa, "JP m,nn", jp(jump_if_flag_set(FLAG_S))),
   op(0xfb, "EI", [opcode_fetch_and(ei)]),
   op(0xfc, "CALL m,nn", call(jump_if_flag_set(FLAG_S))),
-  // 0xfd: IY ops
+  op(0xfd, "PREFIX FD", [opcode_fetch_and(prefix_fd)]),
   op(0xfe, "CP n", [opcode_fetch, fetch_byte(cp_a_imm)]),
   op(0xff, "RST 38", rst(0x38)),
   );
@@ -1147,10 +1276,10 @@ export const edOpCodes = makeOpTable(
 
 export const cbOpCodes = makeOpTable();
 
-export const ddOpCodes = makeOpTable();
+export const ddOpCodes = buildOpTable(IX_SET);
 
 export const ddcbOpCodes = makeOpTable();
 
-export const fdOpCodes = makeOpTable();
+export const fdOpCodes = buildOpTable(IY_SET);
 
 export const fdcbOpCodes = makeOpTable();
