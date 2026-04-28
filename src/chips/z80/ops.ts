@@ -535,8 +535,8 @@ function ret(check: MCycle = opcode_fetch) {
 function pop_r16(hi: Reg8, lo: Reg8) {
   return [
     opcode_fetch,
-    mem_read("SP", lo, dec_sp.process),
-    mem_read("SP", hi, dec_sp.process),
+    mem_read("SP", lo, inc_sp.process),
+    mem_read("SP", hi, inc_sp.process),
   ];
 }
 function push_r16(hi: Reg8, lo: Reg8) {
