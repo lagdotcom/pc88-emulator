@@ -60,6 +60,21 @@ export interface RunOptions {
   // Print a progress message to console.error every N instructions
   // (helps when running long programs like zexdoc). 0 disables.
   progressEvery?: number;
+  // Approximate total instructions for the loaded program; if set, the
+  // progress message includes a percentage and ETA. Only used to make
+  // the log nicer to look at — the actual run still terminates on its
+  // own (BDOS function 0, HALT, or maxOps).
+  approxTotalOps?: number;
+}
+
+function formatHms(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return "?";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m`;
+  if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`;
+  return `${s}s`;
 }
 
 export interface RunResult {
@@ -189,11 +204,18 @@ export function runCpm(
     ops++;
     if (progressEvery > 0 && ops % progressEvery === 0) {
       const sec = (Date.now() - startTime) / 1000;
-      const rate = (ops / sec / 1_000_000).toFixed(2);
+      const rate = ops / sec;
+      const mops = (rate / 1_000_000).toFixed(2);
+      let eta = "";
+      const total = opts.approxTotalOps;
+      if (total !== undefined && ops < total) {
+        const pct = ((ops / total) * 100).toFixed(1);
+        eta = `, ${pct}% done, ETA ~${formatHms((total - ops) / rate)}`;
+      }
       // eslint-disable-next-line no-console
       console.error(
         `[cpm] ${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ` +
-          `${rate} Mops/s, output so far: ${JSON.stringify(output.slice(-80))}`,
+          `${mops} Mops/s${eta}, output: ${JSON.stringify(output.slice(-80))}`,
       );
     }
   }

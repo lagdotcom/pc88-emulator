@@ -24,6 +24,26 @@ const URLS: Record<string, string> = {
     "https://raw.githubusercontent.com/anotherlin/z80emu/master/testfiles/zexall.com",
 };
 
+// Approximate total instructions to completion. Used only for the ETA in
+// progress logs — the actual run terminates on BDOS function 0 from the
+// binary itself, not on hitting this count. Numbers come from a successful
+// reference run; refresh if the emulator's behaviour changes enough that
+// these get noticeably off.
+const APPROX_TOTAL_OPS: Record<string, number> = {
+  "zexdoc.com": 8_500_000_000,
+  "zexall.com": 9_000_000_000,
+};
+
+function formatDuration(seconds: number): string {
+  if (!isFinite(seconds) || seconds < 0) return "?";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m`;
+  if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
 async function loadBinary(name: string): Promise<Uint8Array> {
   const cached = join(FIXTURES, name);
   if (existsSync(cached)) {
@@ -67,6 +87,7 @@ async function main() {
   const which = process.argv[2] ?? "zexdoc";
   const filename = `${which}.com`;
   const bin = await loadBinary(filename);
+  const totalOps = APPROX_TOTAL_OPS[filename];
 
   const ram = new Ram();
   const io = new Io();
@@ -82,7 +103,7 @@ async function main() {
   const start = Date.now();
   let lastProgressOps = 0;
   const progressEvery = 50_000_000;
-  const max = 5_000_000_000;
+  const max = 20_000_000_000;
 
   while (ops < max) {
     if (cpu.regs.PC === 0x0005) {
@@ -117,16 +138,23 @@ async function main() {
     if (ops - lastProgressOps >= progressEvery) {
       lastProgressOps = ops;
       const sec = (Date.now() - start) / 1000;
-      const rate = ops / sec / 1_000_000;
+      const rate = ops / sec;
+      const mops = (rate / 1_000_000).toFixed(2);
+      let etaPart = "";
+      if (totalOps !== undefined && ops < totalOps) {
+        const remaining = (totalOps - ops) / rate;
+        const pct = ((ops / totalOps) * 100).toFixed(1);
+        etaPart = `, ${pct}% done, ETA ~${formatDuration(remaining)}`;
+      }
       process.stderr.write(
-        `\n[${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ${rate.toFixed(2)} Mops/s]\n`,
+        `\n[${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ${mops} Mops/s${etaPart}]\n`,
       );
     }
   }
 
   const sec = (Date.now() - start) / 1000;
   process.stderr.write(
-    `\nDone: ${ops.toLocaleString()} ops in ${sec.toFixed(1)}s ` +
+    `\nDone: ${ops.toLocaleString()} ops in ${formatDuration(sec)} ` +
       `(${(ops / sec / 1_000_000).toFixed(2)} Mops/s)\n`,
   );
 }

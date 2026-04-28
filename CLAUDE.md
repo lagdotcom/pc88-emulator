@@ -68,9 +68,8 @@ records (`{type, tStates, process}`). `Z80.runOneOp()`:
 
 Seven opcode tables are declared and exported from
 `src/chips/z80/ops.ts`: `opCodes`, `edOpCodes`, `cbOpCodes`,
-`ddOpCodes`, `fdOpCodes`, `ddcbOpCodes`, `fdcbOpCodes`. The first
-five are populated; the DDCB/FDCB tables are placeholders (an empty
-`makeOpTable()`) — adding them is a known TODO.
+`ddOpCodes`, `fdOpCodes`, `ddcbOpCodes`, `fdcbOpCodes`. All seven
+are populated by factory functions in the same file.
 
 ### RegSet pattern
 
@@ -92,11 +91,20 @@ For (HL)-style memory access the `indexed_prefix(set)` and
 to `[fetch_disp_to_wz(set), internal_delay(5), mem_read("WZ", …)]`. WZ is
 loaded with `IX/IY + d` so MEMPTR comes out right.
 
-`buildCbTable(HL_SET)` produces `cbOpCodes`. The DDCB/FDCB tables are
-not yet generated; when written, they will reuse `buildCbTable` with
-`IX_SET` / `IY_SET` plus the undocumented "register copy" side effect
-for non-(HL) target slots, and a different decode path that consumes
-the displacement byte before the op byte.
+`buildCbTable(HL_SET)` produces `cbOpCodes`. `buildIndexedCbTable(set)`
+produces `ddcbOpCodes` (with `IX_SET`) and `fdcbOpCodes` (with
+`IY_SET`). DDCB/FDCB always operate on `(IX+d)` / `(IY+d)`, never on
+plain registers, so the indexed builder rejects `HL_SET`. It also
+implements the undocumented "register copy" side effect: for non-(HL)
+target slots (0..5, 7) the modified byte is also written into the
+named register. `BIT b,(IX+d)` ignores the slot entirely — every BIT
+slot behaves identically with no register write-back.
+
+The DD/FD CB-prefix transition is in `prefix_cb_for(set)`. Plain CB
+fetches just the op byte and dispatches; DDCB/FDCB fetch the
+displacement *first*, park `IX/IY+d` in WZ, and then the next
+`runOneOp` reads the op byte (as MR, not M1 — DDCB/FDCB ops use a
+no-op first MCycle so R isn't double-incremented).
 
 ### Sean Young's H/L substitution rule
 
@@ -176,10 +184,15 @@ zexdoc run is ~7 billion Z80 instructions.
 
 For watching progress in real time use `yarn zex zexdoc` (or `yarn
 zex zexall`) — that runs `zex-runner.ts` standalone, streams BDOS
-output as zexdoc prints it, and reports a Mops/s figure every 50M
-ops. The current emulator runs zexdoc at roughly 3 M ops/s, so a
-full run is ~30-40 minutes wall-clock. The vitest `test:zex` path
-captures the same output but only surfaces it on completion.
+output as zexdoc prints it, and every 50M ops logs a status line
+with elapsed time, Mops/s, percentage complete, and ETA. The
+percentage and ETA come from a hardcoded approximate total of
+~8.5 G instructions for zexdoc and ~9.0 G for zexall (refresh in
+both `zex-runner.ts` and `zexdoc.test.ts` if a future run shows
+them noticeably wrong). The current emulator runs zexdoc at
+roughly 3 M ops/s on Linux; expect a full run in well under an
+hour. The vitest `test:zex` path captures the same output but
+only surfaces it on completion.
 
 The 3 Mops/s figure is the next obvious perf lever: the M-cycle list
 dispatcher allocates closure objects per cycle and walks an array per
@@ -191,8 +204,9 @@ PC-88 BIOS to boot, but not while the focus is correctness.
 ## Test status (as of last commit)
 
 SingleStepTests sample size 25 per opcode → 40100 total cases run by
-`yarn test:z80`. **40023 / 40100** pass. The 77 remaining failures
-are entirely in the **H and PV flags during INIR/INDR/OTIR/OTDR
+`yarn test:z80` (1604 ops × 25, covering base + CB + DD + FD + ED +
+DDCB + FDCB). **40023 / 40100** pass. The 77 remaining failures are
+entirely in the **H and PV flags during INIR/INDR/OTIR/OTDR
 repeating iterations**:
 
 - The X/Y rule and WZ rule for these block I/O repeats *are* correct:
@@ -204,9 +218,9 @@ repeating iterations**:
   C_flag, base, value)`. Cracking this needs a known-correct
   reference implementation (FUSE / mame / Patrik Rak's z80core).
 
-All non-repeat INI/IND/OUTI/OUTD pass, as do every other ED, base,
-CB, DD, and FD opcode family. The `tests/programs/` hand-assembled
-suite passes 18/18.
+All non-repeat INI/IND/OUTI/OUTD pass, every base/CB/DD/FD opcode
+passes, and DDCB/FDCB pass cleanly. The `tests/programs/`
+hand-assembled suite passes 18/18.
 
 ## Style
 
@@ -245,9 +259,9 @@ propagates after a session restart.
 - The harness skips opcodes whose mnemonic starts with `PREFIX`
   (DD/FD/CB/ED themselves) — those don't have their own test files.
 - DDCB/FDCB filenames in SingleStepTests are `<prefix> cb __ XX.json`
-  where `__` is a placeholder for the displacement (which varies per
-  case in the file). Reading those needs the DDCB/FDCB tables to be
-  built first; they're empty placeholders for now.
+  where `__` is a placeholder for the displacement byte (it varies
+  per case inside the file). Both tables are populated and pass
+  cleanly.
 - `step()` calls `runOneOp` up to 5 times and stops when `cpu.prefix`
   is undefined, which signals that the prefix has been consumed and
   the effective opcode dispatched. A `DD CB d xx` instruction takes

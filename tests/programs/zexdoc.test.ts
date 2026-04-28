@@ -70,8 +70,9 @@ describe.skipIf(SKIP)("zexdoc", () => {
       }
       const h = makeProgramHarness();
       const r = runCpm(h, bin, {
-        maxOps: 2_000_000_000,
+        maxOps: 20_000_000_000,
         progressEvery: 50_000_000,
+        approxTotalOps: 8_500_000_000,
       });
       // Always log captured output so a failure surfaces what zexdoc said.
       // eslint-disable-next-line no-console
@@ -99,8 +100,9 @@ describe.skipIf(SKIP)("zexall", () => {
       }
       const h = makeProgramHarness();
       const r = runCpm(h, bin, {
-        maxOps: 2_000_000_000,
+        maxOps: 20_000_000_000,
         progressEvery: 50_000_000,
+        approxTotalOps: 9_000_000_000,
       });
       // eslint-disable-next-line no-console
       console.log("zexall output:\n" + r.output);
