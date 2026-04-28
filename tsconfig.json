@@ -1,9 +1,12 @@
 {
-  // Visit https://aka.ms/tsconfig to read more about this file
-  "include": ["src/**/*"],
+  // Visit https://aka.ms/tsconfig to read more about this file.
+  // Single config covering src/ and tests/ so the TypeScript language
+  // server in VS Code picks up the same compiler options when you open
+  // a test file. yarn build still type-checks the lot via tsc -noEmit.
+  "include": ["src/**/*", "tests/**/*"],
   "compilerOptions": {
-    // File Layout
-    "rootDir": "./src",
+    // Output (only used if tsc actually emits — yarn build runs
+    // tsc -noEmit and bundles via esbuild).
     "outDir": "./dist",
 
     // Environment Settings
