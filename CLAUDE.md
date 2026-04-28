@@ -152,7 +152,21 @@ Two harness modes for testing the CPU on real Z80 sequences:
 `zexdoc.test.ts` fetches `zexdoc.com` / `zexall.com` from
 anotherlin/z80emu on first run and caches under `tests/programs/
 fixtures/`. Gated behind `ZEX=1` since each takes minutes; a full
-zexdoc run is ~7 billion Z80 cycles.
+zexdoc run is ~7 billion Z80 instructions.
+
+For watching progress in real time use `yarn zex zexdoc` (or `yarn
+zex zexall`) — that runs `zex-runner.ts` standalone, streams BDOS
+output as zexdoc prints it, and reports a Mops/s figure every 50M
+ops. The current emulator runs zexdoc at roughly 3 M ops/s, so a
+full run is ~30-40 minutes wall-clock. The vitest `test:zex` path
+captures the same output but only surfaces it on completion.
+
+The 3 Mops/s figure is the next obvious perf lever: the M-cycle list
+dispatcher allocates closure objects per cycle and walks an array per
+opcode. Switching to a giant per-opcode switch with inline code (the
+common pattern in fast Z80 emulators) typically gets to 50-100 Mops/s
+in V8. Worth doing before the user is sitting waiting for a real
+PC-88 BIOS to boot, but not while the focus is correctness.
 
 ## Test status (as of last commit)
 
