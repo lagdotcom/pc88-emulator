@@ -80,19 +80,27 @@ Roughly ordered by what's blocking what.
 
 ### CPU
 
-- [ ] **INIR/INDR/OTIR/OTDR repeat-iteration H and PV flags** (77
-  SingleStepTests failures). The X/Y rule (from `(PC+1).high`) and
-  the WZ rule (`PC + 1` after `PC -= 2`) are correct; H/PV during
-  the repeat follow undocumented hardware quirks that haven't been
-  matched against any simple formula over `(B_post, C_flag, base,
-  value)`. Needs a known-correct reference (FUSE / mame / Patrik
-  Rak's z80core) to crack.
-- [ ] **zexdoc/zexall failures** (same four families fail in both,
-  so these are documented-flag bugs that SingleStepTests' 25-sample
-  default missed):
-  - `cpd<r>` — CPD / CPDR. Direction-specific: CPI/CPIR pass.
-    Likely the WZ rule for the backward direction or a flag at the
-    repeat boundary.
+- [ ] **Block-instruction repeat-iteration flags**. The non-repeating
+  CPI/CPD/INI/IND/OUTI/OUTD all pass at any sample size. The
+  repeating variants — CPIR, CPDR, INIR, INDR, OTIR, OTDR — have
+  edge cases the default `Z80_SAMPLE=25` misses but
+  `Z80_SAMPLE=200 yarn test:z80` (and zexdoc's `cpd<r>` test) catch:
+  - LDIR / LDDR pass in zexdoc, so the LD repeat path is fine.
+  - CPIR / CPDR fail at higher sample sizes despite the X/Y
+    rule (`(PC+1).high`) and WZ rule (`PC + 1` after `PC -= 2`)
+    looking correct. Suspect a flag at the loop boundary
+    (the dual `BC != 0 AND result != 0` exit condition is what
+    distinguishes them from LDIR/LDDR).
+  - INIR / INDR / OTIR / OTDR fail on H and PV during repeat. X/Y
+    and WZ are correct; H/PV follow undocumented hardware quirks
+    that haven't been matched against any simple formula over
+    `(B_post, C_flag, base, value)`. Empirical fitting against
+    test data tops out around 941/995. Cracking these needs a
+    known-correct reference (FUSE / mame / Patrik Rak's z80core).
+- [ ] **zexdoc/zexall failures**. Both fail the same families, so
+  these are documented-flag bugs (zexdoc masks X/Y from its CRC).
+  The `cpd<r>` failure is the same root cause as the CPIR/CPDR
+  SingleStepTests failures above — track it there. Remaining:
   - `<inc,dec> (hl)` and `<inc,dec> (<ix,iy>+1)` — register form
     of INC/DEC passes, so the bug is in the memory R-M-W
     surrounding `inc8`/`dec8`, not the flag math itself. Suspect
@@ -102,8 +110,8 @@ Roughly ordered by what's blocking what.
     correct; likely a subtle F-flag bug.
 
   Reproduce in the SingleStepTests harness with
-  `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` to surface the exact
-  cases.
+  `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` (or `Z80_SAMPLE=200`
+  if a smaller window is enough) to surface the exact cases.
 - [ ] **Interrupt acceptance**. IM 0/1/2 dispatch, NMI vector, edge-
   vs level-triggered handling, and the `iff1 && !eiDelay` gate on
   the M1 boundary. The Z80 has all the pieces; nothing acts as the
