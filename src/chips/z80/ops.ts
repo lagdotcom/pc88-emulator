@@ -27,6 +27,19 @@ export interface OpCode {
   mCycles: MCycle[];
 }
 
+// A RegSet describes the substitution applied to opcodes where HL/H/L/(HL)
+// would otherwise appear. The unprefixed table is built with HL_SET; the DD
+// and FD prefixes pass IX_SET / IY_SET (and a different addressing mode for
+// memory accesses, handled separately).
+export interface RegSet {
+  rp: "HL" | "IX" | "IY";
+  rh: "H" | "IXH" | "IYH";
+  rl: "L" | "IXL" | "IYL";
+  addr: "hl" | "ix-d" | "iy-d";
+}
+
+const HL_SET: RegSet = { rp: "HL", rh: "H", rl: "L", addr: "hl" };
+
 const op = (code: u8, mnemonic: string, mCycles: MCycle[]): OpCode => ({
   code,
   mnemonic,
@@ -210,10 +223,10 @@ function do_add16(cpu: Z80, dst: Reg16, value: u16) {
   });
 }
 
-const add_hl_rr = (src: Reg16): MCycle => ({
+const add_hl_rr = (src: Reg16, set: RegSet): MCycle => ({
   type: "INT",
   tStates: 7,
-  process: (cpu) => do_add16(cpu, "HL", cpu.regs[src]),
+  process: (cpu) => do_add16(cpu, set.rp, cpu.regs[src]),
 });
 
 const opcode_fetch_and_inc_r8 = (reg: Reg8) =>
@@ -362,9 +375,11 @@ function halt(cpu: Z80) {
   // now we wait until an interrupt is handled, then do cpu.regs.PC++
 }
 
-function jp_hl(cpu: Z80) {
-  cpu.regs.PC = cpu.regs.HL;
-}
+const jp_hl =
+  (set: RegSet) =>
+  (cpu: Z80): void => {
+    cpu.regs.PC = cpu.regs[set.rp];
+  };
 
 function di(cpu: Z80) {
   cpu.iff1 = false;
@@ -384,9 +399,11 @@ function exx(cpu: Z80) {
   exchange_regs(cpu, "HL", "HL_");
 }
 
-function ex_de_hl(cpu: Z80) {
-  exchange_regs(cpu, "DE", "HL");
-}
+const ex_de_hl =
+  (set: RegSet) =>
+  (cpu: Z80): void => {
+    exchange_regs(cpu, "DE", set.rp);
+  };
 
 function prefix_ed(cpu: Z80) {
   cpu.prefix = { type: "ED" };
@@ -596,29 +613,29 @@ const mem_read_sp_plus_1_to_w: MCycle = {
   },
 };
 
-const mem_write_h_to_sp_plus_1: MCycle = {
+const mem_write_h_to_sp_plus_1 = (set: RegSet): MCycle => ({
   type: "MW",
   tStates: 3,
   process: (cpu) => {
     const addr = asU16(cpu.regs.SP + 1);
-    cpu.mem.write(addr, cpu.regs.H);
+    cpu.mem.write(addr, cpu.regs[set.rh]);
   },
-};
+});
 
-const mem_write_l_to_sp_transfer_wz: MCycle = {
+const mem_write_l_to_sp_transfer_wz = (set: RegSet): MCycle => ({
   type: "MW",
   tStates: 5,
   process: (cpu) => {
-    cpu.mem.write(cpu.regs.SP, cpu.regs.L);
-    cpu.regs.HL = cpu.regs.WZ;
+    cpu.mem.write(cpu.regs.SP, cpu.regs[set.rl]);
+    cpu.regs[set.rp] = cpu.regs.WZ;
   },
-};
+});
 
-const ld_sp_hl: MCycle = {
+const ld_sp_hl = (set: RegSet): MCycle => ({
   type: "INT",
   tStates: 2,
-  process: (cpu) => (cpu.regs.SP = cpu.regs.HL),
-};
+  process: (cpu) => (cpu.regs.SP = cpu.regs[set.rp]),
+});
 
 function ret(check: MCycle = opcode_fetch) {
   return [
@@ -674,7 +691,16 @@ function rst(vector: u16) {
 const makeOpTable = (...list: OpCode[]): Record<u8, OpCode> =>
   Object.fromEntries(list.map((op) => [op.code, op]));
 
-export const opCodes = makeOpTable(
+export function buildOpTable(set: RegSet): Record<u8, OpCode> {
+  // Per-set fetch helpers for the H/L halves of the active register pair.
+  const fetch_rh = fetch_r8(set.rh);
+  const fetch_rl = fetch_r8(set.rl);
+  const inc_rh = opcode_fetch_and_inc_r8(set.rh);
+  const dec_rh = opcode_fetch_and_dec_r8(set.rh);
+  const inc_rl = opcode_fetch_and_inc_r8(set.rl);
+  const dec_rl = opcode_fetch_and_dec_r8(set.rl);
+
+  return makeOpTable(
   op(0x00, "NOP", [opcode_fetch]),
   op(0x01, "LD BC,nn", [opcode_fetch, fetch_c, fetch_b]),
   op(0x02, "LD (BC),A", [
@@ -690,7 +716,7 @@ export const opCodes = makeOpTable(
   op(0x06, "LD B,n", [opcode_fetch, fetch_b]),
   op(0x07, "RLCA", [opcode_fetch_and(rlca)]),
   op(0x08, "EX AF,AF'", [opcode_fetch_and(ex_af)]),
-  op(0x09, "ADD HL,BC", [opcode_fetch, add_hl_rr("BC")]),
+  op(0x09, `ADD ${set.rp},BC`, [opcode_fetch, add_hl_rr("BC", set)]),
   op(0x0a, "LD A,(BC)", [
     opcode_fetch,
     mem_read("BC", "A", (cpu) => (cpu.regs.WZ = cpu.regs.BC + 1)),
@@ -725,7 +751,7 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x19, "ADD HL,DE", [opcode_fetch, add_hl_rr("DE")]),
+  op(0x19, `ADD ${set.rp},DE`, [opcode_fetch, add_hl_rr("DE", set)]),
   op(0x1a, "LD A,(DE)", [
     opcode_fetch,
     mem_read("DE", "A", (cpu) => (cpu.regs.WZ = cpu.regs.DE + 1)),
@@ -741,36 +767,36 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x21, "LD HL,nn", [opcode_fetch, fetch_l, fetch_h]),
-  op(0x22, "LD (nn),HL", [
+  op(0x21, `LD ${set.rp},nn`, [opcode_fetch, fetch_rl, fetch_rh]),
+  op(0x22, `LD (nn),${set.rp}`, [
     opcode_fetch,
     fetch_z,
     fetch_w,
-    mem_write("WZ", "L", (cpu) => cpu.regs.WZ++),
-    mem_write("WZ", "H"),
+    mem_write("WZ", set.rl, (cpu) => cpu.regs.WZ++),
+    mem_write("WZ", set.rh),
   ]),
-  op(0x23, "INC HL", [opcode_fetch, inc_r16("HL")]),
-  op(0x24, "INC H", [opcode_fetch_and_inc_r8("H")]),
-  op(0x25, "DEC H", [opcode_fetch_and_dec_r8("H")]),
-  op(0x26, "LD H,n", [opcode_fetch, fetch_h]),
+  op(0x23, `INC ${set.rp}`, [opcode_fetch, inc_r16(set.rp)]),
+  op(0x24, `INC ${set.rh}`, [inc_rh]),
+  op(0x25, `DEC ${set.rh}`, [dec_rh]),
+  op(0x26, `LD ${set.rh},n`, [opcode_fetch, fetch_rh]),
   op(0x27, "DAA", [opcode_fetch_and(daa)]),
   op(0x28, "JR z,d", [
     opcode_fetch_and(jump_if_flag_set(FLAG_Z)),
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x29, "ADD HL,HL", [opcode_fetch, add_hl_rr("HL")]),
-  op(0x2a, "LD HL,(nn)", [
+  op(0x29, `ADD ${set.rp},${set.rp}`, [opcode_fetch, add_hl_rr(set.rp, set)]),
+  op(0x2a, `LD ${set.rp},(nn)`, [
     opcode_fetch,
     fetch_z,
     fetch_w,
-    mem_read("WZ", "L", (cpu) => cpu.regs.WZ++),
-    mem_read("WZ", "H"),
+    mem_read("WZ", set.rl, (cpu) => cpu.regs.WZ++),
+    mem_read("WZ", set.rh),
   ]),
-  op(0x2b, "DEC HL", [opcode_fetch, dec_r16("HL")]),
-  op(0x2c, "INC L", [opcode_fetch_and_inc_r8("L")]),
-  op(0x2d, "DEC L", [opcode_fetch_and_dec_r8("L")]),
-  op(0x2e, "LD L,n", [opcode_fetch, fetch_l]),
+  op(0x2b, `DEC ${set.rp}`, [opcode_fetch, dec_r16(set.rp)]),
+  op(0x2c, `INC ${set.rl}`, [inc_rl]),
+  op(0x2d, `DEC ${set.rl}`, [dec_rl]),
+  op(0x2e, `LD ${set.rl},n`, [opcode_fetch, fetch_rl]),
   op(0x2f, "CPL", [opcode_fetch_and(cpl)]),
 
   op(0x30, "JR nc,d", [
@@ -808,7 +834,7 @@ export const opCodes = makeOpTable(
     fetch_displacement_respect_skip_jump,
     relative_jump_wz,
   ]),
-  op(0x39, "ADD HL,SP", [opcode_fetch, add_hl_rr("SP")]),
+  op(0x39, `ADD ${set.rp},SP`, [opcode_fetch, add_hl_rr("SP", set)]),
   op(0x3a, "LD A,(nn)", [
     opcode_fetch,
     fetch_z,
@@ -825,16 +851,16 @@ export const opCodes = makeOpTable(
   op(0x41, "LD B,C", [opcode_fetch_and_load_r8_from_r8("B", "C")]),
   op(0x42, "LD B,D", [opcode_fetch_and_load_r8_from_r8("B", "D")]),
   op(0x43, "LD B,E", [opcode_fetch_and_load_r8_from_r8("B", "E")]),
-  op(0x44, "LD B,H", [opcode_fetch_and_load_r8_from_r8("B", "H")]),
-  op(0x45, "LD B,L", [opcode_fetch_and_load_r8_from_r8("B", "L")]),
+  op(0x44, `LD B,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("B", set.rh)]),
+  op(0x45, `LD B,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("B", set.rl)]),
   op(0x46, "LD B,(HL)", [opcode_fetch, mem_read("HL", "B")]),
   op(0x47, "LD B,A", [opcode_fetch_and_load_r8_from_r8("B", "A")]),
   op(0x48, "LD C,B", [opcode_fetch_and_load_r8_from_r8("C", "B")]),
   op(0x49, "LD C,C", [opcode_fetch_and_load_r8_from_r8("C", "C")]),
   op(0x4a, "LD C,D", [opcode_fetch_and_load_r8_from_r8("C", "D")]),
   op(0x4b, "LD C,E", [opcode_fetch_and_load_r8_from_r8("C", "E")]),
-  op(0x4c, "LD C,H", [opcode_fetch_and_load_r8_from_r8("C", "H")]),
-  op(0x4d, "LD C,L", [opcode_fetch_and_load_r8_from_r8("C", "L")]),
+  op(0x4c, `LD C,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("C", set.rh)]),
+  op(0x4d, `LD C,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("C", set.rl)]),
   op(0x4e, "LD C,(HL)", [opcode_fetch, mem_read("HL", "C")]),
   op(0x4f, "LD C,A", [opcode_fetch_and_load_r8_from_r8("C", "A")]),
 
@@ -842,36 +868,49 @@ export const opCodes = makeOpTable(
   op(0x51, "LD D,C", [opcode_fetch_and_load_r8_from_r8("D", "C")]),
   op(0x52, "LD D,D", [opcode_fetch_and_load_r8_from_r8("D", "D")]),
   op(0x53, "LD D,E", [opcode_fetch_and_load_r8_from_r8("D", "E")]),
-  op(0x54, "LD D,H", [opcode_fetch_and_load_r8_from_r8("D", "H")]),
-  op(0x55, "LD D,L", [opcode_fetch_and_load_r8_from_r8("D", "L")]),
+  op(0x54, `LD D,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("D", set.rh)]),
+  op(0x55, `LD D,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("D", set.rl)]),
   op(0x56, "LD D,(HL)", [opcode_fetch, mem_read("HL", "D")]),
   op(0x57, "LD D,A", [opcode_fetch_and_load_r8_from_r8("D", "A")]),
   op(0x58, "LD E,B", [opcode_fetch_and_load_r8_from_r8("E", "B")]),
   op(0x59, "LD E,C", [opcode_fetch_and_load_r8_from_r8("E", "C")]),
   op(0x5a, "LD E,D", [opcode_fetch_and_load_r8_from_r8("E", "D")]),
   op(0x5b, "LD E,E", [opcode_fetch_and_load_r8_from_r8("E", "E")]),
-  op(0x5c, "LD E,H", [opcode_fetch_and_load_r8_from_r8("E", "H")]),
-  op(0x5d, "LD E,L", [opcode_fetch_and_load_r8_from_r8("E", "L")]),
+  op(0x5c, `LD E,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("E", set.rh)]),
+  op(0x5d, `LD E,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("E", set.rl)]),
   op(0x5e, "LD E,(HL)", [opcode_fetch, mem_read("HL", "E")]),
   op(0x5f, "LD E,A", [opcode_fetch_and_load_r8_from_r8("E", "A")]),
 
-  op(0x60, "LD H,B", [opcode_fetch_and_load_r8_from_r8("H", "B")]),
-  op(0x61, "LD H,C", [opcode_fetch_and_load_r8_from_r8("H", "C")]),
-  op(0x62, "LD H,D", [opcode_fetch_and_load_r8_from_r8("H", "D")]),
-  op(0x63, "LD H,E", [opcode_fetch_and_load_r8_from_r8("H", "E")]),
-  op(0x64, "LD H,H", [opcode_fetch_and_load_r8_from_r8("H", "H")]),
-  op(0x65, "LD H,L", [opcode_fetch_and_load_r8_from_r8("H", "L")]),
+  // 0x60-67: LD H,r — H is destination (swaps to IXH/IYH for indexed sets);
+  // 0x66 (LD H,(HL)) keeps H literal because the (HL) memory operand
+  // disqualifies the H/L→IXH/IXL substitution per Sean Young.
+  op(0x60, `LD ${set.rh},B`, [opcode_fetch_and_load_r8_from_r8(set.rh, "B")]),
+  op(0x61, `LD ${set.rh},C`, [opcode_fetch_and_load_r8_from_r8(set.rh, "C")]),
+  op(0x62, `LD ${set.rh},D`, [opcode_fetch_and_load_r8_from_r8(set.rh, "D")]),
+  op(0x63, `LD ${set.rh},E`, [opcode_fetch_and_load_r8_from_r8(set.rh, "E")]),
+  op(0x64, `LD ${set.rh},${set.rh}`, [
+    opcode_fetch_and_load_r8_from_r8(set.rh, set.rh),
+  ]),
+  op(0x65, `LD ${set.rh},${set.rl}`, [
+    opcode_fetch_and_load_r8_from_r8(set.rh, set.rl),
+  ]),
   op(0x66, "LD H,(HL)", [opcode_fetch, mem_read("HL", "H")]),
-  op(0x67, "LD H,A", [opcode_fetch_and_load_r8_from_r8("H", "A")]),
-  op(0x68, "LD L,B", [opcode_fetch_and_load_r8_from_r8("L", "B")]),
-  op(0x69, "LD L,C", [opcode_fetch_and_load_r8_from_r8("L", "C")]),
-  op(0x6a, "LD L,D", [opcode_fetch_and_load_r8_from_r8("L", "D")]),
-  op(0x6b, "LD L,E", [opcode_fetch_and_load_r8_from_r8("L", "E")]),
-  op(0x6c, "LD L,H", [opcode_fetch_and_load_r8_from_r8("L", "H")]),
-  op(0x6d, "LD L,L", [opcode_fetch_and_load_r8_from_r8("L", "L")]),
+  op(0x67, `LD ${set.rh},A`, [opcode_fetch_and_load_r8_from_r8(set.rh, "A")]),
+  op(0x68, `LD ${set.rl},B`, [opcode_fetch_and_load_r8_from_r8(set.rl, "B")]),
+  op(0x69, `LD ${set.rl},C`, [opcode_fetch_and_load_r8_from_r8(set.rl, "C")]),
+  op(0x6a, `LD ${set.rl},D`, [opcode_fetch_and_load_r8_from_r8(set.rl, "D")]),
+  op(0x6b, `LD ${set.rl},E`, [opcode_fetch_and_load_r8_from_r8(set.rl, "E")]),
+  op(0x6c, `LD ${set.rl},${set.rh}`, [
+    opcode_fetch_and_load_r8_from_r8(set.rl, set.rh),
+  ]),
+  op(0x6d, `LD ${set.rl},${set.rl}`, [
+    opcode_fetch_and_load_r8_from_r8(set.rl, set.rl),
+  ]),
   op(0x6e, "LD L,(HL)", [opcode_fetch, mem_read("HL", "L")]),
-  op(0x6f, "LD L,A", [opcode_fetch_and_load_r8_from_r8("L", "A")]),
+  op(0x6f, `LD ${set.rl},A`, [opcode_fetch_and_load_r8_from_r8(set.rl, "A")]),
 
+  // 0x70-77: LD (HL),r — (HL) is the memory operand, so r stays literal
+  // (the H/L source registers in 0x74/75 do NOT become IXH/IXL).
   op(0x70, "LD (HL),B", [opcode_fetch, mem_write("HL", "B")]),
   op(0x71, "LD (HL),C", [opcode_fetch, mem_write("HL", "C")]),
   op(0x72, "LD (HL),D", [opcode_fetch, mem_write("HL", "D")]),
@@ -884,8 +923,8 @@ export const opCodes = makeOpTable(
   op(0x79, "LD A,C", [opcode_fetch_and_load_r8_from_r8("A", "C")]),
   op(0x7a, "LD A,D", [opcode_fetch_and_load_r8_from_r8("A", "D")]),
   op(0x7b, "LD A,E", [opcode_fetch_and_load_r8_from_r8("A", "E")]),
-  op(0x7c, "LD A,H", [opcode_fetch_and_load_r8_from_r8("A", "H")]),
-  op(0x7d, "LD A,L", [opcode_fetch_and_load_r8_from_r8("A", "L")]),
+  op(0x7c, `LD A,${set.rh}`, [opcode_fetch_and_load_r8_from_r8("A", set.rh)]),
+  op(0x7d, `LD A,${set.rl}`, [opcode_fetch_and_load_r8_from_r8("A", set.rl)]),
   op(0x7e, "LD A,(HL)", [opcode_fetch, mem_read("HL", "A")]),
   op(0x7f, "LD A,A", [opcode_fetch_and_load_r8_from_r8("A", "A")]),
 
@@ -893,8 +932,8 @@ export const opCodes = makeOpTable(
   op(0x81, "ADD A,C", [opcode_fetch_and(add_a_r8("C", false))]),
   op(0x82, "ADD A,D", [opcode_fetch_and(add_a_r8("D", false))]),
   op(0x83, "ADD A,E", [opcode_fetch_and(add_a_r8("E", false))]),
-  op(0x84, "ADD A,H", [opcode_fetch_and(add_a_r8("H", false))]),
-  op(0x85, "ADD A,L", [opcode_fetch_and(add_a_r8("L", false))]),
+  op(0x84, `ADD A,${set.rh}`, [opcode_fetch_and(add_a_r8(set.rh, false))]),
+  op(0x85, `ADD A,${set.rl}`, [opcode_fetch_and(add_a_r8(set.rl, false))]),
   op(0x86, "ADD A,(HL)", [
     opcode_fetch,
     mem_read("HL", "OPx", add_a_r8("OPx", false)),
@@ -904,8 +943,8 @@ export const opCodes = makeOpTable(
   op(0x89, "ADC A,C", [opcode_fetch_and(add_a_r8("C", true))]),
   op(0x8a, "ADC A,D", [opcode_fetch_and(add_a_r8("D", true))]),
   op(0x8b, "ADC A,E", [opcode_fetch_and(add_a_r8("E", true))]),
-  op(0x8c, "ADC A,H", [opcode_fetch_and(add_a_r8("H", true))]),
-  op(0x8d, "ADC A,L", [opcode_fetch_and(add_a_r8("L", true))]),
+  op(0x8c, `ADC A,${set.rh}`, [opcode_fetch_and(add_a_r8(set.rh, true))]),
+  op(0x8d, `ADC A,${set.rl}`, [opcode_fetch_and(add_a_r8(set.rl, true))]),
   op(0x8e, "ADC A,(HL)", [
     opcode_fetch,
     mem_read("HL", "OPx", add_a_r8("OPx", true)),
@@ -916,8 +955,8 @@ export const opCodes = makeOpTable(
   op(0x91, "SUB C", [opcode_fetch_and(sub_a_r8("C", false))]),
   op(0x92, "SUB D", [opcode_fetch_and(sub_a_r8("D", false))]),
   op(0x93, "SUB E", [opcode_fetch_and(sub_a_r8("E", false))]),
-  op(0x94, "SUB H", [opcode_fetch_and(sub_a_r8("H", false))]),
-  op(0x95, "SUB L", [opcode_fetch_and(sub_a_r8("L", false))]),
+  op(0x94, `SUB ${set.rh}`, [opcode_fetch_and(sub_a_r8(set.rh, false))]),
+  op(0x95, `SUB ${set.rl}`, [opcode_fetch_and(sub_a_r8(set.rl, false))]),
   op(0x96, "SUB (HL)", [
     opcode_fetch,
     mem_read("HL", "OPx", sub_a_r8("OPx", false)),
@@ -927,8 +966,8 @@ export const opCodes = makeOpTable(
   op(0x99, "SBC A,C", [opcode_fetch_and(sub_a_r8("C", true))]),
   op(0x9a, "SBC A,D", [opcode_fetch_and(sub_a_r8("D", true))]),
   op(0x9b, "SBC A,E", [opcode_fetch_and(sub_a_r8("E", true))]),
-  op(0x9c, "SBC A,H", [opcode_fetch_and(sub_a_r8("H", true))]),
-  op(0x9d, "SBC A,L", [opcode_fetch_and(sub_a_r8("L", true))]),
+  op(0x9c, `SBC A,${set.rh}`, [opcode_fetch_and(sub_a_r8(set.rh, true))]),
+  op(0x9d, `SBC A,${set.rl}`, [opcode_fetch_and(sub_a_r8(set.rl, true))]),
   op(0x9e, "SBC A,(HL)", [
     opcode_fetch,
     mem_read("HL", "OPx", sub_a_r8("OPx", true)),
@@ -939,16 +978,16 @@ export const opCodes = makeOpTable(
   op(0xa1, "AND C", [opcode_fetch_and(and_a_r8("C"))]),
   op(0xa2, "AND D", [opcode_fetch_and(and_a_r8("D"))]),
   op(0xa3, "AND E", [opcode_fetch_and(and_a_r8("E"))]),
-  op(0xa4, "AND H", [opcode_fetch_and(and_a_r8("H"))]),
-  op(0xa5, "AND L", [opcode_fetch_and(and_a_r8("L"))]),
+  op(0xa4, `AND ${set.rh}`, [opcode_fetch_and(and_a_r8(set.rh))]),
+  op(0xa5, `AND ${set.rl}`, [opcode_fetch_and(and_a_r8(set.rl))]),
   op(0xa6, "AND (HL)", [opcode_fetch, mem_read("HL", "OPx", and_a_r8("OPx"))]),
   op(0xa7, "AND A", [opcode_fetch_and(and_a_r8("A"))]),
   op(0xa8, "XOR B", [opcode_fetch_and(xor_a_r8("B"))]),
   op(0xa9, "XOR C", [opcode_fetch_and(xor_a_r8("C"))]),
   op(0xaa, "XOR D", [opcode_fetch_and(xor_a_r8("D"))]),
   op(0xab, "XOR E", [opcode_fetch_and(xor_a_r8("E"))]),
-  op(0xac, "XOR H", [opcode_fetch_and(xor_a_r8("H"))]),
-  op(0xad, "XOR L", [opcode_fetch_and(xor_a_r8("L"))]),
+  op(0xac, `XOR ${set.rh}`, [opcode_fetch_and(xor_a_r8(set.rh))]),
+  op(0xad, `XOR ${set.rl}`, [opcode_fetch_and(xor_a_r8(set.rl))]),
   op(0xae, "XOR (HL)", [opcode_fetch, mem_read("HL", "OPx", xor_a_r8("OPx"))]),
   op(0xaf, "XOR A", [opcode_fetch_and(xor_a_r8("A"))]),
 
@@ -956,16 +995,16 @@ export const opCodes = makeOpTable(
   op(0xb1, "OR C", [opcode_fetch_and(or_a_r8("C"))]),
   op(0xb2, "OR D", [opcode_fetch_and(or_a_r8("D"))]),
   op(0xb3, "OR E", [opcode_fetch_and(or_a_r8("E"))]),
-  op(0xb4, "OR H", [opcode_fetch_and(or_a_r8("H"))]),
-  op(0xb5, "OR L", [opcode_fetch_and(or_a_r8("L"))]),
+  op(0xb4, `OR ${set.rh}`, [opcode_fetch_and(or_a_r8(set.rh))]),
+  op(0xb5, `OR ${set.rl}`, [opcode_fetch_and(or_a_r8(set.rl))]),
   op(0xb6, "OR (HL)", [opcode_fetch, mem_read("HL", "OPx", or_a_r8("OPx"))]),
   op(0xb7, "OR A", [opcode_fetch_and(or_a_r8("A"))]),
   op(0xb8, "CP B", [opcode_fetch_and(cp_a_r8("B"))]),
   op(0xb9, "CP C", [opcode_fetch_and(cp_a_r8("C"))]),
   op(0xba, "CP D", [opcode_fetch_and(cp_a_r8("D"))]),
   op(0xbb, "CP E", [opcode_fetch_and(cp_a_r8("E"))]),
-  op(0xbc, "CP H", [opcode_fetch_and(cp_a_r8("H"))]),
-  op(0xbd, "CP L", [opcode_fetch_and(cp_a_r8("L"))]),
+  op(0xbc, `CP ${set.rh}`, [opcode_fetch_and(cp_a_r8(set.rh))]),
+  op(0xbd, `CP ${set.rl}`, [opcode_fetch_and(cp_a_r8(set.rl))]),
   op(0xbe, "CP (HL)", [opcode_fetch, mem_read("HL", "OPx", cp_a_r8("OPx"))]),
   op(0xbf, "CP A", [opcode_fetch_and(cp_a_r8("A"))]),
 
@@ -1004,23 +1043,23 @@ export const opCodes = makeOpTable(
   op(0xdf, "RST 18", rst(0x18)),
 
   op(0xe0, "RET po", ret(opcode_fetch_ret_if_flag_not_set(FLAG_PV))),
-  op(0xe1, "POP HL", pop_r16("H", "L")),
+  op(0xe1, `POP ${set.rp}`, pop_r16(set.rh, set.rl)),
   op(0xe2, "JP po,nn", jp(jump_if_flag_not_set(FLAG_PV))),
-  op(0xe3, "EX (SP),HL", [
+  op(0xe3, `EX (SP),${set.rp}`, [
     opcode_fetch,
     mem_read("SP", "Z"),
     mem_read_sp_plus_1_to_w,
-    mem_write_h_to_sp_plus_1,
-    mem_write_l_to_sp_transfer_wz,
+    mem_write_h_to_sp_plus_1(set),
+    mem_write_l_to_sp_transfer_wz(set),
   ]),
   op(0xe4, "CALL po,nn", call(jump_if_flag_not_set(FLAG_PV))),
-  op(0xe5, "PUSH HL", push_r16("H", "L")),
+  op(0xe5, `PUSH ${set.rp}`, push_r16(set.rh, set.rl)),
   op(0xe6, "AND n", [opcode_fetch, fetch_byte(and_a)]),
   op(0xe7, "RST 20", rst(0x20)),
   op(0xe8, "RET pe", ret(opcode_fetch_ret_if_flag_set(FLAG_PV))),
-  op(0xe9, "JP (HL)", [opcode_fetch_and(jp_hl)]),
+  op(0xe9, `JP (${set.rp})`, [opcode_fetch_and(jp_hl(set))]),
   op(0xea, "JP pe,nn", jp(jump_if_flag_set(FLAG_PV))),
-  op(0xeb, "EX DE,HL", [opcode_fetch_and(ex_de_hl)]),
+  op(0xeb, `EX DE,${set.rp}`, [opcode_fetch_and(ex_de_hl(set))]),
   op(0xec, "CALL pe,nn", call(jump_if_flag_set(FLAG_PV))),
   op(0xed, "PREFIX ED", [opcode_fetch_and(prefix_ed)]),
   op(0xee, "XOR n", [opcode_fetch, fetch_byte(xor_a)]),
@@ -1035,14 +1074,17 @@ export const opCodes = makeOpTable(
   op(0xf6, "OR n", [opcode_fetch, fetch_byte(or_a)]),
   op(0xf7, "RST 30", rst(0x30)),
   op(0xf8, "RET m", ret(opcode_fetch_ret_if_flag_set(FLAG_S))),
-  op(0xf9, "LD SP,HL", [opcode_fetch, ld_sp_hl]),
+  op(0xf9, `LD SP,${set.rp}`, [opcode_fetch, ld_sp_hl(set)]),
   op(0xfa, "JP m,nn", jp(jump_if_flag_set(FLAG_S))),
   op(0xfb, "EI", [opcode_fetch_and(ei)]),
   op(0xfc, "CALL m,nn", call(jump_if_flag_set(FLAG_S))),
   // 0xfd: IY ops
   op(0xfe, "CP n", [opcode_fetch, fetch_byte(cp_a_imm)]),
   op(0xff, "RST 38", rst(0x38)),
-);
+  );
+}
+
+export const opCodes = buildOpTable(HL_SET);
 
 const set_im = (value: number) => (cpu: Z80) => (cpu.im = value);
 
