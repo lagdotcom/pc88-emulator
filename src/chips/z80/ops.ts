@@ -578,7 +578,13 @@ const makeOpTable = (...list: OpCode[]): Record<u8, OpCode> =>
 export const opCodes = makeOpTable(
   op(0x00, "NOP", [opcode_fetch]),
   op(0x01, "LD BC,nn", [opcode_fetch, fetch_c, fetch_b]),
-  op(0x02, "LD (BC),A", [opcode_fetch, mem_write("BC", "A")]),
+  op(0x02, "LD (BC),A", [
+    opcode_fetch,
+    mem_write("BC", "A", (cpu) => {
+      cpu.regs.Z = cpu.regs.C + 1;
+      cpu.regs.W = cpu.regs.A;
+    }),
+  ]),
   op(0x03, "INC BC", [opcode_fetch, inc_r16("BC")]),
   op(0x04, "INC B", [opcode_fetch_and_inc_r8("B")]),
   op(0x05, "DEC B", [opcode_fetch_and_dec_r8("B")]),
@@ -590,7 +596,13 @@ export const opCodes = makeOpTable(
     add_r8_to_r8_set_internal_carry("L", "C"),
     add_r8_to_r8_use_internal_carry_set_flags("H", "B"),
   ]),
-  op(0x0a, "LD A,(BC)", [opcode_fetch, mem_read("BC", "A")]),
+  op(0x0a, "LD A,(BC)", [
+    opcode_fetch,
+    mem_read("BC", "A", (cpu) => {
+      cpu.regs.Z = cpu.regs.C + 1;
+      cpu.regs.W = cpu.regs.A;
+    }),
+  ]),
   op(0x0b, "DEC BC", [opcode_fetch, dec_r16("BC")]),
   op(0x0c, "INC C", [opcode_fetch_and_inc_r8("C")]),
   op(0x0d, "DEC C", [opcode_fetch_and_dec_r8("C")]),
@@ -604,7 +616,13 @@ export const opCodes = makeOpTable(
     relative_jump_wz,
   ]),
   op(0x11, "LD DE,nn", [opcode_fetch, fetch_e, fetch_d]),
-  op(0x12, "LD (DE),A", [opcode_fetch, mem_write("DE", "A")]),
+  op(0x12, "LD (DE),A", [
+    opcode_fetch,
+    mem_write("DE", "A", (cpu) => {
+      cpu.regs.Z = cpu.regs.E + 1;
+      cpu.regs.W = cpu.regs.A;
+    }),
+  ]),
   op(0x13, "INC DE", [opcode_fetch, inc_r16("DE")]),
   op(0x14, "INC D", [opcode_fetch_and_inc_r8("D")]),
   op(0x15, "DEC D", [opcode_fetch_and_dec_r8("D")]),
@@ -620,7 +638,13 @@ export const opCodes = makeOpTable(
     add_r8_to_r8_set_internal_carry("L", "E"),
     add_r8_to_r8_use_internal_carry_set_flags("H", "D"),
   ]),
-  op(0x1a, "LD A,(DE)", [opcode_fetch, mem_read("DE", "A")]),
+  op(0x1a, "LD A,(DE)", [
+    opcode_fetch,
+    mem_read("DE", "A", (cpu) => {
+      cpu.regs.Z = cpu.regs.E + 1;
+      cpu.regs.W = cpu.regs.A;
+    }),
+  ]),
   op(0x1b, "DEC DE", [opcode_fetch, dec_r16("DE")]),
   op(0x1c, "INC E", [opcode_fetch_and_inc_r8("E")]),
   op(0x1d, "DEC E", [opcode_fetch_and_dec_r8("E")]),
