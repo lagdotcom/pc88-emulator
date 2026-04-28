@@ -118,32 +118,34 @@ Roughly ordered by what's blocking what.
   request source yet.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [ ] **Performance: per-opcode switch dispatcher**. The dispatcher
-  has been progressively unwrapped: each opcode's M-cycle list is
-  pre-composed at table-build time into a length-specialised
-  `execute(cpu)` function with no-branch and abortable variants;
-  the universal M1 fetch (read OP, advance PC, incR, charge 4
-  t-states) is hoisted into `runOneOp` so simple opcodes like NOP
-  have an empty execute body; and `MemoryBus` exposes a fast-path
-  `Uint8Array` for single-provider RAM setups. `tests/programs/
-  bench.ts` measures (Linux V8, warm):
+- [ ] **Extend the inlined dispatch switch in `runOneOp`**. The
+  dispatcher has been progressively unwrapped: each opcode's
+  M-cycle list is pre-composed into a length-specialised
+  `execute(cpu)` function at table-build time with no-branch and
+  abortable variants; the universal M1 fetch is hoisted into
+  `runOneOp`; `MemoryBus` exposes a fast-path `Uint8Array` for
+  single-provider RAM; and a peephole switch at the top of
+  `runOneOp` inlines a small set of unprefixed hot-path opcodes
+  (NOP, JR, DJNZ, INC/DEC rr, ADD HL,DE, HALT) so they don't pay
+  the indirect call into `inst.execute`. `tests/programs/bench.ts`
+  numbers (Linux V8, warm):
 
   ```
                      baseline   now      gain
-    NOP×16 loop      28         46       +65%
-    ADD HL,DE loop   12         24       +103%
+    NOP×16 loop      28         73       +161%
+    ADD HL,DE loop   12         29       +142%
     LDIR 256 bytes   7          10       +43%
   ```
 
-  Next step is a hand-written giant per-opcode switch in `runOneOp`
-  with inlined register and memory accesses (no closures, no
-  property accesses through the regs accessors). That's the
-  standard pattern in 50–100 Mops/s Z80 emulators and would
-  collapse a real BIOS boot from tens of seconds to a couple. It
-  needs ~1600 opcode bodies (256 base + 256 ED + 256 CB + 256 DD
-  + 256 FD + 256 DDCB + 256 FDCB) — most of them generated from
-  templates the way `buildOpTable` does today, but emitted as raw
-  function bodies rather than MCycle arrays.
+  The peephole only handles ~10 ops; everything else still goes
+  through the table. Extending it to cover the full 1600-op set
+  (256 base + 256 ED + 256 CB + 256 DD + 256 FD + 256 DDCB + 256
+  FDCB) is the natural next step — most can be code-generated from
+  the same factory pattern `buildOpTable` already uses, but
+  emitted as raw `case` bodies rather than `MCycle` arrays. Done
+  fully, this is the 50-100 Mops/s pattern of mature Z80
+  emulators and would collapse a BIOS boot from tens of seconds
+  to a couple.
 
 ### Machine layer
 
