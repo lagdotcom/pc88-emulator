@@ -5,4 +5,5 @@
 /coverage
 /.env
 /tests/z80/data
+/tests/programs/fixtures
 /out
