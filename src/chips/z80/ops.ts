@@ -70,6 +70,7 @@ const fetch_w = fetch_r8("W");
 const fetch_z = fetch_r8("Z");
 const fetch_sph = fetch_r8("SPH");
 const fetch_spl = fetch_r8("SPL");
+const fetch_opx = fetch_r8("OPx");
 
 const opcode_fetch_and_load_r8_from_r8 = (dst: Reg8, src: Reg8) =>
   opcode_fetch_and((cpu) => (cpu.regs[dst] = cpu.regs[src]));
@@ -133,15 +134,15 @@ const opcode_fetch_and_inc_r8 = (reg: Reg8) =>
 const opcode_fetch_and_dec_r8 = (reg: Reg8) =>
   opcode_fetch_and((cpu: Z80) => add_r8(cpu, reg, -1));
 
-const inc_z: MCycle = {
+const inc_opx: MCycle = {
   type: "INT",
   tStates: 1,
-  process: (cpu) => add_r8(cpu, "Z", 1),
+  process: (cpu) => add_r8(cpu, "OPx", 1),
 };
-const dec_z: MCycle = {
+const dec_opx: MCycle = {
   type: "INT",
   tStates: 1,
-  process: (cpu) => add_r8(cpu, "Z", -1),
+  process: (cpu) => add_r8(cpu, "OPx", -1),
 };
 
 function rla(cpu: Z80) {
@@ -711,17 +712,17 @@ export const opCodes = makeOpTable(
   op(0x33, "INC SP", [opcode_fetch, inc_r16("SP")]),
   op(0x34, "INC (HL)", [
     opcode_fetch,
-    mem_read("HL", "Z"),
-    inc_z,
-    mem_write("HL", "Z"),
+    mem_read("HL", "OPx"),
+    inc_opx,
+    mem_write("HL", "OPx"),
   ]),
   op(0x35, "DEC (HL)", [
     opcode_fetch,
-    mem_read("HL", "Z"),
-    dec_z,
-    mem_write("HL", "Z"),
+    mem_read("HL", "OPx"),
+    dec_opx,
+    mem_write("HL", "OPx"),
   ]),
-  op(0x36, "LD (HL),n", [opcode_fetch, fetch_z, mem_write("HL", "Z")]),
+  op(0x36, "LD (HL),n", [opcode_fetch, fetch_opx, mem_write("HL", "OPx")]),
   op(0x37, "SCF", [opcode_fetch_and(scf)]),
   op(0x38, "JR c,d", [
     opcode_fetch_and(jump_if_flag_set(FLAG_C)),
@@ -821,7 +822,7 @@ export const opCodes = makeOpTable(
   op(0x85, "ADD A,L", [opcode_fetch_and(add_a_r8("L", false))]),
   op(0x86, "ADD A,(HL)", [
     opcode_fetch,
-    mem_read("HL", "Z", add_a_r8("Z", false)),
+    mem_read("HL", "OPx", add_a_r8("OPx", false)),
   ]),
   op(0x87, "ADD A,A", [opcode_fetch_and(add_a_r8("A", false))]),
   op(0x88, "ADC A,B", [opcode_fetch_and(add_a_r8("B", true))]),
@@ -832,7 +833,7 @@ export const opCodes = makeOpTable(
   op(0x8d, "ADC A,L", [opcode_fetch_and(add_a_r8("L", true))]),
   op(0x8e, "ADC A,(HL)", [
     opcode_fetch,
-    mem_read("HL", "Z", add_a_r8("Z", true)),
+    mem_read("HL", "OPx", add_a_r8("OPx", true)),
   ]),
   op(0x8f, "ADC A,A", [opcode_fetch_and(add_a_r8("A", true))]),
 
@@ -844,7 +845,7 @@ export const opCodes = makeOpTable(
   op(0x95, "SUB L", [opcode_fetch_and(sub_a_r8("L", false))]),
   op(0x96, "SUB (HL)", [
     opcode_fetch,
-    mem_read("HL", "Z", sub_a_r8("Z", false)),
+    mem_read("HL", "OPx", sub_a_r8("OPx", false)),
   ]),
   op(0x97, "SUB A", [opcode_fetch_and(sub_a_r8("A", false))]),
   op(0x98, "SBC A,B", [opcode_fetch_and(sub_a_r8("B", true))]),
@@ -855,7 +856,7 @@ export const opCodes = makeOpTable(
   op(0x9d, "SBC A,L", [opcode_fetch_and(sub_a_r8("L", true))]),
   op(0x9e, "SBC A,(HL)", [
     opcode_fetch,
-    mem_read("HL", "Z", sub_a_r8("Z", true)),
+    mem_read("HL", "OPx", sub_a_r8("OPx", true)),
   ]),
   op(0x9f, "SBC A,A", [opcode_fetch_and(sub_a_r8("A", true))]),
 
@@ -865,7 +866,7 @@ export const opCodes = makeOpTable(
   op(0xa3, "AND E", [opcode_fetch_and(and_a_r8("E"))]),
   op(0xa4, "AND H", [opcode_fetch_and(and_a_r8("H"))]),
   op(0xa5, "AND L", [opcode_fetch_and(and_a_r8("L"))]),
-  op(0xa6, "AND (HL)", [opcode_fetch, mem_read("HL", "Z", and_a_r8("Z"))]),
+  op(0xa6, "AND (HL)", [opcode_fetch, mem_read("HL", "OPx", and_a_r8("OPx"))]),
   op(0xa7, "AND A", [opcode_fetch_and(and_a_r8("A"))]),
   op(0xa8, "XOR B", [opcode_fetch_and(xor_a_r8("B"))]),
   op(0xa9, "XOR C", [opcode_fetch_and(xor_a_r8("C"))]),
@@ -873,7 +874,7 @@ export const opCodes = makeOpTable(
   op(0xab, "XOR E", [opcode_fetch_and(xor_a_r8("E"))]),
   op(0xac, "XOR H", [opcode_fetch_and(xor_a_r8("H"))]),
   op(0xad, "XOR L", [opcode_fetch_and(xor_a_r8("L"))]),
-  op(0xae, "XOR (HL)", [opcode_fetch, mem_read("HL", "Z", xor_a_r8("Z"))]),
+  op(0xae, "XOR (HL)", [opcode_fetch, mem_read("HL", "OPx", xor_a_r8("OPx"))]),
   op(0xaf, "XOR A", [opcode_fetch_and(xor_a_r8("A"))]),
 
   op(0xb0, "OR B", [opcode_fetch_and(or_a_r8("B"))]),
@@ -882,7 +883,7 @@ export const opCodes = makeOpTable(
   op(0xb3, "OR E", [opcode_fetch_and(or_a_r8("E"))]),
   op(0xb4, "OR H", [opcode_fetch_and(or_a_r8("H"))]),
   op(0xb5, "OR L", [opcode_fetch_and(or_a_r8("L"))]),
-  op(0xb6, "OR (HL)", [opcode_fetch, mem_read("HL", "Z", or_a_r8("Z"))]),
+  op(0xb6, "OR (HL)", [opcode_fetch, mem_read("HL", "OPx", or_a_r8("OPx"))]),
   op(0xb7, "OR A", [opcode_fetch_and(or_a_r8("A"))]),
   op(0xb8, "CP B", [opcode_fetch_and(cp_a_r8("B"))]),
   op(0xb9, "CP C", [opcode_fetch_and(cp_a_r8("C"))]),
@@ -890,7 +891,7 @@ export const opCodes = makeOpTable(
   op(0xbb, "CP E", [opcode_fetch_and(cp_a_r8("E"))]),
   op(0xbc, "CP H", [opcode_fetch_and(cp_a_r8("H"))]),
   op(0xbd, "CP L", [opcode_fetch_and(cp_a_r8("L"))]),
-  op(0xbe, "CP (HL)", [opcode_fetch, mem_read("HL", "Z", cp_a_r8("Z"))]),
+  op(0xbe, "CP (HL)", [opcode_fetch, mem_read("HL", "OPx", cp_a_r8("OPx"))]),
   op(0xbf, "CP A", [opcode_fetch_and(cp_a_r8("A"))]),
 
   op(0xc0, "RET nz", ret(opcode_fetch_ret_if_flag_not_set(FLAG_Z))),
