@@ -2,6 +2,22 @@
 
 Guide for future Claude sessions working on this repo.
 
+## Before starting any work
+
+Read the **TODO list in `README.md`** first — that's the canonical
+source for what's open, what's blocked on what, and the rough order
+to tackle things in. When you finish a piece of work and are about
+to commit, update the TODO list in the same commit:
+
+- Tick off (`- [x]`) items that are now done.
+- Add new items the work surfaced (e.g. a hardware quirk uncovered
+  during testing, a refactor a feature now obviously wants).
+- Reword items whose scope changed.
+
+Treat README.md as part of the deliverable, not separate
+documentation. A commit that lands a feature without updating the
+TODO list is incomplete.
+
 ## What this is
 
 PC-88 emulator written in TypeScript. Goal: PC-8801 mkII SR support first,
