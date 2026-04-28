@@ -392,7 +392,7 @@ const sub_a_imm = (useCarry: boolean) => (cpu: Z80, data: u8) => {
 
 const cp_a_r8 = (src: Reg8) => (cpu: Z80) => {
   const temp = cpu.regs.A;
-  sub_a_r8(src, false);
+  sub_a_r8(src, false)(cpu);
   cpu.regs.A = temp;
 };
 
@@ -663,9 +663,9 @@ export const opCodes = makeOpTable(
     mem_read("WZ", "L", (cpu) => cpu.regs.WZ++),
     mem_read("WZ", "H"),
   ]),
-  op(0x2b, "DEC DE", [opcode_fetch, dec_r16("DE")]),
-  op(0x2c, "INC E", [opcode_fetch_and_inc_r8("E")]),
-  op(0x2d, "DEC E", [opcode_fetch_and_dec_r8("E")]),
+  op(0x2b, "DEC HL", [opcode_fetch, dec_r16("HL")]),
+  op(0x2c, "INC L", [opcode_fetch_and_inc_r8("L")]),
+  op(0x2d, "DEC L", [opcode_fetch_and_dec_r8("L")]),
   op(0x2e, "LD L,n", [opcode_fetch, fetch_l]),
   op(0x2f, "CPL", [opcode_fetch_and(cpl)]),
 
@@ -683,7 +683,7 @@ export const opCodes = makeOpTable(
     inc_z,
     mem_write("HL", "Z"),
   ]),
-  op(0x25, "DEC (HL)", [
+  op(0x35, "DEC (HL)", [
     opcode_fetch,
     mem_read("HL", "Z"),
     dec_z,
@@ -742,14 +742,14 @@ export const opCodes = makeOpTable(
   op(0x5e, "LD E,(HL)", [opcode_fetch, mem_read("HL", "E")]),
   op(0x5f, "LD E,A", [opcode_fetch_and_load_r8_from_r8("E", "A")]),
 
-  op(0x60, "LD H,B", [opcode_fetch_and_load_r8_from_r8("D", "B")]),
-  op(0x61, "LD H,C", [opcode_fetch_and_load_r8_from_r8("D", "C")]),
-  op(0x62, "LD H,D", [opcode_fetch_and_load_r8_from_r8("D", "D")]),
-  op(0x63, "LD H,E", [opcode_fetch_and_load_r8_from_r8("D", "E")]),
-  op(0x64, "LD H,H", [opcode_fetch_and_load_r8_from_r8("D", "H")]),
-  op(0x65, "LD H,L", [opcode_fetch_and_load_r8_from_r8("D", "L")]),
-  op(0x66, "LD H,(HL)", [opcode_fetch, mem_read("HL", "D")]),
-  op(0x67, "LD H,A", [opcode_fetch_and_load_r8_from_r8("D", "A")]),
+  op(0x60, "LD H,B", [opcode_fetch_and_load_r8_from_r8("H", "B")]),
+  op(0x61, "LD H,C", [opcode_fetch_and_load_r8_from_r8("H", "C")]),
+  op(0x62, "LD H,D", [opcode_fetch_and_load_r8_from_r8("H", "D")]),
+  op(0x63, "LD H,E", [opcode_fetch_and_load_r8_from_r8("H", "E")]),
+  op(0x64, "LD H,H", [opcode_fetch_and_load_r8_from_r8("H", "H")]),
+  op(0x65, "LD H,L", [opcode_fetch_and_load_r8_from_r8("H", "L")]),
+  op(0x66, "LD H,(HL)", [opcode_fetch, mem_read("HL", "H")]),
+  op(0x67, "LD H,A", [opcode_fetch_and_load_r8_from_r8("H", "A")]),
   op(0x68, "LD L,B", [opcode_fetch_and_load_r8_from_r8("L", "B")]),
   op(0x69, "LD L,C", [opcode_fetch_and_load_r8_from_r8("L", "C")]),
   op(0x6a, "LD L,D", [opcode_fetch_and_load_r8_from_r8("L", "D")]),
@@ -956,14 +956,14 @@ export const edOpCodes = makeOpTable(
     mem_write("WZ", "E", (cpu) => cpu.regs.WZ++),
     mem_write("WZ", "D"),
   ]),
-  op(0x46, "IM 1", [opcode_fetch_and(set_im(1))]),
+  op(0x56, "IM 1", [opcode_fetch_and(set_im(1))]),
   op(0x58, "IN E,(C)", [opcode_fetch, io_read_bc("E")]),
   op(0x59, "OUT (C),E", [opcode_fetch, io_write_bc("E")]),
   op(0x5e, "IM 2", [opcode_fetch_and(set_im(2))]),
 
   op(0x60, "IN H,(C)", [opcode_fetch, io_read_bc("H")]),
   op(0x61, "OUT (C),H", [opcode_fetch, io_write_bc("H")]),
-  op(0x43, "LD (nn),HL", [
+  op(0x63, "LD (nn),HL", [
     opcode_fetch,
     fetch_z,
     fetch_w,

@@ -1,9 +1,17 @@
 import logLib from "log";
 
-import type { u8 } from "../../flavours.js";
 import { MemoryBus } from "../../core/MemoryBus.js";
+import type { u8 } from "../../flavours.js";
 import { byte, isDefined, word } from "../../tools.js";
-import { edOpCodes, opCodes } from "./ops.js";
+import {
+  cbOpCodes,
+  ddcbOpCodes,
+  ddOpCodes,
+  edOpCodes,
+  fdcbOpCodes,
+  fdOpCodes,
+  opCodes,
+} from "./ops.js";
 import {
   FLAG_C,
   FLAG_H,
@@ -27,6 +35,15 @@ export type Prefix =
   | { type: "FD" }
   | { type: "DDCB"; displacement: number }
   | { type: "FDCB"; displacement: number };
+
+const opTables = {
+  CB: cbOpCodes,
+  DD: ddOpCodes,
+  DDCB: ddcbOpCodes,
+  ED: edOpCodes,
+  FD: fdOpCodes,
+  FDCB: fdcbOpCodes,
+};
 
 export class Z80 {
   cycles: number;
@@ -81,7 +98,7 @@ export class Z80 {
       while (this.mCycleIndex < inst.mCycles.length) {
         const cycle = inst.mCycles[this.mCycleIndex]!;
         cycle.process(this);
-        this.cycles += cycle?.tStates;
+        this.cycles += cycle.tStates;
         this.mCycleIndex++;
       }
     } else {
@@ -90,8 +107,8 @@ export class Z80 {
   }
 
   decode() {
-    if (this.prefix?.type === "ED" && edOpCodes[this.regs.OP])
-      return edOpCodes[this.regs.OP];
+    if (this.prefix?.type && opTables[this.prefix.type][this.regs.OP])
+      return opTables[this.prefix.type][this.regs.OP];
 
     this.prefix = undefined;
     return opCodes[this.regs.OP];

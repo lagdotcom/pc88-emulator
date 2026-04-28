@@ -718,6 +718,11 @@ brace-expansion@^5.0.5:
   dependencies:
     balanced-match "^4.0.2"
 
+builtin-modules@^5.1.0:
+  version "5.1.0"
+  resolved "https://registry.yarnpkg.com/builtin-modules/-/builtin-modules-5.1.0.tgz#1122bd65380abffe08f6cf15b381aff38b0ceb1a"
+  integrity sha512-c5JxaDrzwRjq3WyJkI1AGR5xy6Gr6udlt7sQPbl09+3ckB+Zo2qqQ2KhCTBr7Q8dHB43bENGYEk4xddrFH/b7A==
+
 chai@^6.2.2:
   version "6.2.2"
   resolved "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz"
