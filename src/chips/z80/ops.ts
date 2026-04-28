@@ -263,6 +263,238 @@ const add_hl_rr = (src: Reg16, set: RegSet): MCycle => ({
   process: (cpu) => do_add16(cpu, set.rp, cpu.regs[src]),
 });
 
+// 16-bit ADC: HL = HL + value + C. Sets full flag set including S/Z/PV
+// (which plain ADD HL,rr leaves alone). Used only by the ED-prefixed
+// ADC HL,rr variants.
+function do_adc_hl(cpu: Z80, value: u16) {
+  const hl = cpu.regs.HL;
+  const c = cpu.regs.F & FLAG_C ? 1 : 0;
+  cpu.regs.WZ = (hl + 1) & 0xffff;
+  const sum = hl + value + c;
+  const result = sum & 0xffff;
+  cpu.regs.HL = result;
+  const high = result >> 8;
+  cpu.updateFlags({
+    c: sum > 0xffff,
+    n: 0,
+    pv: ((~(hl ^ value) & (hl ^ result)) >> 15) & 1,
+    h: ((hl & 0xfff) + (value & 0xfff) + c) & 0x1000,
+    z: result === 0,
+    s: high & 0x80,
+    x: high & FLAG_X,
+    y: high & FLAG_Y,
+  });
+}
+
+// 16-bit SBC: HL = HL - value - C. Standard SUB direction flags.
+function do_sbc_hl(cpu: Z80, value: u16) {
+  const hl = cpu.regs.HL;
+  const c = cpu.regs.F & FLAG_C ? 1 : 0;
+  cpu.regs.WZ = (hl + 1) & 0xffff;
+  const diff = hl - value - c;
+  const result = diff & 0xffff;
+  cpu.regs.HL = result;
+  const high = result >> 8;
+  cpu.updateFlags({
+    c: diff < 0,
+    n: 1,
+    pv: (((hl ^ value) & (hl ^ result)) >> 15) & 1,
+    h: ((hl & 0xfff) - (value & 0xfff) - c) & 0x1000,
+    z: result === 0,
+    s: high & 0x80,
+    x: high & FLAG_X,
+    y: high & FLAG_Y,
+  });
+}
+
+const adc_hl_rr = (src: Reg16): MCycle => ({
+  type: "INT",
+  tStates: 7,
+  process: (cpu) => do_adc_hl(cpu, cpu.regs[src]),
+});
+
+const sbc_hl_rr = (src: Reg16): MCycle => ({
+  type: "INT",
+  tStates: 7,
+  process: (cpu) => do_sbc_hl(cpu, cpu.regs[src]),
+});
+
+// NEG: A = -A. Equivalent to "SUB A from 0" with full flag effect.
+function do_neg(cpu: Z80) {
+  const a = cpu.regs.A;
+  const diff = 0 - a;
+  const result = diff & 0xff;
+  cpu.regs.A = result;
+  cpu.updateFlags({
+    c: a !== 0,
+    n: 1,
+    pv: a === 0x80,
+    h: (0 - (a & 0xf)) & 0x10,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+}
+
+// LD A,I and LD A,R both load A and update flags including PV from IFF2.
+function do_ld_a_ir(cpu: Z80, value: u8) {
+  cpu.regs.A = value;
+  cpu.updateFlags({
+    n: 0,
+    pv: cpu.iff2 ? 1 : 0,
+    h: 0,
+    z: value === 0,
+    s: value & 0x80,
+    x: value & FLAG_X,
+    y: value & FLAG_Y,
+  });
+}
+
+// RRD: rotate the lower nibble of A and the (HL) byte one digit to the
+// right.  A_lo <- (HL)_lo;  (HL)_lo <- (HL)_hi;  (HL)_hi <- old A_lo.
+// A's high nibble is unchanged. Flags are derived from the new A.
+function do_rrd(cpu: Z80, value: u8) {
+  const aLo = cpu.regs.A & 0x0f;
+  const aHi = cpu.regs.A & 0xf0;
+  const newMem = (aLo << 4) | (value >> 4);
+  const newA = aHi | (value & 0x0f);
+  cpu.regs.A = newA;
+  cpu.regs.WZ = (cpu.regs.HL + 1) & 0xffff;
+  cpu.updateFlags({
+    n: 0,
+    pv: parity(newA),
+    h: 0,
+    z: newA === 0,
+    s: newA & 0x80,
+    x: newA & FLAG_X,
+    y: newA & FLAG_Y,
+  });
+  cpu.regs.OPx = newMem;
+}
+
+// RLD: rotate the lower nibble of A and the (HL) byte one digit to the
+// left.  A_lo <- (HL)_hi;  (HL)_hi <- (HL)_lo;  (HL)_lo <- old A_lo.
+function do_rld(cpu: Z80, value: u8) {
+  const aLo = cpu.regs.A & 0x0f;
+  const aHi = cpu.regs.A & 0xf0;
+  const newMem = ((value << 4) | aLo) & 0xff;
+  const newA = aHi | (value >> 4);
+  cpu.regs.A = newA;
+  cpu.regs.WZ = (cpu.regs.HL + 1) & 0xffff;
+  cpu.updateFlags({
+    n: 0,
+    pv: parity(newA),
+    h: 0,
+    z: newA === 0,
+    s: newA & 0x80,
+    x: newA & FLAG_X,
+    y: newA & FLAG_Y,
+  });
+  cpu.regs.OPx = newMem;
+}
+
+// Block transfer flag rules (LDI/LDD/LDIR/LDDR).
+//   v = byte transferred; n = (A + v).
+//   N = 0; H = 0; PV = (BC != 0); C, Z, S unchanged.
+//   For non-repeat AND for the last iteration of a repeat (BC == 0):
+//     X = bit 3 of n; Y = bit 1 of n.
+//   For repeating iterations (BC != 0 after dec, PC has been pulled back):
+//     X = bit 3 of (PC+1).high; Y = bit 5 of (PC+1).high.
+function do_ld_block(cpu: Z80, value: u8, repeating: boolean) {
+  let x: number;
+  let y: number;
+  if (repeating) {
+    const pcHi = ((cpu.regs.PC + 1) >> 8) & 0xff;
+    x = pcHi & FLAG_X;
+    y = pcHi & FLAG_Y;
+  } else {
+    const n = (cpu.regs.A + value) & 0xff;
+    x = n & FLAG_X;
+    y = n & 0x02;
+  }
+  cpu.updateFlags({
+    n: 0,
+    pv: cpu.regs.BC !== 0,
+    h: 0,
+    x,
+    y,
+  });
+}
+
+// Block compare flag rules (CPI/CPD/CPIR/CPDR). result = A - (HL).
+//   N = 1; H = half-borrow; Z = (result == 0); S = sign(result);
+//   PV = (BC != 0); C unchanged.
+//   Non-repeat (or last iteration of CPIR/CPDR):
+//     X = bit 3 of (result - H), Y = bit 1.
+//   Repeating (BC != 0 AND no match, PC has been pulled back):
+//     X = bit 3 of (PC+1).high; Y = bit 5 of (PC+1).high.
+function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
+  const a = cpu.regs.A;
+  const result = (a - value) & 0xff;
+  const h = ((a & 0xf) - (value & 0xf)) & 0x10;
+  let x: number;
+  let y: number;
+  if (repeating) {
+    const pcHi = ((cpu.regs.PC + 1) >> 8) & 0xff;
+    x = pcHi & FLAG_X;
+    y = pcHi & FLAG_Y;
+  } else {
+    const n = (result - (h ? 1 : 0)) & 0xff;
+    x = n & FLAG_X;
+    y = n & 0x02;
+  }
+  cpu.updateFlags({
+    n: 1,
+    pv: cpu.regs.BC !== 0,
+    h,
+    z: result === 0,
+    s: result & 0x80,
+    x,
+    y,
+  });
+}
+
+// I/O block flag rules (INI/IND/OUTI/OUTD and repeats). Per Sean Young:
+//   B = B - 1 (already done by caller).
+//   k = value just read/written.
+//   For IN family:  base = ((C ± 1) & 0xff) + k
+//   For OUT family: base = L + k
+//   N = bit 7 of k; H = C = (base > 0xff);
+//   PV = parity((base & 7) ^ B); S/Z from B.
+//   Non-repeat / last iteration: X/Y from B.
+//   Repeating iteration: X/Y from (PC+1).high.
+//   The H/PV behaviour during repeat follows additional silicon-level quirks
+//   not yet captured here (see TODO note above buildEdTable).
+function do_io_block_flags(
+  cpu: Z80,
+  value: u8,
+  base: number,
+  repeating: boolean,
+) {
+  const b = cpu.regs.B;
+  let x: number;
+  let y: number;
+  if (repeating) {
+    const pcHi = ((cpu.regs.PC + 1) >> 8) & 0xff;
+    x = pcHi & FLAG_X;
+    y = pcHi & FLAG_Y;
+  } else {
+    x = b & FLAG_X;
+    y = b & FLAG_Y;
+  }
+  cpu.updateFlags({
+    n: value & 0x80,
+    pv: parity(((base & 7) ^ b) & 0xff),
+    h: base > 0xff,
+    c: base > 0xff,
+    z: b === 0,
+    s: b & 0x80,
+    x,
+    y,
+  });
+}
+
 const opcode_fetch_and_inc_r8 = (reg: Reg8) =>
   opcode_fetch_and((cpu: Z80) => (cpu.regs[reg] = inc8(cpu, cpu.regs[reg])));
 
@@ -1242,61 +1474,283 @@ export const opCodes = buildOpTable(HL_SET);
 
 const set_im = (value: number) => (cpu: Z80) => (cpu.im = value);
 
+// Helpers for the ED table.
+const ld_a_ir = (src: Reg8): MCycle =>
+  opcode_fetch_and((cpu) => do_ld_a_ir(cpu, cpu.regs[src]));
+
+const ld_nn_rr = (hi: Reg8, lo: Reg8, mnem: string): OpCode["mCycles"] => [
+  opcode_fetch,
+  fetch_z,
+  fetch_w,
+  mem_write("WZ", lo, (cpu) => cpu.regs.WZ++),
+  mem_write("WZ", hi),
+];
+
+const ld_rr_nn = (hi: Reg8, lo: Reg8): OpCode["mCycles"] => [
+  opcode_fetch,
+  fetch_z,
+  fetch_w,
+  mem_read("WZ", lo, (cpu) => cpu.regs.WZ++),
+  mem_read("WZ", hi),
+];
+
+// LD SP,(nn) / LD (nn),SP — same shape as the rr variants but the register
+// pair is exposed as SP/SPH/SPL halves on our regs object.
+const ld_nn_sp = (): OpCode["mCycles"] => [
+  opcode_fetch,
+  fetch_z,
+  fetch_w,
+  mem_write("WZ", "SPL", (cpu) => cpu.regs.WZ++),
+  mem_write("WZ", "SPH"),
+];
+
+const ld_sp_nn = (): OpCode["mCycles"] => [
+  opcode_fetch,
+  fetch_z,
+  fetch_w,
+  mem_read("WZ", "SPL", (cpu) => cpu.regs.WZ++),
+  mem_read("WZ", "SPH"),
+];
+
+const im = (mode: number) => [opcode_fetch_and(set_im(mode))];
+
+// RETN and RETI both restore IFF1 from IFF2 on real silicon (per
+// SingleStepTests / Patrik Rak's hardware tracing) — older docs say only
+// RETN does this, but real chips behave the same.
+const retn_setup = opcode_fetch_and((cpu) => {
+  cpu.iff1 = cpu.iff2;
+});
+
+const ed_nop: OpCode["mCycles"] = [opcode_fetch];
+
+// IN F,(C) / IN (C) — read from port BC, set flags from the value, but
+// don't write the result anywhere.
+const in_f_bc: MCycle = {
+  type: "IOR",
+  tStates: 4,
+  process: (cpu) => {
+    const port = cpu.regs.BC;
+    const value = cpu.io.read(port);
+    cpu.regs.WZ = port + 1;
+    cpu.updateFlags({
+      n: 0,
+      pv: parity(value),
+      h: 0,
+      z: value === 0,
+      s: value & 0x80,
+      x: value & FLAG_X,
+      y: value & FLAG_Y,
+    });
+  },
+};
+
+// OUT (C),0 — write 0 to port BC. Real NMOS Z80 writes 0xff here (some
+// docs); CMOS revisions write 0. SR-class machines are CMOS so use 0.
+const out_bc_0: MCycle = {
+  type: "IOW",
+  tStates: 4,
+  process: (cpu) => {
+    const port = cpu.regs.BC;
+    cpu.io.write(port, 0);
+    cpu.regs.WZ = port + 1;
+  },
+};
+
+// Block transfer: LDI = transfer one byte HL→DE, advance HL/DE, decrement BC.
+// LDD reverses HL/DE direction. The repeating LDIR/LDDR re-execute the same
+// instruction (PC -= 2) until BC reaches 0; the test data captures this by
+// expecting PC unchanged when BC > 0 after the iteration.
+const block_ld = (delta: 1 | -1, repeat: boolean): OpCode["mCycles"] => [
+  opcode_fetch,
+  mem_read("HL", "OPx"),
+  mem_write("DE", "OPx", (cpu) => {
+    cpu.regs.HL = (cpu.regs.HL + delta) & 0xffff;
+    cpu.regs.DE = (cpu.regs.DE + delta) & 0xffff;
+    cpu.regs.BC = (cpu.regs.BC - 1) & 0xffff;
+    const repeating = repeat && cpu.regs.BC !== 0;
+    if (repeating) {
+      cpu.regs.PC = (cpu.regs.PC - 2) & 0xffff;
+      cpu.regs.WZ = (cpu.regs.PC + 1) & 0xffff;
+    }
+    do_ld_block(cpu, cpu.regs.OPx, repeating);
+  }),
+];
+
+const block_cp = (delta: 1 | -1, repeat: boolean): OpCode["mCycles"] => [
+  opcode_fetch,
+  mem_read("HL", "OPx", (cpu) => {
+    cpu.regs.BC = (cpu.regs.BC - 1) & 0xffff;
+    const a = cpu.regs.A;
+    const value = cpu.regs.OPx;
+    const result = (a - value) & 0xff;
+    cpu.regs.HL = (cpu.regs.HL + delta) & 0xffff;
+    cpu.regs.WZ = (cpu.regs.WZ + delta) & 0xffff;
+    const repeating = repeat && cpu.regs.BC !== 0 && result !== 0;
+    if (repeating) {
+      cpu.regs.PC = (cpu.regs.PC - 2) & 0xffff;
+      cpu.regs.WZ = (cpu.regs.PC + 1) & 0xffff;
+    }
+    do_cp_block(cpu, value, repeating);
+  }),
+];
+
+// I/O block input. INI: read port BC, write to (HL). HL++. B--. Flags use
+// the post-decrement B and a "base" computed as ((C±1) & 0xff) + value.
+// IND uses (C-1); INI uses (C+1). The repeating versions (INIR/INDR) loop
+// while B != 0 (after decrement).
+const block_in = (delta: 1 | -1, repeat: boolean): OpCode["mCycles"] => {
+  return [
+    opcode_fetch,
+    {
+      type: "IOR",
+      tStates: 4,
+      process: (cpu) => {
+        const port = cpu.regs.BC;
+        cpu.regs.OPx = cpu.io.read(port);
+        cpu.regs.WZ = (port + delta) & 0xffff;
+      },
+    },
+    mem_write("HL", "OPx", (cpu) => {
+      cpu.regs.HL = (cpu.regs.HL + delta) & 0xffff;
+      cpu.regs.B = (cpu.regs.B - 1) & 0xff;
+      const base = ((cpu.regs.C + delta) & 0xff) + cpu.regs.OPx;
+      const repeating = repeat && cpu.regs.B !== 0;
+      if (repeating) {
+        cpu.regs.PC = (cpu.regs.PC - 2) & 0xffff;
+        cpu.regs.WZ = (cpu.regs.PC + 1) & 0xffff;
+      }
+      do_io_block_flags(cpu, cpu.regs.OPx, base, repeating);
+    }),
+  ];
+};
+
+// I/O block output. OUTI: read (HL), B--, output to port BC (post-decrement
+// B drives the address). HL++. WZ = BC + 1 (with post-decrement B). Base
+// for the flag computation is L + value.
+const block_out = (delta: 1 | -1, repeat: boolean): OpCode["mCycles"] => [
+  opcode_fetch,
+  mem_read("HL", "OPx", (cpu) => {
+    cpu.regs.B = (cpu.regs.B - 1) & 0xff;
+  }),
+  {
+    type: "IOW",
+    tStates: 4,
+    process: (cpu) => {
+      const port = cpu.regs.BC;
+      cpu.io.write(port, cpu.regs.OPx);
+      cpu.regs.HL = (cpu.regs.HL + delta) & 0xffff;
+      cpu.regs.WZ = (port + delta) & 0xffff;
+      const base = (cpu.regs.L + cpu.regs.OPx) & 0x1ff;
+      const repeating = repeat && cpu.regs.B !== 0;
+      if (repeating) {
+        cpu.regs.PC = (cpu.regs.PC - 2) & 0xffff;
+        cpu.regs.WZ = (cpu.regs.PC + 1) & 0xffff;
+      }
+      do_io_block_flags(cpu, cpu.regs.OPx, base, repeating);
+    },
+  },
+];
+
+// RRD / RLD: read (HL), compute new A and new (HL) byte (do_rrd/do_rld
+// places the new memory byte in OPx), then write OPx back to (HL).
+const rrd_rld = (
+  fn: (cpu: Z80, value: u8) => void,
+): OpCode["mCycles"] => [
+  opcode_fetch,
+  mem_read("HL", "OPx", (cpu) => fn(cpu, cpu.regs.OPx)),
+  mem_write("HL", "OPx"),
+];
+
 export const edOpCodes = makeOpTable(
+  // 0x40-0x4F
   op(0x40, "IN B,(C)", [opcode_fetch, io_read_bc("B")]),
   op(0x41, "OUT (C),B", [opcode_fetch, io_write_bc("B")]),
-  op(0x43, "LD (nn),BC", [
-    opcode_fetch,
-    fetch_z,
-    fetch_w,
-    mem_write("WZ", "C", (cpu) => cpu.regs.WZ++),
-    mem_write("WZ", "B"),
-  ]),
-  op(0x46, "IM 0", [opcode_fetch_and(set_im(0))]),
+  op(0x42, "SBC HL,BC", [opcode_fetch, sbc_hl_rr("BC")]),
+  op(0x43, "LD (nn),BC", ld_nn_rr("B", "C", "BC")),
+  op(0x44, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x45, "RETN", ret(retn_setup)),
+  op(0x46, "IM 0", im(0)),
+  op(0x47, "LD I,A", [opcode_fetch_and_load_r8_from_r8("I", "A")]),
   op(0x48, "IN C,(C)", [opcode_fetch, io_read_bc("C")]),
   op(0x49, "OUT (C),C", [opcode_fetch, io_write_bc("C")]),
+  op(0x4a, "ADC HL,BC", [opcode_fetch, adc_hl_rr("BC")]),
+  op(0x4b, "LD BC,(nn)", ld_rr_nn("B", "C")),
+  op(0x4c, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x4d, "RETI", ret(retn_setup)),
+  op(0x4e, "IM 0/1", im(0)),
   op(0x4f, "LD R,A", [opcode_fetch_and_load_r8_from_r8("R", "A")]),
 
+  // 0x50-0x5F
   op(0x50, "IN D,(C)", [opcode_fetch, io_read_bc("D")]),
   op(0x51, "OUT (C),D", [opcode_fetch, io_write_bc("D")]),
-  op(0x53, "LD (nn),DE", [
-    opcode_fetch,
-    fetch_z,
-    fetch_w,
-    mem_write("WZ", "E", (cpu) => cpu.regs.WZ++),
-    mem_write("WZ", "D"),
-  ]),
-  op(0x56, "IM 1", [opcode_fetch_and(set_im(1))]),
+  op(0x52, "SBC HL,DE", [opcode_fetch, sbc_hl_rr("DE")]),
+  op(0x53, "LD (nn),DE", ld_nn_rr("D", "E", "DE")),
+  op(0x54, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x55, "RETN", ret(retn_setup)),
+  op(0x56, "IM 1", im(1)),
+  op(0x57, "LD A,I", [ld_a_ir("I")]),
   op(0x58, "IN E,(C)", [opcode_fetch, io_read_bc("E")]),
   op(0x59, "OUT (C),E", [opcode_fetch, io_write_bc("E")]),
-  op(0x5e, "IM 2", [opcode_fetch_and(set_im(2))]),
-  op(0x5f, "LD A,R", [
-    opcode_fetch_and((cpu) => {
-      const value = cpu.regs.R;
-      cpu.regs.A = value;
-      cpu.updateFlags({
-        n: 0,
-        pv: cpu.iff2 ? 1 : 0,
-        h: 0,
-        z: value === 0,
-        s: value & 0x80,
-        x: value & FLAG_X,
-        y: value & FLAG_Y,
-      });
-    }),
-  ]),
+  op(0x5a, "ADC HL,DE", [opcode_fetch, adc_hl_rr("DE")]),
+  op(0x5b, "LD DE,(nn)", ld_rr_nn("D", "E")),
+  op(0x5c, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x5d, "RETN", ret(retn_setup)),
+  op(0x5e, "IM 2", im(2)),
+  op(0x5f, "LD A,R", [ld_a_ir("R")]),
 
+  // 0x60-0x6F
   op(0x60, "IN H,(C)", [opcode_fetch, io_read_bc("H")]),
   op(0x61, "OUT (C),H", [opcode_fetch, io_write_bc("H")]),
-  op(0x63, "LD (nn),HL", [
-    opcode_fetch,
-    fetch_z,
-    fetch_w,
-    mem_write("WZ", "L", (cpu) => cpu.regs.WZ++),
-    mem_write("WZ", "H"),
-  ]),
+  op(0x62, "SBC HL,HL", [opcode_fetch, sbc_hl_rr("HL")]),
+  op(0x63, "LD (nn),HL", ld_nn_rr("H", "L", "HL")),
+  op(0x64, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x65, "RETN", ret(retn_setup)),
+  op(0x66, "IM 0", im(0)),
+  op(0x67, "RRD", rrd_rld(do_rrd)),
   op(0x68, "IN L,(C)", [opcode_fetch, io_read_bc("L")]),
   op(0x69, "OUT (C),L", [opcode_fetch, io_write_bc("L")]),
+  op(0x6a, "ADC HL,HL", [opcode_fetch, adc_hl_rr("HL")]),
+  op(0x6b, "LD HL,(nn)", ld_rr_nn("H", "L")),
+  op(0x6c, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x6d, "RETN", ret(retn_setup)),
+  op(0x6e, "IM 0/1", im(0)),
+  op(0x6f, "RLD", rrd_rld(do_rld)),
+
+  // 0x70-0x7F
+  op(0x70, "IN F,(C)", [opcode_fetch, in_f_bc]),
+  op(0x71, "OUT (C),0", [opcode_fetch, out_bc_0]),
+  op(0x72, "SBC HL,SP", [opcode_fetch, sbc_hl_rr("SP")]),
+  op(0x73, "LD (nn),SP", ld_nn_sp()),
+  op(0x74, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x75, "RETN", ret(retn_setup)),
+  op(0x76, "IM 1", im(1)),
+  op(0x77, "NOP", ed_nop),
+  op(0x78, "IN A,(C)", [opcode_fetch, io_read_bc("A")]),
+  op(0x79, "OUT (C),A", [opcode_fetch, io_write_bc("A")]),
+  op(0x7a, "ADC HL,SP", [opcode_fetch, adc_hl_rr("SP")]),
+  op(0x7b, "LD SP,(nn)", ld_sp_nn()),
+  op(0x7c, "NEG", [opcode_fetch_and(do_neg)]),
+  op(0x7d, "RETN", ret(retn_setup)),
+  op(0x7e, "IM 2", im(2)),
+  op(0x7f, "NOP", ed_nop),
+
+  // Block ops (0xA0-0xA3, 0xA8-0xAB, 0xB0-0xB3, 0xB8-0xBB)
+  op(0xa0, "LDI", block_ld(1, false)),
+  op(0xa1, "CPI", block_cp(1, false)),
+  op(0xa2, "INI", block_in(1, false)),
+  op(0xa3, "OUTI", block_out(1, false)),
+  op(0xa8, "LDD", block_ld(-1, false)),
+  op(0xa9, "CPD", block_cp(-1, false)),
+  op(0xaa, "IND", block_in(-1, false)),
+  op(0xab, "OUTD", block_out(-1, false)),
+  op(0xb0, "LDIR", block_ld(1, true)),
+  op(0xb1, "CPIR", block_cp(1, true)),
+  op(0xb2, "INIR", block_in(1, true)),
+  op(0xb3, "OTIR", block_out(1, true)),
+  op(0xb8, "LDDR", block_ld(-1, true)),
+  op(0xb9, "CPDR", block_cp(-1, true)),
+  op(0xba, "INDR", block_in(-1, true)),
+  op(0xbb, "OTDR", block_out(-1, true)),
 );
 
 // CB-prefixed opcode generation. The 256 ops divide into four groups by the
