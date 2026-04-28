@@ -87,6 +87,7 @@ export class Z80 {
   }
 
   runOneOp() {
+    const ei = this.eiDelay;
     const pc = this.regs.PC;
     this.regs.OP = this.mem.read(pc);
     this.regs.PC++;
@@ -104,6 +105,8 @@ export class Z80 {
     } else {
       log.debug(`${word(pc)}: INVALID ${byte(this.regs.OP)}`);
     }
+
+    if (ei) this.eiDelay = false;
   }
 
   decode() {
