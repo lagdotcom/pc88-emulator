@@ -90,13 +90,13 @@ const mem_read = (
 const mem_write = (
   addr: Reg16,
   src: Reg8,
-  post?: (cpu: Z80) => void,
+  post?: (cpu: Z80, addr: u16) => void,
 ): MCycle => ({
   type: "MW",
   tStates: 3,
   process: (cpu) => {
     cpu.mem.write(cpu.regs[addr], cpu.regs[src]);
-    post?.(cpu);
+    post?.(cpu, cpu.regs[addr]);
   },
 });
 
@@ -700,7 +700,15 @@ export const opCodes = makeOpTable(
     relative_jump_wz,
   ]),
   op(0x31, "LD SP,nn", [opcode_fetch, fetch_spl, fetch_sph]),
-  op(0x32, "LD (nn),A", [opcode_fetch, fetch_z, fetch_w, mem_write("WZ", "A")]),
+  op(0x32, "LD (nn),A", [
+    opcode_fetch,
+    fetch_z,
+    fetch_w,
+    mem_write("WZ", "A", (cpu, addr) => {
+      cpu.regs.Z = addr + 1;
+      cpu.regs.W = cpu.regs.A;
+    }),
+  ]),
   op(0x33, "INC SP", [opcode_fetch, inc_r16("SP")]),
   op(0x34, "INC (HL)", [
     opcode_fetch,
@@ -726,7 +734,12 @@ export const opCodes = makeOpTable(
     add_r8_to_r8_set_internal_carry("L", "SPL"),
     add_r8_to_r8_use_internal_carry_set_flags("H", "SPH"),
   ]),
-  op(0x3a, "LD A,(nn)", [opcode_fetch, fetch_z, fetch_w, mem_read("WZ", "A")]),
+  op(0x3a, "LD A,(nn)", [
+    opcode_fetch,
+    fetch_z,
+    fetch_w,
+    mem_read("WZ", "A", (cpu) => cpu.regs.WZ++),
+  ]),
   op(0x3b, "DEC SP", [opcode_fetch, dec_r16("SP")]),
   op(0x3c, "INC A", [opcode_fetch_and_inc_r8("A")]),
   op(0x3d, "DEC A", [opcode_fetch_and_dec_r8("A")]),
