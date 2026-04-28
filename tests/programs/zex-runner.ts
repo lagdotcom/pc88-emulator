@@ -26,12 +26,13 @@ const URLS: Record<string, string> = {
 
 // Approximate total instructions to completion. Used only for the ETA in
 // progress logs — the actual run terminates on BDOS function 0 from the
-// binary itself, not on hitting this count. Numbers come from a successful
-// reference run; refresh if the emulator's behaviour changes enough that
-// these get noticeably off.
+// binary itself, not on hitting this count. Numbers come from a measured
+// run on this emulator (~5.78 G ops to a clean exit, regardless of
+// whether the test reports ERROR or ok). Refresh if the emulator's
+// behaviour changes enough that these get noticeably off.
 const APPROX_TOTAL_OPS: Record<string, number> = {
-  "zexdoc.com": 8_500_000_000,
-  "zexall.com": 9_000_000_000,
+  "zexdoc.com": 5_800_000_000,
+  "zexall.com": 5_800_000_000,
 };
 
 function formatDuration(seconds: number): string {

@@ -202,13 +202,12 @@ For watching progress in real time use `yarn zex zexdoc` (or `yarn
 zex zexall`) — that runs `zex-runner.ts` standalone, streams BDOS
 output as zexdoc prints it, and every 50M ops logs a status line
 with elapsed time, Mops/s, percentage complete, and ETA. The
-percentage and ETA come from a hardcoded approximate total of
-~8.5 G instructions for zexdoc and ~9.0 G for zexall (refresh in
-both `zex-runner.ts` and `zexdoc.test.ts` if a future run shows
-them noticeably wrong). The current emulator runs zexdoc at
-roughly 3 M ops/s on Linux; expect a full run in well under an
-hour. The vitest `test:zex` path captures the same output but
-only surfaces it on completion.
+percentage and ETA come from a hardcoded total of ~5.8 G
+instructions per run (measured on this emulator; refresh in both
+`zex-runner.ts` and `zexdoc.test.ts` if it drifts). Measured rates:
+~3 Mops/s on Linux, ~8 Mops/s on Windows V8; full run is roughly
+12 minutes wall-clock on Windows. The vitest `test:zex` path
+captures the same output but only surfaces it on completion.
 
 The 3 Mops/s figure is the next obvious perf lever: the M-cycle list
 dispatcher allocates closure objects per cycle and walks an array per
