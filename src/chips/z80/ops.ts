@@ -969,6 +969,7 @@ export const edOpCodes = makeOpTable(
   op(0x46, "IM 0", [opcode_fetch_and(set_im(0))]),
   op(0x48, "IN C,(C)", [opcode_fetch, io_read_bc("C")]),
   op(0x49, "OUT (C),C", [opcode_fetch, io_write_bc("C")]),
+  op(0x4f, "LD R,A", [opcode_fetch_and_load_r8_from_r8("R", "A")]),
 
   op(0x50, "IN D,(C)", [opcode_fetch, io_read_bc("D")]),
   op(0x51, "OUT (C),D", [opcode_fetch, io_write_bc("D")]),
@@ -983,6 +984,7 @@ export const edOpCodes = makeOpTable(
   op(0x58, "IN E,(C)", [opcode_fetch, io_read_bc("E")]),
   op(0x59, "OUT (C),E", [opcode_fetch, io_write_bc("E")]),
   op(0x5e, "IM 2", [opcode_fetch_and(set_im(2))]),
+  op(0x5f, "LD A,R", [opcode_fetch_and_load_r8_from_r8("A", "R")]),
 
   op(0x60, "IN H,(C)", [opcode_fetch, io_read_bc("H")]),
   op(0x61, "OUT (C),H", [opcode_fetch, io_write_bc("H")]),

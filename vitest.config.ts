@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    reporters: ["json", "default"],
-    outputFile: "./out/test-output.json",
+    reporters: ["html", "default"],
+    outputFile: "./out/test-html/index.html",
   },
 });

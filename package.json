@@ -19,6 +19,7 @@
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
+    "@vitest/ui": "4.1.5",
     "builtin-modules": "^5.1.0",
     "dotenv": "^17.4.2",
     "esbuild": "^0.28.0",
