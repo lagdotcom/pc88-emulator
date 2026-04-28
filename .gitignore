@@ -5,3 +5,4 @@
 /coverage
 /.env
 /tests/z80/data
+/out

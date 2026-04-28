@@ -40,10 +40,9 @@ const opcode_fetch_and = (
   type: "M1",
   tStates,
   process: (cpu) => {
-    if (cpu.mCycleIndex > 0) {
-      cpu.regs.OP = cpu.mem.read(cpu.regs.PC++);
-      cpu.regs.R++;
-    }
+    if (cpu.mCycleIndex > 0) cpu.regs.OP = cpu.mem.read(cpu.regs.PC++);
+
+    cpu.regs.R++;
     post?.(cpu, cpu.regs.OP);
   },
 });
