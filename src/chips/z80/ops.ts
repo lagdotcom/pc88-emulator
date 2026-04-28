@@ -338,10 +338,10 @@ const add_r8_to_r8_use_internal_carry_set_flags = (
 });
 
 const jump_if_flag_set = (mask: u8) => (cpu: Z80) => {
-  cpu.regs.OPx = cpu.regs.F & mask ? skip_jump : no_op;
+  cpu.regs.OPx = cpu.regs.F & mask ? no_op : skip_jump;
 };
 const jump_if_flag_not_set = (mask: u8) => (cpu: Z80) => {
-  cpu.regs.OPx = cpu.regs.F & mask ? no_op : skip_jump;
+  cpu.regs.OPx = cpu.regs.F & mask ? skip_jump : no_op;
 };
 
 const opcode_fetch_ret_if_flag_set = (flag: u8) =>
