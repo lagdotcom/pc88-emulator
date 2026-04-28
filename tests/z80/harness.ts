@@ -203,9 +203,9 @@ export function diffState(
 
   for (const k of REG_KEYS) {
     if (skip.has(k)) continue;
-    const want = (expected as unknown as Record<string, number>)[k]!;
-    const have = (got as unknown as Record<string, number>)[k]!;
-    if (have !== want) diffs.push({ reg: k, got: have, want });
+    const want = expected[k];
+    const have = got[k];
+    if (want !== have) diffs.push({ reg: k, got: have, want });
   }
 
   if (!opts.skipRam) {

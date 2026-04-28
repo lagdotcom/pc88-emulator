@@ -126,7 +126,7 @@ export type Reg16 =
 //   WZ: Z=byte 26,   W=byte 27
 //   OP2: OP=byte 28, OPx=byte 29
 
-class Z80RegsImpl {
+class Z80RegsImpl implements Z80Regs {
   private buf = new ArrayBuffer(30);
   private u8 = new Uint8Array(this.buf);
   private u16 = new Uint16Array(this.buf);
@@ -202,7 +202,7 @@ class Z80RegsImpl {
 }
 
 export function makeRegs(): Z80Regs {
-  return new Z80RegsImpl() as unknown as Z80Regs;
+  return new Z80RegsImpl();
 }
 
 export interface Z80Flags {
