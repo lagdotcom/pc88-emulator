@@ -244,7 +244,6 @@ function ccf(cpu: Z80) {
 
 function halt(cpu: Z80) {
   cpu.halted = true;
-  cpu.regs.PC--;
   // now we wait until an interrupt is handled, then do cpu.regs.PC++
 }
 
