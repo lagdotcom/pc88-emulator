@@ -28,6 +28,8 @@ yarn dev                 # esbuild watch
 yarn build               # tsc -noEmit + esbuild production bundle
 yarn test                # vitest (full suite)
 yarn test:z80            # SingleStepTests Z80 harness only
+yarn test:programs       # hand-assembled program tests (fast)
+yarn test:zex            # Frank Cringle's zexdoc.com (slow; sets ZEX=1)
 ```
 
 The Z80 harness fetches per-opcode JSON test cases from
@@ -137,6 +139,20 @@ all 45 byte/word accessors as direct typed-array indexed loads. This is
 much faster (~2.2× across the test suite) than the previous
 `Object.defineProperty` + closure layout because V8 sees a stable hidden
 class on every Z80 instance and can inline the accesses.
+
+## Program tests (`tests/programs/`)
+
+Two harness modes for testing the CPU on real Z80 sequences:
+
+- `runUntilHalt(h, bytes, opts)` — load bytes, run to first HALT.
+  Used for the hand-assembled tests in `programs.test.ts`.
+- `runCpm(h, bytes, opts)` — load a `.com` file at 0x0100 and trap
+  `CALL 0x0005` to provide BDOS functions 0/2/9. Used for zexdoc.
+
+`zexdoc.test.ts` fetches `zexdoc.com` / `zexall.com` from
+anotherlin/z80emu on first run and caches under `tests/programs/
+fixtures/`. Gated behind `ZEX=1` since each takes minutes; a full
+zexdoc run is ~7 billion Z80 cycles.
 
 ## Test status (as of last commit)
 
