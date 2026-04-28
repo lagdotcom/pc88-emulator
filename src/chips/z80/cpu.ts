@@ -125,10 +125,16 @@ export class Z80 {
   }
 
   decode() {
-    if (this.prefix?.type && opTables[this.prefix.type][this.regs.OP])
-      return opTables[this.prefix.type][this.regs.OP];
-
+    // Look up the op in the prefix-specific table and consume the prefix
+    // on success. Clearing here (rather than on every entry) means that an
+    // unknown opcode inside a prefix table falls through to the base
+    // table and the prefix is naturally discarded — both branches end
+    // with prefix = undefined.
+    const prefix = this.prefix?.type;
     this.prefix = undefined;
+    if (prefix && opTables[prefix][this.regs.OP]) {
+      return opTables[prefix][this.regs.OP];
+    }
     return opCodes[this.regs.OP];
   }
 

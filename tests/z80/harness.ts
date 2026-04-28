@@ -218,16 +218,17 @@ export function diffState(
   return diffs;
 }
 
-// Steps the CPU until the prefix has stabilised and one full instruction has
-// been dispatched. Calls runOneOp once per byte of prefix plus once for the
-// effective opcode. Bails out after a hard cap to keep tests safe if the CPU
-// fails to converge.
+// Steps the CPU until one full instruction has been dispatched. Each
+// runOneOp consumes one byte; if the byte was a prefix the cpu.prefix
+// field is left set, telling us to keep going. The dispatch of a
+// prefixed opcode clears the prefix on its way out (see decode() in
+// cpu.ts), so an iteration that ends with prefix === undefined means
+// the whole instruction has been consumed.
 export function step(h: Harness): void {
   const { cpu } = h;
   for (let guard = 0; guard < 5; guard++) {
-    const before = cpu.prefix;
     cpu.runOneOp();
-    if (cpu.prefix === before) break;
+    if (cpu.prefix === undefined) break;
   }
   // Defensive: clear lingering prefix between tests so the next loadState
   // starts clean even if the CPU forgot to clear it.
