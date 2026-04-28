@@ -11,6 +11,7 @@
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "test": "vitest",
+    "test:z80": "vitest run tests/z80",
     "start": "tsx src/main.ts"
   },
   "devDependencies": {

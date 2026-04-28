@@ -1,1 +1,7 @@
 /node_modules
+/dist
+/main.js
+/main.js.map
+/coverage
+/.env
+/tests/z80/data
