@@ -116,4 +116,10 @@ export class Z80 {
     this.prefix = undefined;
     return opCodes[this.regs.OP];
   }
+
+  incR() {
+    const highBit = this.regs.R & 0x80;
+    const rest = (this.regs.R & 0x7f) + 1;
+    this.regs.R = highBit | (rest & 0x7f);
+  }
 }

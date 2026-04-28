@@ -42,7 +42,7 @@ const opcode_fetch_and = (
   process: (cpu) => {
     if (cpu.mCycleIndex > 0) cpu.regs.OP = cpu.mem.read(cpu.regs.PC++);
 
-    cpu.regs.R++;
+    cpu.incR();
     post?.(cpu, cpu.regs.OP);
   },
 });
