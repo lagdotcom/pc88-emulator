@@ -519,7 +519,6 @@ const mem_write_l_to_sp_transfer_wz: MCycle = {
   process: (cpu) => {
     cpu.mem.write(cpu.regs.SP, cpu.regs.L);
     cpu.regs.HL = cpu.regs.WZ;
-    cpu.regs.WZ = cpu.regs.SP + 1;
   },
 };
 
