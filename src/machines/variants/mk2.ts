@@ -1,8 +1,8 @@
 import { makeROM, type PC88Config } from "../config.js";
 
-const MKII_N80 = makeROM("mkII-n80", 32, "");
-const MKII_N88 = makeROM("mkII-n88", 32, "");
-const MKII_E0 = makeROM("mkII-e0", 8, "");
+const MKII_N80 = makeROM("mkII-n80", 32, "6f2cd5b887c80a18cf60e6758d195c46");
+const MKII_N88 = makeROM("mkII-n88", 32, "16b4f08338382e0fe21b6c244f1b9c96");
+const MKII_E0 = makeROM("mkII-e0", 8, "f198cae1050af141dd3c09f0b2c6facf");
 
 export const MKII: PC88Config = {
   model: "PC-8801 mkII",

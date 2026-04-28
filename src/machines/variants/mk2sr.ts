@@ -1,13 +1,14 @@
 import { makeROM, type PC88Config } from "../config.js";
 import { MKI_DISC } from "./mk1.js";
 
-export const SR_N80 = makeROM("sr-n80", 32, "");
-const SR_N88 = makeROM("sr-n88", 32, "");
-export const SR_E0 = makeROM("sr-e0", 8, "");
-const SR_E1 = makeROM("sr-e1", 8, "");
-const SR_E2 = makeROM("sr-e2", 8, "");
-const SR_E3 = makeROM("sr-e3", 8, "");
-const SR_FONT = makeROM("sr-font", 2, "");
+export const SR_N80 = makeROM("sr-n80", 32, "2ff07b8769367321128e03924af668a0");
+const SR_N88 = makeROM("sr-n88", 32, "4f984e04a99d56c4cfe36115415d6eb8");
+export const SR_E0 = makeROM("sr-e0", 8, "d675a2ca186c6efcd6277b835de4c7e5");
+const SR_E1 = makeROM("sr-e1", 8, "e844534dfe5744b381444dbe61ef1b66");
+const SR_E2 = makeROM("sr-e2", 8, "6548fa45061274dee1ea8ae1e9e93910");
+const SR_E3 = makeROM("sr-e3", 8, "fc4b76a402ba501e6ba6de4b3e8b4273");
+const SR_FONT = makeROM("sr-font", 2, "14bc9e267cf0cb56d22d5c470f582d53");
+const SR_KANJI2 = makeROM("sr-kanji2", 128, "41d2e2c0c0edfccf76fa1c3e38bc1cf2");
 
 export const MKII_SR: PC88Config = {
   model: "PC-8801 mkII SR",
@@ -35,6 +36,7 @@ export const MKII_SR: PC88Config = {
     e1: SR_E1,
     e2: SR_E2,
     e3: SR_E3,
+    kanji2: SR_KANJI2,
     // TODO I have SR_KANJI2 but not _KANJI1
   },
 };
