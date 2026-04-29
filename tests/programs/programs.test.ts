@@ -8,10 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  makeProgramHarness,
-  runUntilHalt,
-} from "./harness.js";
+import { makeProgramHarness, runUntilHalt } from "./harness.js";
 
 describe("HALT", () => {
   it("stops after one instruction", () => {
@@ -37,6 +34,7 @@ describe("fib(10) via ADD HL,DE in a loop", () => {
   //         HALT
   it("ends with HL = 55", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -67,6 +65,7 @@ describe("sum 1..10 via DJNZ", () => {
   //         HALT
   it("ends with A = 55", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -98,6 +97,7 @@ describe("max of 4 bytes via CP / JR NC", () => {
   // 0x110:  DB 3,7,2,9
   it("ends with A = 9", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -132,6 +132,7 @@ describe("LDIR copies a string", () => {
   //         HALT
   it("dst memory matches src", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -165,6 +166,7 @@ describe("CALL / RET preserve SP", () => {
   //         RET
   it("returns to caller and clears the stack", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -188,6 +190,7 @@ describe("DAA after BCD addition", () => {
   //   DAA       ; corrects to 0x85 (the BCD result of 47 + 38)
   it("converts binary sum to packed BCD", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -206,6 +209,7 @@ describe("DAA after BCD addition", () => {
     // 0x12 - 0x25 = 0x87 in BCD with carry set (representing -13 in
     // 100s-complement BCD).
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -235,6 +239,7 @@ describe("multiply A by 7 via shift+add", () => {
   //         HALT
   it("9 * 7 = 63", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -262,6 +267,7 @@ describe("16-bit add with HL and IX", () => {
   //         HALT
   it("IX = 0x2345 after ADD", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -287,6 +293,7 @@ describe("CPIR finds first occurrence", () => {
   // 0x110:  DB 0x10, 0x22, 0x33, 0x44, 0x55
   it("HL points one past the match and BC counts remaining", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -321,6 +328,7 @@ describe("PUSH / POP round-trip", () => {
   //         HALT
   it("HL receives the pushed BC", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -347,6 +355,7 @@ describe("16-bit arithmetic via ADC HL,DE", () => {
   //         HALT
   it("HL = 0x5555 and carry clear", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -380,6 +389,7 @@ describe("nested CALL / RET", () => {
   //         RET               ; 0x0118
   it("returns A=3 with SP restored", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -413,6 +423,7 @@ describe("RST 0x18 reaches the rst handler", () => {
   // and verify the handler ran.
   it("handler increments B; final B=1", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -449,6 +460,7 @@ describe("conditional JP and JR via JR Z / JR NZ", () => {
   // end:    HALT
   it("JR Z taken when Z set", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -469,6 +481,7 @@ describe("conditional JP and JR via JR Z / JR NZ", () => {
 
   it("JR Z not taken when Z clear", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [
@@ -496,6 +509,7 @@ describe("BIT / RES / SET on (HL)", () => {
   //         HALT
   it("byte transforms to 0x47 and Z is clear after BIT 0", () => {
     const h = makeProgramHarness();
+    // prettier-ignore
     runUntilHalt(
       h,
       [

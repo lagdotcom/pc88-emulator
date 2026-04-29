@@ -58,9 +58,11 @@ function compile(cycles: MCycle[]): (cpu: Z80) => void {
 
   if (!canAbort) {
     if (n === 0) {
-      return totalT === 0 ? noop : (cpu) => {
-        cpu.cycles += totalT;
-      };
+      return totalT === 0
+        ? noop
+        : (cpu) => {
+            cpu.cycles += totalT;
+          };
     }
     if (n === 1) {
       const a = cycles[0]!.process;
@@ -983,16 +985,14 @@ const fetch_w_respect_skip_jump: MCycle = {
 const add_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) =>
   do_add_a(cpu, cpu.regs[src], useCarry);
 
-const add_a_imm =
-  (useCarry: boolean) => (cpu: Z80, data: u8) =>
-    do_add_a(cpu, data, useCarry);
+const add_a_imm = (useCarry: boolean) => (cpu: Z80, data: u8) =>
+  do_add_a(cpu, data, useCarry);
 
 const sub_a_r8 = (src: Reg8, useCarry: boolean) => (cpu: Z80) =>
   do_sub_a(cpu, cpu.regs[src], useCarry);
 
-const sub_a_imm =
-  (useCarry: boolean) => (cpu: Z80, data: u8) =>
-    do_sub_a(cpu, data, useCarry);
+const sub_a_imm = (useCarry: boolean) => (cpu: Z80, data: u8) =>
+  do_sub_a(cpu, data, useCarry);
 
 const cp_a_r8 = (src: Reg8) => (cpu: Z80) => do_cp_a(cpu, cpu.regs[src]);
 
@@ -1209,6 +1209,10 @@ export function buildOpTable(set: RegSet): Record<u8, OpCode> {
   const inc_rl = opcode_fetch_and_inc_r8(set.rl);
   const dec_rl = opcode_fetch_and_dec_r8(set.rl);
 
+  // prettier-ignore — the per-opcode lines below are deliberately laid
+  // out as a table (one row per opcode), which is much more navigable
+  // than the multi-line shape prettier would produce.
+  // prettier-ignore
   return makeOpTable(
   op(0x00, "NOP", [opcode_fetch]),
   op(0x01, "LD BC,nn", [opcode_fetch, fetch_c, fetch_b]),
@@ -1863,14 +1867,13 @@ const block_out = (delta: 1 | -1, repeat: boolean): OpCode["mCycles"] => [
 
 // RRD / RLD: read (HL), compute new A and new (HL) byte (do_rrd/do_rld
 // places the new memory byte in OPx), then write OPx back to (HL).
-const rrd_rld = (
-  fn: (cpu: Z80, value: u8) => void,
-): OpCode["mCycles"] => [
+const rrd_rld = (fn: (cpu: Z80, value: u8) => void): OpCode["mCycles"] => [
   opcode_fetch,
   mem_read("HL", "OPx", (cpu) => fn(cpu, cpu.regs.OPx)),
   mem_write("HL", "OPx"),
 ];
 
+// prettier-ignore
 export const edOpCodes = makeOpTable(
   // 0x40-0x4F
   op(0x40, "IN B,(C)", [opcode_fetch, io_read_bc("B")]),

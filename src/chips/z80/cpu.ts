@@ -156,6 +156,7 @@ export class Z80 {
     // changes can be A/B-compared against the original table dispatcher.
     if (this.useDispatchBase) {
       this.prefix = undefined;
+      // prettier-ignore
       switch (prefixType) {
         case undefined: dispatchBase(this); break;
         case "ED": dispatchED(this); break;

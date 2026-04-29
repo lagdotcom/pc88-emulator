@@ -70,17 +70,21 @@ function addLoop(loops: number): Bench {
   //       INC DE
   //       DJNZ loop
   // HALT
+  // prettier-ignore — keep the byte array dense (one Z80 instruction
+  // per source line) so the embedded program reads as assembly.
+  // prettier-ignore
+  const program = [
+      0x21, 0x00, 0x00,    // LD HL,0
+      0x11, 0x01, 0x00,    // LD DE,1
+      0x06, loops & 0xff,  // LD B,N
+      0x19,                // ADD HL,DE
+      0x13,                // INC DE
+      0x10, 0xfc,          // DJNZ -4
+      0x76,                // HALT
+  ];
   return {
     name: `ADD HL,DE loop, B=${loops}`,
-    program: [
-      0x21, 0x00, 0x00, // LD HL,0
-      0x11, 0x01, 0x00, // LD DE,1
-      0x06, loops & 0xff, // LD B,N
-      0x19,             // ADD HL,DE
-      0x13,             // INC DE
-      0x10, 0xfc,       // DJNZ -4
-      0x76,             // HALT
-    ],
+    program,
     iterations: 3 + loops * 3 + 1,
   };
 }
@@ -94,12 +98,13 @@ function ldirLoop(bytes: number): Bench {
   // HALT
   return {
     name: `LDIR ${bytes} bytes`,
+    // prettier-ignore
     program: [
-      0x21, 0x00, 0x02,             // LD HL,0x0200
-      0x11, 0x00, 0x04,             // LD DE,0x0400
+      0x21, 0x00, 0x02,                        // LD HL,0x0200
+      0x11, 0x00, 0x04,                        // LD DE,0x0400
       0x01, bytes & 0xff, (bytes >> 8) & 0xff, // LD BC,N
-      0xed, 0xb0,                   // LDIR
-      0x76,                         // HALT
+      0xed, 0xb0,                              // LDIR
+      0x76,                                    // HALT
     ],
     // Each LDIR iteration is 2 dispatches (ED + B0). Setup is 3 LDs.
     iterations: 4 + bytes * 2 + 1,

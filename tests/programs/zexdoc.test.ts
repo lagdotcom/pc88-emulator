@@ -38,7 +38,8 @@ async function loadBinary(name: string): Promise<Uint8Array | null> {
   if (existsSync(cached)) {
     return new Uint8Array(await readFile(cached));
   }
-  const url = process.env[`ZEX_URL_${name.replace(".", "_").toUpperCase()}`] ??
+  const url =
+    process.env[`ZEX_URL_${name.replace(".", "_").toUpperCase()}`] ??
     DEFAULT_URLS[name];
   if (!url) return null;
   try {
@@ -86,28 +87,24 @@ describe.skipIf(SKIP)("zexdoc", () => {
 });
 
 describe.skipIf(SKIP)("zexall", () => {
-  it(
-    "all-behaviour CRCs match",
-    { timeout: 15 * 60_000 },
-    async () => {
-      const bin = await loadBinary("zexall.com");
-      if (!bin) {
-        console.warn(
-          "zexall.com not available; drop into fixtures or set " +
-            "ZEX_URL_ZEXALL_COM",
-        );
-        return;
-      }
-      const h = makeProgramHarness();
-      const r = runCpm(h, bin, {
-        maxOps: 20_000_000_000,
-        progressEvery: 50_000_000,
-        approxTotalOps: 5_800_000_000,
-      });
-      // eslint-disable-next-line no-console
-      console.log("zexall output:\n" + r.output);
-      expect(r.output).not.toMatch(/ERROR/);
-      expect(r.output).toMatch(/complete/i);
-    },
-  );
+  it("all-behaviour CRCs match", { timeout: 15 * 60_000 }, async () => {
+    const bin = await loadBinary("zexall.com");
+    if (!bin) {
+      console.warn(
+        "zexall.com not available; drop into fixtures or set " +
+          "ZEX_URL_ZEXALL_COM",
+      );
+      return;
+    }
+    const h = makeProgramHarness();
+    const r = runCpm(h, bin, {
+      maxOps: 20_000_000_000,
+      progressEvery: 50_000_000,
+      approxTotalOps: 5_800_000_000,
+    });
+    // eslint-disable-next-line no-console
+    console.log("zexall output:\n" + r.output);
+    expect(r.output).not.toMatch(/ERROR/);
+    expect(r.output).toMatch(/complete/i);
+  });
 });

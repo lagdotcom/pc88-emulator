@@ -126,6 +126,10 @@ export type Reg16 =
 //   WZ: Z=byte 26,   W=byte 27
 //   OP2: OP=byte 28, OPx=byte 29
 
+// prettier-ignore — the one-line getter/setter pairs are intentional;
+// the file reads as a register-layout table and that's exactly the
+// abstraction we want here.
+// prettier-ignore
 class Z80RegsImpl implements Z80Regs {
   private buf = new ArrayBuffer(30);
   private u8 = new Uint8Array(this.buf);

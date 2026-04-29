@@ -191,6 +191,10 @@ export function dispatchBase(cpu: Z80): void {
   const mem = cpu.mem;
   const op = regs.OP;
 
+  // prettier-ignore — the dense one-line case layout is intentional and
+  // makes the opcode table readable as a table; preserving it requires
+  // opting out of prettier's formatting for this single statement.
+  // prettier-ignore
   switch (op) {
     case 0x00: // NOP
       return;
@@ -832,6 +836,10 @@ export function dispatchED(cpu: Z80): void {
   const regs = cpu.regs;
   const op = regs.OP;
 
+  // prettier-ignore — the dense one-line case layout is intentional and
+  // makes the opcode table readable as a table; preserving it requires
+  // opting out of prettier's formatting for this single statement.
+  // prettier-ignore
   switch (op) {
     // ---------------- 0x40-0x4F ----------------
     case 0x40: regs.B = inRegFromC(cpu); cpu.cycles += 4; return;
@@ -998,6 +1006,7 @@ function setShiftFlags(cpu: Z80, result: u8, carryOut: number): void {
 // charges 3 t-states for the memory read.
 function cbReadOperand(cpu: Z80, slot: number): u8 {
   const regs = cpu.regs;
+  // prettier-ignore
   switch (slot) {
     case 0: return regs.B;
     case 1: return regs.C;
@@ -1012,6 +1021,7 @@ function cbReadOperand(cpu: Z80, slot: number): u8 {
 
 function cbWriteOperand(cpu: Z80, slot: number, value: u8): void {
   const regs = cpu.regs;
+  // prettier-ignore
   switch (slot) {
     case 0: regs.B = value; return;
     case 1: regs.C = value; return;
@@ -1036,6 +1046,7 @@ export function dispatchCB(cpu: Z80): void {
     // Rotate / shift.
     let result: u8;
     let c: number;
+    // prettier-ignore
     switch (subOp) {
       case 0: // RLC
         c = (v >> 7) & 1;
@@ -1156,6 +1167,10 @@ export function dispatchDD(cpu: Z80): void {
   const mem = cpu.mem;
   const op = regs.OP;
 
+  // prettier-ignore — the dense one-line case layout is intentional and
+  // makes the opcode table readable as a table; preserving it requires
+  // opting out of prettier's formatting for this single statement.
+  // prettier-ignore
   switch (op) {
     // ---------------- 16-bit / IX-pair ----------------
     case 0x09: do_add16(cpu, "IX", regs.BC); cpu.cycles += 7; return;
@@ -1369,6 +1384,10 @@ export function dispatchFD(cpu: Z80): void {
   const mem = cpu.mem;
   const op = regs.OP;
 
+  // prettier-ignore — the dense one-line case layout is intentional and
+  // makes the opcode table readable as a table; preserving it requires
+  // opting out of prettier's formatting for this single statement.
+  // prettier-ignore
   switch (op) {
     case 0x09: do_add16(cpu, "IY", regs.BC); cpu.cycles += 7; return;
     case 0x19: do_add16(cpu, "IY", regs.DE); cpu.cycles += 7; return;
@@ -1531,6 +1550,7 @@ export function dispatchFD(cpu: Z80): void {
 
 function indexedCbWriteCopy(cpu: Z80, slot: number, value: u8): void {
   const regs = cpu.regs;
+  // prettier-ignore
   switch (slot) {
     case 0: regs.B = value; return;
     case 1: regs.C = value; return;
@@ -1576,6 +1596,7 @@ export function dispatchIndexedCB(cpu: Z80): void {
   if (group === 0) {
     // rotate/shift
     let c: number;
+    // prettier-ignore
     switch (subOp) {
       case 0:
         c = (v >> 7) & 1;
