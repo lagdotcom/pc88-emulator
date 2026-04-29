@@ -21,27 +21,6 @@ function hex(n: number, w: number): string {
   return n.toString(16).padStart(w, "0");
 }
 
-// Pretty-print the head of TVRAM as hex+ASCII rows. Useful for catching
-// "the BIOS wrote bytes but they're outside the printable range" cases
-// — the toAsciiDump() output silently maps non-printables to "·" which
-// can hide a partly-initialised banner.
-function tvramHexHead(tvram: Uint8Array, lines: number): string {
-  const out: string[] = [];
-  for (let row = 0; row < lines; row++) {
-    const base = row * 16;
-    const bytes = Array.from(tvram.subarray(base, base + 16))
-      .map((b) => hex(b, 2))
-      .join(" ");
-    let ascii = "";
-    for (let i = 0; i < 16; i++) {
-      const b = tvram[base + i]!;
-      ascii += b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".";
-    }
-    out.push(`  ${hex(0xf000 + base, 4)}  ${bytes}  ${ascii}`);
-  }
-  return out.join("\n");
-}
-
 function diagnostics(machine: PC88Machine, result: RunResult): string {
   const { memoryMap, sysctrl, crtc, dmac, beeper, irq, misc, ppi } = machine;
   const lines: string[] = [];
@@ -81,8 +60,8 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     `misc ports     : 0xE7 last=${misc.lastE7 ?? "-"} 0xF8 last=${misc.lastF8 ?? "-"}`,
   );
 
-  // TVRAM activity: if any byte is non-zero, the BIOS got far enough to
-  // write something into the text plane (even if it's not ASCII yet).
+  // TVRAM activity: if any byte is non-zero, the BIOS got far enough
+  // to write something into the text plane.
   let nonZero = 0;
   let firstNz = -1;
   let lastNz = -1;
@@ -99,60 +78,6 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     lines.push(
       `TVRAM          : ${nonZero} non-zero bytes, range [0xF${hex(firstNz, 3)}..0xF${hex(lastNz, 3)}]`,
     );
-
-    // Stride probe: scan for "BASIC" (the most distinctive ASCII run
-    // in the N-BASIC banner) at varied byte spacings. The first
-    // stride that finds it is the real per-row stride. Common PC-88
-    // candidates: 80 (mkI mono, no attrs), 120 (mkI with 40-byte
-    // attribute area), 128 (mkI with attrs + padding), 160 (mkII SR
-    // interleaved char/attr).
-    const tv = memoryMap.tvram;
-    const probe = "BASIC";
-    const probeBytes = Array.from(probe).map((c) => c.charCodeAt(0));
-    const findContiguous = () => {
-      for (let i = 0; i + probeBytes.length <= tv.length; i++) {
-        let ok = true;
-        for (let j = 0; j < probeBytes.length; j++) {
-          if (tv[i + j] !== probeBytes[j]) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) return i;
-      }
-      return -1;
-    };
-    const findInterleaved = () => {
-      // Same probe but with one byte gap between chars (so
-      // 'B' '?' 'A' '?' 'S' '?' 'I' '?' 'C').
-      for (let i = 0; i + probeBytes.length * 2 - 1 <= tv.length; i++) {
-        let ok = true;
-        for (let j = 0; j < probeBytes.length; j++) {
-          if (tv[i + j * 2] !== probeBytes[j]) {
-            ok = false;
-            break;
-          }
-        }
-        if (ok) return i;
-      }
-      return -1;
-    };
-    const cont = findContiguous();
-    const inter = findInterleaved();
-    if (inter >= 0) {
-      lines.push(
-        `"BASIC"        : 0xF${hex(inter, 3)} (chars at even offsets, attrs at odd) → attribute mode, 2-byte cells`,
-      );
-    } else if (cont >= 0) {
-      lines.push(
-        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → no-attr mode, 1-byte cells`,
-      );
-    } else {
-      lines.push(`"BASIC"        : not found in TVRAM at any common stride`);
-    }
-
-    lines.push(`TVRAM hex head :`);
-    lines.push(tvramHexHead(memoryMap.tvram, 4));
   }
 
   // 32 bytes around the final PC, read through the memory map (so
@@ -243,13 +168,19 @@ async function main(): Promise<void> {
   // The visible dump renders only the CRTC+DMAC-fetched region — what
   // a real screen would actually show. Falls back to a placeholder if
   // the BIOS hasn't programmed SET MODE yet.
+  const visible = machine.display.toAsciiDump();
   process.stdout.write("\n\n--- Visible screen ---\n");
-  process.stdout.write(machine.display.toAsciiDump());
-  // The raw dump ignores CRTC/DMAC config and lays out the full 4 KB
-  // TVRAM as a 25 × 80 grid. Useful when the visible region is empty
-  // or to see the BIOS scratch areas (BASIC tokens, line buffers).
-  process.stdout.write("\n\n--- Raw TVRAM (4 KB, char bytes only) ---\n");
-  process.stdout.write(machine.display.rawTvramDump());
+  process.stdout.write(visible);
+  // The raw 4 KB hex+ASCII dump is noisy in the normal "boot
+  // succeeded" case — the visible region tells you everything. Show
+  // it only when explicitly requested via PC88_RAW_TVRAM=1, or when
+  // the visible region is empty (nothing programmed → nothing else
+  // to look at).
+  const visibleEmpty = visible.startsWith("(CRTC not yet programmed");
+  if (process.env.PC88_RAW_TVRAM === "1" || visibleEmpty) {
+    process.stdout.write("\n\n--- Raw TVRAM (4 KB hex) ---\n");
+    process.stdout.write(machine.display.rawTvramDump());
+  }
   process.stdout.write("\n------------------\n");
 }
 
