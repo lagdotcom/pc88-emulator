@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  Pc88MemoryMap,
+  type LoadedRoms,
+} from "../../src/machines/pc88-memory.js";
+
+function makeRom(size: number, fill: number): Uint8Array {
+  const u = new Uint8Array(size);
+  u.fill(fill);
+  return u;
+}
+
+function fixture(): LoadedRoms {
+  return {
+    n80: makeRom(0x8000, 0x80),
+    n88: makeRom(0x8000, 0x88),
+    e0: makeRom(0x2000, 0xe0),
+  };
+}
+
+describe("Pc88MemoryMap", () => {
+  it("reads the active BASIC ROM at 0x0000", () => {
+    const m = new Pc88MemoryMap(fixture());
+    m.setBasicMode("n80");
+    expect(m.read(0x0000)).toBe(0x80);
+    expect(m.read(0x4000)).toBe(0x80);
+    m.setBasicMode("n88");
+    expect(m.read(0x0000)).toBe(0x88);
+    expect(m.read(0x4000)).toBe(0x88);
+  });
+
+  it("falls back to RAM when the BASIC ROM is disabled", () => {
+    const m = new Pc88MemoryMap(fixture());
+    m.mainRam[0x0000] = 0x42;
+    m.setBasicRomEnabled(false);
+    expect(m.read(0x0000)).toBe(0x42);
+    m.setBasicRomEnabled(true);
+    expect(m.read(0x0000)).toBe(0x80);
+  });
+
+  it("swaps E0 ROM in over the upper half of BASIC ROM", () => {
+    const m = new Pc88MemoryMap(fixture());
+    expect(m.read(0x6000)).toBe(0x80); // BASIC ROM continuation
+    m.setE0RomEnabled(true);
+    expect(m.read(0x6000)).toBe(0xe0);
+    expect(m.read(0x5fff)).toBe(0x80); // outside the E0 window
+  });
+
+  it("masks RAM under TVRAM when the text window is enabled", () => {
+    const m = new Pc88MemoryMap(fixture());
+    m.mainRam[0xf000] = 0xaa;
+    m.tvram[0x0000] = 0x48; // 'H'
+    expect(m.read(0xf000)).toBe(0xaa);
+    m.setTvramEnabled(true);
+    expect(m.read(0xf000)).toBe(0x48);
+    m.setTvramEnabled(false);
+    expect(m.read(0xf000)).toBe(0xaa);
+  });
+
+  it("writes to RAM under 0x8000-0xBFFF go to mainRam regardless of bank state", () => {
+    const m = new Pc88MemoryMap(fixture());
+    m.write(0x9000, 0x55);
+    expect(m.mainRam[0x9000]).toBe(0x55);
+    expect(m.read(0x9000)).toBe(0x55);
+  });
+
+  it("writes to ROM-mapped pages are dropped", () => {
+    const m = new Pc88MemoryMap(fixture());
+    m.write(0x0000, 0x99);
+    expect(m.read(0x0000)).toBe(0x80); // ROM still there
+  });
+});

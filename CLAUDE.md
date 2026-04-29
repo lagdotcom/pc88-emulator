@@ -28,12 +28,32 @@ sound) is mostly unbuilt.
 ## Architecture intent
 
 - `src/chips/` — silicon-level emulation. Each chip module knows about
-  itself only; chips never reach across to each other.
-- `src/core/` — buses and shared infrastructure (`MemoryBus` so far).
-- `src/machines/` — wiring. `machines/pc88/` instantiates chips, allocates
-  memory regions, hooks I/O ports for a particular model. Models are
-  config-driven (`PC88Config` in `machines/config.ts`); variants under
-  `machines/variants/` are data, not subclasses.
+  itself only; chips never reach across to each other. The Z80 lives
+  under `chips/z80/`; the PC-88 I/O surface chips
+  (`sysctrl`/`ppi-8255`/`crtc-3301`/`dmac-8257`/`calendar`/`beeper`)
+  live under `chips/io/`. The I/O chips are still mostly stubs at
+  first-light scope — they accept the BASIC ROM init writes and
+  return idle status reads, no rendering or audio yet.
+- `src/core/` — buses and shared infrastructure. `MemoryBus` is the
+  multi-provider memory bus with a fast path for the single-array
+  case. `IOBus` is the 256-slot pre-resolved I/O port bus used by the
+  Z80's `io` parameter (replaced `MemoryBus` for I/O — the table is
+  always full, dispatch is one array load + one call). PC-88 I/O is
+  decoded on the low 8 bits of the port; chip stubs ignore the upper
+  byte that `IN A,(n)` / `OUT (C),r` put on the bus.
+- `src/machines/` — wiring. `pc88.ts` exports `PC88Machine` (a real
+  factory consuming `PC88Config` + `LoadedRoms` and instantiating
+  the Z80, memory map, IOBus, and chip stubs) plus `runMachine()`,
+  which pumps a 60 Hz VBL onto `Z80.requestIrq()` while running.
+  `pc88-memory.ts` is the bank-switched memory map (paged at 4 KB
+  granularity; subarray views into ROM/RAM/VRAM). `pc88-display.ts`
+  is the frame-capture interface (`getTextFrame()` works today,
+  `getPixelFrame()` returns null until graphics are implemented).
+  `rom-loader.ts` resolves `ROMDescriptor.id` to `roms/${id}.rom`,
+  validates the size, and md5-checks against the descriptor (md5s
+  are populated for mkI in `variants/mk1.ts`).
+  Models are config-driven (`PC88Config` in `machines/config.ts`);
+  variants under `machines/variants/` are data, not subclasses.
 - Disk formats will live separately from the FDC behind a `Disk`
   interface (not yet written — design before implementing the FDC).
 
@@ -48,7 +68,13 @@ yarn test:programs       # hand-assembled program tests (fast)
 yarn test:zex            # Frank Cringle's zexdoc.com (slow; sets ZEX=1)
 yarn zex zexdoc          # standalone zex runner with streamed output
 yarn zex zexall          # same, all-behaviour variant
+yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 ```
+
+`yarn pc88` reads ROMs from `roms/` (override with `PC88_ROM_DIR`).
+The required mkI files have ids declared in `src/machines/variants/mk1.ts`
+(`mkI-n80`, `mkI-n88`, `mkI-e0`, etc.) — drop them under `roms/` as
+`<id>.rom`; the loader hard-fails on size or md5 mismatch.
 
 `test:zex` uses `cross-env` so the `ZEX=1` env var works on both
 POSIX and Windows shells. The dev environment is Windows; if you add
@@ -252,6 +278,47 @@ run to a clean exit on the ops2 dispatcher (the default).
   X/Y source, BIT b,(HL) X/Y from W, SCF/CCF Q register), drop a one-line
   comment citing Sean Young or the test name.
 
+## PC88 machine wiring
+
+Memory layout (mkI). All 16 addresses dispatch through `Pc88MemoryMap`
+at 4 KB page granularity, which keeps `read(addr)` to one array load
++ one indexed Uint8Array load even with bank-switching active:
+
+```
+0x0000-0x5FFF  BASIC ROM (n80 or n88)            [bank-switchable]
+0x6000-0x7FFF  E0 extension ROM (or BASIC cont.)  [bank-switchable]
+0x8000-0xBFFF  main RAM (always)
+0xC000-0xEFFF  GVRAM plane 0/1/2 or main RAM      [VRAM enable + plane]
+0xF000-0xFFFF  TVRAM (4 KB) or main RAM           [TVRAM enable]
+```
+
+ROM/VRAM state lives on the map and is mutated by the system controller
+on writes to ports 0x30/0x31/0x32/0x5C. Writes to ROM-mapped pages go
+to a 4 KB discard buffer. After every state mutation, `refreshPages()`
+recomputes all 16 page slots; the cost is negligible compared to the
+millions of reads between bank flips.
+
+I/O port surface (the chip-stub-fed slots — anything else is a
+noisy-once 0xff read / no-op write):
+
+```
+0x00-0x03    PPI #1                  (ppi-8255.ts: keyboard, idle)
+0x10         calendar / cassette     (calendar.ts)
+0x30         system DIP 1 / ROM bank (sysctrl.ts)
+0x31         system DIP 2 / ext ROM  (sysctrl.ts)
+0x32         VRAM/TVRAM window       (sysctrl.ts)
+0x40         status / beep / strobe  (sysctrl.ts → beeper.ts)
+0x50-0x51    CRTC 3301               (crtc-3301.ts: param eater)
+0x5C         GVRAM plane select      (sysctrl.ts)
+0x60-0x68    DMAC 8257               (dmac-8257.ts: param eater)
+0x71         secondary ROM bank      (sysctrl.ts: noop)
+```
+
+The runner (`runMachine` in `pc88.ts`) pumps a 60 Hz VBL: every
+~66,667 Z80 cycles it sets the VBL bits on sysctrl + crtc, calls
+`cpu.requestIrq()`, then clears the bits ~3,200 cycles later. The
+60 Hz constant lives at the top of `pc88.ts`.
+
 ## Branch / pushing
 
 Active branch: `claude/pc88-emulator-fdc-NufaT`. Never push to `main`.
@@ -269,9 +336,13 @@ propagates after a session restart.
 2. The sub-CPU model — mkII has `hasSubCpu: true`; the main CPU and
    sub-CPU communicate through shared latches. Two CPU instances + a
    latch object. The FDC connects to the sub-CPU, not the main bus.
-3. The interrupt acceptance path — IM 0/1/2 dispatch, NMI, hooking
-   `iff1 && !eiDelay` to a request line. The Z80 has all the pieces;
-   nothing acts as the request source yet.
+3. **IM 0 / IM 2 / NMI acceptance.** IM 1 + a 60 Hz VBL request line
+   are wired now (`Z80.requestIrq()` + the acceptance check at the
+   top of `runOneOp` — pushes PC, vectors to 0x0038, clears IFF1/2,
+   wakes from HALT). IM 0 (data-bus byte as opcode) and IM 2
+   (`I:db` indirection through a vector table) are not implemented;
+   FDC + sub-CPU IPC will drive them. NMI (vector 0x0066, ignores
+   IFF1) likewise.
 
 ## Things to know about the harness
 

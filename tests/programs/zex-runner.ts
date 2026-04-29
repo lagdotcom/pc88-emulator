@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Z80 } from "../../src/chips/z80/cpu.js";
+import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -74,15 +75,6 @@ class Ram implements MemoryProvider {
   }
 }
 
-class Io implements MemoryProvider {
-  name = "io";
-  start = 0;
-  end = 0x10000;
-  read() {
-    return 0xff;
-  }
-  write() {}
-}
 
 async function main() {
   const which = process.argv[2] ?? "zexdoc";
@@ -91,12 +83,11 @@ async function main() {
   const totalOps = APPROX_TOTAL_OPS[filename];
 
   const ram = new Ram();
-  const io = new Io();
   ram.bytes[0x0000] = 0xc9; // RET at warm-boot
   ram.bytes[0x0005] = 0xc9; // RET at BDOS
   for (let i = 0; i < bin.length; i++) ram.bytes[0x0100 + i] = bin[i]!;
 
-  const cpu = new Z80(new MemoryBus([ram], 0xff), new MemoryBus([io], 0xff));
+  const cpu = new Z80(new MemoryBus([ram], 0xff), new IOBus());
   cpu.regs.PC = 0x0100;
   cpu.regs.SP = 0xff00;
 

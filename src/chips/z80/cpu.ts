@@ -1,5 +1,6 @@
 import logLib from "log";
 
+import { IOBus } from "../../core/IOBus.js";
 import { MemoryBus } from "../../core/MemoryBus.js";
 import type { u8 } from "../../flavours.js";
 import { byte, isDefined, word } from "../../tools.js";
@@ -60,6 +61,13 @@ export class Z80 {
   iff1: boolean;
   iff2: boolean;
   im: number;
+  // External maskable interrupt request. Drivers raise this with
+  // requestIrq(); it's cleared on accept. Real silicon samples /INT on
+  // the rising edge of the last T-state of the final M-cycle of every
+  // instruction; we approximate that by sampling at the top of
+  // runOneOp (i.e. instruction boundaries), which is the standard
+  // simplification for any emulator not modelling t-state-level timing.
+  irqLine: boolean;
   // Set by an MCycle that wants the rest of an opcode's cycle list to be
   // skipped (the conditional branch in JP/CALL/RET, etc). Read and reset
   // by the per-opcode compiled `execute` function.
@@ -84,7 +92,7 @@ export class Z80 {
 
   constructor(
     public mem: MemoryBus,
-    public io: MemoryBus,
+    public io: IOBus,
   ) {
     this.cycles = 0;
     this.eiDelay = false;
@@ -92,6 +100,7 @@ export class Z80 {
     this.iff1 = false;
     this.iff2 = false;
     this.im = 0;
+    this.irqLine = false;
     this.aborted = false;
     this.useDispatchBase = true;
     this.q = 0;
@@ -117,7 +126,46 @@ export class Z80 {
     this.qWritten = true;
   }
 
+  // Raise the maskable interrupt request line. Cleared on acceptance.
+  // Idempotent: calling twice without an accept in between is the same
+  // as calling once. This is the only IRQ path implemented; NMI and the
+  // IM 0 / IM 2 acknowledgement vectors are TODO.
+  requestIrq(): void {
+    this.irqLine = true;
+  }
+
   runOneOp() {
+    // Maskable interrupt acceptance, sampled at the instruction
+    // boundary. Conditions: IRQ asserted, IFF1 set, no in-flight EI
+    // grace period, no pending prefix (would split a DD CB d xx into
+    // an IRQ-acknowledged half). On accept, push PC and vector to
+    // 0x0038 (IM 1 only). HALT is exited; PC is already at HALT+1
+    // because the M1 fetch advanced it when HALT first dispatched.
+    // T-state cost is 13 (M1 + memory writes + 7-state penalty), the
+    // standard IM 1 acceptance cost.
+    if (
+      this.irqLine &&
+      this.iff1 &&
+      !this.eiDelay &&
+      this.prefix === undefined
+    ) {
+      this.irqLine = false;
+      this.iff1 = false;
+      this.iff2 = false;
+      if (this.halted) this.halted = false;
+      const pc = this.regs.PC;
+      const sp = (this.regs.SP - 2) & 0xffff;
+      this.regs.SP = sp;
+      this.mem.write(sp, pc & 0xff);
+      this.mem.write((sp + 1) & 0xffff, (pc >> 8) & 0xff);
+      this.regs.PC = 0x0038;
+      this.cycles += 13;
+      // Increment R like a normal M1 fetch would have.
+      const r = this.regs.R;
+      this.regs.R = (r & 0x80) | ((r + 1) & 0x7f);
+      return;
+    }
+
     // Consume any pending EI grace period at the start of each instruction.
     // The EI handler will re-set eiDelay during dispatch if this opcode is EI.
     this.eiDelay = false;

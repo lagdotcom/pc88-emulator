@@ -1,4 +1,5 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
+import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
 import type { State, TestCase } from "./types.js";
 
@@ -17,10 +18,12 @@ export class TestRam implements MemoryProvider {
   }
 }
 
-export class TestIo implements MemoryProvider {
+// Test stub. SingleStepTests' `ports` field is keyed on the full
+// 16-bit port (BC for OUT (C),r etc.), so the queue keeps using the
+// full port number. IOBus dispatches by `port & 0xff` but forwards
+// the full port to the handler, so this still resolves correctly.
+export class TestIo {
   name = "io";
-  start = 0;
-  end = 0x10000;
   inputs = new Map<number, number[]>();
   writes: [number, number][] = [];
 
@@ -33,15 +36,15 @@ export class TestIo implements MemoryProvider {
     q.push(value);
   }
 
-  read(port: number): number {
+  read = (port: number): number => {
     const q = this.inputs.get(port);
     if (q && q.length) return q.shift()!;
     return 0xff;
-  }
+  };
 
-  write(port: number, value: number): void {
+  write = (port: number, value: number): void => {
     this.writes.push([port, value]);
-  }
+  };
 }
 
 export interface Harness {
@@ -54,7 +57,8 @@ export function makeHarness(): Harness {
   const ram = new TestRam();
   const io = new TestIo();
   const memBus = new MemoryBus([ram], 0xff);
-  const ioBus = new MemoryBus([io], 0xff);
+  const ioBus = new IOBus();
+  ioBus.registerAll({ name: io.name, read: io.read, write: io.write });
   const cpu = new Z80(memBus, ioBus);
   if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
   return { cpu, ram, io };

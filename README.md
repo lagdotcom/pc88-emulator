@@ -29,10 +29,27 @@ Not yet built:
 - FDC (μPD765a) and the `Disk` interface that abstracts D88 from it.
 - Sub-CPU model (mkII has a second Z80 driving the FDC; communicates
   through shared latches).
-- CRT controller, text/graphics VRAM, palette.
-- PSG / YM2203 / YM2608 sound.
-- Interrupt acceptance (IM 0/1/2, NMI, request-line wiring).
-- Machine factory (`PC88Config` → wired-up chip set + memory map).
+- Pixel-accurate CRT controller (currently a parameter-eating stub),
+  graphics VRAM rendering, analogue palette.
+- PSG / YM2203 / YM2608 sound (beeper toggles are counted, not played).
+- IM 0 / IM 2 / NMI interrupt acceptance — IM 1 + a 60 Hz VBL pump
+  works, the rest are TODO.
+
+Working enough for first-light boot:
+
+- mkI machine factory (`PC88Machine` in `src/machines/pc88.ts`) that
+  wires the Z80, memory map, and I/O port stubs from `PC88Config`.
+- Pre-resolved 256-slot `IOBus` (replaces `MemoryBus` for the I/O
+  side; the per-port dispatch is one array load + one call).
+- `Pc88MemoryMap` with bank-switched 4 KB pages: BASIC ROM,
+  E0 extension, TVRAM window at 0xF000, GVRAM plane window at 0xC000.
+- Chip stubs (`SystemController`, `Ppi8255`, `Crtc3301`, `Dmac8257`,
+  `Calendar`, `Beeper`) with just enough state-machine to keep the
+  BIOS init path advancing.
+- ROM loader with size + md5 validation against the descriptors in
+  `src/machines/variants/`.
+- Display capture (`Pc88TextDisplay.toAsciiDump()`) so headless tests
+  can assert against TVRAM contents.
 
 ## Build / run / test
 
@@ -45,7 +62,13 @@ yarn test:programs       # hand-assembled program tests (fast)
 yarn test:zex            # zexdoc.com via vitest (slow; sets ZEX=1)
 yarn zex zexdoc          # standalone zex runner with streamed output
 yarn zex zexall          # same, all-behaviour variant
+yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 ```
+
+`yarn pc88` reads ROMs from `roms/` (override with `PC88_ROM_DIR`).
+The required mkI files are `mkI-n80.rom`, `mkI-n88.rom`, `mkI-e0.rom`
+with the md5s declared in `src/machines/variants/mk1.ts`. The `roms/`
+directory is gitignored so dumps stay local.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the
@@ -57,16 +80,23 @@ same pattern.
 src/
   chips/            silicon-level emulation, no cross-knowledge
     z80/              CPU, register file, opcode tables
-    ...
+    io/               sysctrl, ppi-8255, crtc-3301, dmac-8257,
+                      calendar, beeper (mostly stubs at first light)
   core/             buses + shared infrastructure
-    MemoryBus.ts
+    MemoryBus.ts      providers + fast-path single-array memory bus
+    IOBus.ts          pre-resolved 256-slot port bus (PC-88 I/O)
   machines/         machine wiring (config-driven, not subclassed)
     config.ts         PC88Config / VideoConfig / DiskConfig / ...
     variants/         data-only model definitions (mkI, mkII, mkII-SR)
-    pc88.ts           factory (TODO)
+    pc88.ts           PC88Machine factory + runMachine() VBL pump
+    pc88-memory.ts    Pc88MemoryMap, paged ROM/RAM/VRAM banking
+    pc88-display.ts   text-frame capture + ASCII dump
+    rom-loader.ts     md5-validating fs ROM resolver
 tests/
   z80/              SingleStepTests harness
-  programs/         hand-assembled programs + zexdoc runner
+  programs/         hand-assembled programs + zexdoc runner +
+                    IM 1 IRQ-acceptance test
+  machines/         synthetic-ROM boot test, memory-map unit tests
 ```
 
 Disk formats are intended to live separately from the FDC behind a
@@ -95,10 +125,12 @@ Roughly ordered by what's blocking what.
 - [x] **Block-instruction repeat-iteration flags** — fixed when
   running through ops2; remaining 77 SingleStepTests failures on
   the table path are documented above.
-- [ ] **Interrupt acceptance**. IM 0/1/2 dispatch, NMI vector, edge-
-  vs level-triggered handling, and the `iff1 && !eiDelay` gate on
-  the M1 boundary. The Z80 has all the pieces; nothing acts as the
-  request source yet.
+- [ ] **Interrupt acceptance: IM 0, IM 2, NMI**. IM 1 + a 60 Hz
+  VBL request line are wired now (`Z80.requestIrq()` + the
+  acceptance check at the top of `runOneOp`); IM 0 (vector from
+  data-bus byte) and IM 2 (`I:db` indirection) and NMI (vector
+  0x0066, ignores IFF1) are still TODO. None are exercised by mkI
+  N-BASIC at the moment, but FDC + sub-CPU will need the IM 2 path.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
 - [x] **Performance: per-opcode switch dispatcher** — landed as
@@ -137,16 +169,26 @@ Roughly ordered by what's blocking what.
 - [ ] **`Disk` interface** in `src/chips/` (or `src/core/`?). Tracks
   + per-sector metadata, density, deleted-mark, CRC status. D88
   parser bolts on top.
-- [ ] **`PC88Config` cleanup**: `DipSwitchState` type referenced
-  but never declared (`src/machines/config.ts:11`); `dipSwitches`
-  required on `PC88Config` but missing from every variant; `ROMManifest`
-  requires `disk` but mk2 omits it. These are real tsc errors today.
-- [ ] **`pc88.ts` factory** that consumes `PC88Config` and wires
-  up the chip set, memory regions, and I/O ports.
+- [x] **`pc88.ts` factory** consuming `PC88Config` — `PC88Machine`
+  wires the chip set, memory map, and I/O ports for mkI.
+- [ ] **`PC88Config` cleanup**: `DipSwitchState` is currently a
+  `Record<string, never>` placeholder, `dipSwitches` is optional,
+  `ROMManifest.disk` is optional. Replace with real DIP-switch
+  state once any chip needs to read it.
 - [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80
   instances + a shared latch object; FDC connects to the sub-CPU
   bus, not the main bus. Design the IPC latch before writing FDC
   code so the FDC doesn't accidentally couple to the main bus.
+- [ ] **Real CRTC parameter parsing**. The current `Crtc3301` stub
+  guesses parameter counts from a small table and falls back to 5;
+  this is enough for first light but the actual μPD3301 command set
+  has 8 commands with specific parameter layouts (Reset / Start /
+  Set Mode / Load Cursor / Reset Counters / Read Light Pen /
+  Interrupt Mask / Sync). Replace before driving a real renderer.
+- [ ] **DMAC channel scheduling**. The `Dmac8257` stub accepts the
+  init handshake but doesn't actually perform character-pull
+  transfers; once the renderer is real, the DMAC will need to drive
+  TVRAM → CRTC fetches each scanline.
 
 ### Chips
 
@@ -163,9 +205,13 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
-- [ ] **`build` script type-checks `src/machines/` errors** —
-  currently fails on the pre-existing `DipSwitchState` issues. Fix
-  these as part of the machine-layer cleanup above.
+- [x] **`build` script type-checks `src/machines/` errors** — the
+  `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
+  that compile cleanly. They still need real shapes (see machine layer
+  TODOs).
+- [ ] **End-to-end real-ROM smoke test**. Gate behind `PC88_ROM_DIR`
+  pointing at a real mkI ROM dump and assert the BASIC banner appears
+  in `display.toAsciiDump()`. Don't check ROMs into the repo.
 
 ## Test harness notes
 

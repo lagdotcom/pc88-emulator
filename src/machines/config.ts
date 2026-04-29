@@ -8,8 +8,13 @@ export interface PC88Config {
   readonly sound: SoundConfig;
   readonly disk: DiskConfig;
   readonly roms: ROMManifest;
-  readonly dipSwitches: DipSwitchState;
+  readonly dipSwitches?: DipSwitchState;
 }
+
+// Placeholder until per-variant DIP-switch defaults are defined.
+// Concrete shape (memory expansion, terminal mode, baud rate, etc.)
+// belongs to whichever code first reads it.
+export type DipSwitchState = Record<string, never>;
 
 export type PC88Model =
   | "PC-8801"
@@ -63,7 +68,7 @@ export interface DiskConfig {
 }
 
 export interface ROMManifest {
-  readonly disk: ROMDescriptor;
+  readonly disk?: ROMDescriptor;
   readonly font?: ROMDescriptor;
   readonly n80: ROMDescriptor;
   readonly n88: ROMDescriptor;

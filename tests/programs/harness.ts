@@ -1,4 +1,5 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
+import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
 
 class Ram64K implements MemoryProvider {
@@ -16,21 +17,19 @@ class Ram64K implements MemoryProvider {
   }
 }
 
-class StubIo implements MemoryProvider {
+class StubIo {
   name = "io";
-  start = 0;
-  end = 0x10000;
   reads: [number, number][] = [];
   writes: [number, number][] = [];
 
-  read(port: number): number {
+  read = (port: number): number => {
     this.reads.push([port, 0]);
     return 0xff;
-  }
+  };
 
-  write(port: number, value: number): void {
+  write = (port: number, value: number): void => {
     this.writes.push([port, value]);
-  }
+  };
 }
 
 export interface ProgramHarness {
@@ -42,7 +41,9 @@ export interface ProgramHarness {
 export function makeProgramHarness(): ProgramHarness {
   const ram = new Ram64K();
   const io = new StubIo();
-  const cpu = new Z80(new MemoryBus([ram], 0xff), new MemoryBus([io], 0xff));
+  const ioBus = new IOBus();
+  ioBus.registerAll({ name: io.name, read: io.read, write: io.write });
+  const cpu = new Z80(new MemoryBus([ram], 0xff), ioBus);
   return { cpu, ram, io };
 }
 

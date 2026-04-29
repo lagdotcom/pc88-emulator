@@ -5,6 +5,7 @@
 //   tsx tests/programs/bench.ts
 
 import { Z80 } from "../../src/chips/z80/cpu.js";
+import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
 
 class Ram implements MemoryProvider {
@@ -18,16 +19,6 @@ class Ram implements MemoryProvider {
   write(o: number, v: number) {
     this.bytes[o] = v;
   }
-}
-
-class Io implements MemoryProvider {
-  name = "io";
-  start = 0;
-  end = 0x10000;
-  read() {
-    return 0xff;
-  }
-  write() {}
 }
 
 interface Bench {
@@ -113,13 +104,12 @@ function ldirLoop(bytes: number): Bench {
 
 function run(bench: Bench, repeats: number): { mops: number; ms: number } {
   const ram = new Ram();
-  const io = new Io();
   for (let i = 0; i < bench.program.length; i++) {
     ram.bytes[0x0100 + i] = bench.program[i]!;
   }
   // Plant some recognisable bytes at the LDIR source.
   for (let i = 0; i < 0x100; i++) ram.bytes[0x0200 + i] = i & 0xff;
-  const cpu = new Z80(new MemoryBus([ram], 0xff), new MemoryBus([io], 0xff));
+  const cpu = new Z80(new MemoryBus([ram], 0xff), new IOBus());
   if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
 
   // Warmup
