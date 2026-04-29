@@ -41,14 +41,14 @@ Working enough for first-light boot:
   wires the Z80, memory map, and I/O port stubs from `PC88Config`.
 - Pre-resolved 256-slot `IOBus` (replaces `MemoryBus` for the I/O
   side; the per-port dispatch is one array load + one call).
-- `Pc88MemoryMap` with bank-switched 4 KB pages: BASIC ROM,
+- `PC88MemoryMap` with bank-switched 4 KB pages: BASIC ROM,
   E0 extension, TVRAM window at 0xF000, GVRAM plane window at 0xC000.
 - Chip stubs (`SystemController`, `Ppi8255`, `Crtc3301`, `Dmac8257`,
   `Calendar`, `Beeper`) with just enough state-machine to keep the
   BIOS init path advancing.
 - ROM loader with size + md5 validation against the descriptors in
   `src/machines/variants/`.
-- Display capture (`Pc88TextDisplay.toAsciiDump()`) so headless tests
+- Display capture (`PC88TextDisplay.toAsciiDump()`) so headless tests
   can assert against TVRAM contents.
 
 ## Build / run / test
@@ -89,7 +89,7 @@ src/
     config.ts         PC88Config / VideoConfig / DiskConfig / ...
     variants/         data-only model definitions (mkI, mkII, mkII-SR)
     pc88.ts           PC88Machine factory + runMachine() VBL pump
-    pc88-memory.ts    Pc88MemoryMap, paged ROM/RAM/VRAM banking
+    pc88-memory.ts    PC88MemoryMap, paged ROM/RAM/VRAM banking
     pc88-display.ts   text-frame capture + ASCII dump
     rom-loader.ts     md5-validating fs ROM resolver
 tests/

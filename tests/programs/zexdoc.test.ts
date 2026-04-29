@@ -76,7 +76,6 @@ describe.skipIf(SKIP)("zexdoc", () => {
         approxTotalOps: 5_800_000_000,
       });
       // Always log captured output so a failure surfaces what zexdoc said.
-      // eslint-disable-next-line no-console
       console.log("zexdoc output:\n" + r.output);
       // zexdoc prints "ERROR" on the first failed test and "ok" otherwise.
       // Successful run ends with "Tests complete" or similar.
@@ -102,7 +101,6 @@ describe.skipIf(SKIP)("zexall", () => {
       progressEvery: 50_000_000,
       approxTotalOps: 5_800_000_000,
     });
-    // eslint-disable-next-line no-console
     console.log("zexall output:\n" + r.output);
     expect(r.output).not.toMatch(/ERROR/);
     expect(r.output).toMatch(/complete/i);

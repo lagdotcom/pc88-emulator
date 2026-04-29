@@ -32,7 +32,7 @@ export type BasicMode = "n80" | "n88";
 // extension ROMs) are not modelled here — the layout below is the
 // minimum needed to land BASIC at 0x0000 and let the ROM toggle into
 // VRAM windows at 0xC000+.
-export class Pc88MemoryMap implements MemoryProvider {
+export class PC88MemoryMap implements MemoryProvider {
   readonly name = "pc88-mem";
   readonly start = 0;
   readonly end = 0x10000;
@@ -138,8 +138,7 @@ export class Pc88MemoryMap implements MemoryProvider {
     // 0x0000-0x5FFF: BASIC ROM (n80 or n88) when enabled, else RAM.
     // 0x6000-0x7FFF: E0 extension ROM if enabled, else continues the
     //                BASIC ROM, else RAM.
-    const basicRom =
-      this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
+    const basicRom = this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
     if (this._basicRomEnabled) {
       this.mapRomPages(0, 6, basicRom, 0);
       if (this._e0RomEnabled) {

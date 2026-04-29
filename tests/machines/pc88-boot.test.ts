@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
-import { MKI } from "../../src/machines/variants/mk1.js";
 import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import { MKI } from "../../src/machines/variants/mk1.js";
 
 function syntheticRoms(program: number[]): LoadedRoms {
   // Drop the program at the start of the n80 image so reset's PC=0

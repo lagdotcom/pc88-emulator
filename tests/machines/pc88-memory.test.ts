@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  Pc88MemoryMap,
   type LoadedRoms,
+  PC88MemoryMap,
 } from "../../src/machines/pc88-memory.js";
 
 function makeRom(size: number, fill: number): Uint8Array {
@@ -19,9 +19,9 @@ function fixture(): LoadedRoms {
   };
 }
 
-describe("Pc88MemoryMap", () => {
+describe("PC88MemoryMap", () => {
   it("reads the active BASIC ROM at 0x0000", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     m.setBasicMode("n80");
     expect(m.read(0x0000)).toBe(0x80);
     expect(m.read(0x4000)).toBe(0x80);
@@ -31,7 +31,7 @@ describe("Pc88MemoryMap", () => {
   });
 
   it("falls back to RAM when the BASIC ROM is disabled", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     m.mainRam[0x0000] = 0x42;
     m.setBasicRomEnabled(false);
     expect(m.read(0x0000)).toBe(0x42);
@@ -40,7 +40,7 @@ describe("Pc88MemoryMap", () => {
   });
 
   it("swaps E0 ROM in over the upper half of BASIC ROM", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     expect(m.read(0x6000)).toBe(0x80); // BASIC ROM continuation
     m.setE0RomEnabled(true);
     expect(m.read(0x6000)).toBe(0xe0);
@@ -48,7 +48,7 @@ describe("Pc88MemoryMap", () => {
   });
 
   it("masks RAM under TVRAM when the text window is enabled", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     m.mainRam[0xf000] = 0xaa;
     m.tvram[0x0000] = 0x48; // 'H'
     expect(m.read(0xf000)).toBe(0xaa);
@@ -59,14 +59,14 @@ describe("Pc88MemoryMap", () => {
   });
 
   it("writes to RAM under 0x8000-0xBFFF go to mainRam regardless of bank state", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     m.write(0x9000, 0x55);
     expect(m.mainRam[0x9000]).toBe(0x55);
     expect(m.read(0x9000)).toBe(0x55);
   });
 
   it("writes to ROM-mapped pages are dropped", () => {
-    const m = new Pc88MemoryMap(fixture());
+    const m = new PC88MemoryMap(fixture());
     m.write(0x0000, 0x99);
     expect(m.read(0x0000)).toBe(0x80); // ROM still there
   });

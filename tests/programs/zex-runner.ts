@@ -75,7 +75,6 @@ class Ram implements MemoryProvider {
   }
 }
 
-
 async function main() {
   const which = process.argv[2] ?? "zexdoc";
   const filename = `${which}.com`;

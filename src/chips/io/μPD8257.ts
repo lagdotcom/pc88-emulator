@@ -1,7 +1,7 @@
 import logLib from "log";
 
-import type { u8 } from "../../flavours.js";
 import type { IOBus } from "../../core/IOBus.js";
+import type { u8 } from "../../flavours.js";
 
 const log = logLib.get("dmac");
 
@@ -15,7 +15,7 @@ const log = logLib.get("dmac");
 // for the address (port 2*ch + 0) and count (port 2*ch + 1). Mode is
 // at 0x68. We track the byte-pair flip-flop because real BIOS resets
 // it between writes; without that, the second byte is misread.
-export class Dmac8257 {
+export class μPD8257 {
   private addressLow: number[] = [0, 0, 0, 0];
   private addressHigh: number[] = [0, 0, 0, 0];
   private countLow: number[] = [0, 0, 0, 0];

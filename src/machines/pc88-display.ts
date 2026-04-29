@@ -1,4 +1,4 @@
-import type { Pc88MemoryMap } from "./pc88-memory.js";
+import type { PC88MemoryMap } from "./pc88-memory.js";
 
 // 80×25 text mode is the only one used at boot; later video modes
 // (40×25, 80×20 graphics overlay, etc.) get switched on via the CRTC.
@@ -21,7 +21,7 @@ export interface PixelFrame {
   readonly rgba: Uint8ClampedArray;
 }
 
-export interface Pc88Display {
+export interface PC88Display {
   // 25 × 80 text grid pulled from TVRAM. Available now.
   getTextFrame(): TextFrame;
   // Future: pixel framebuffer for graphics planes + text overlay.
@@ -41,8 +41,8 @@ export interface Pc88Display {
 const ROW_STRIDE = 120;
 const CHARS_PER_ROW = 80;
 
-export class Pc88TextDisplay implements Pc88Display {
-  constructor(private readonly memory: Pc88MemoryMap) {}
+export class PC88TextDisplay implements PC88Display {
+  constructor(private readonly memory: PC88MemoryMap) {}
 
   getTextFrame(): TextFrame {
     const tvram = this.memory.tvram;

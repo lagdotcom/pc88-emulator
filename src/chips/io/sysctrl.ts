@@ -1,8 +1,8 @@
 import logLib from "log";
 
-import type { u8 } from "../../flavours.js";
 import type { IOBus } from "../../core/IOBus.js";
-import type { Pc88MemoryMap } from "../../machines/pc88-memory.js";
+import type { u8 } from "../../flavours.js";
+import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
 import type { Beeper } from "./beeper.js";
 
 const log = logLib.get("sysctrl");
@@ -40,7 +40,7 @@ export class SystemController {
   }
 
   constructor(
-    private readonly memoryMap: Pc88MemoryMap,
+    private readonly memoryMap: PC88MemoryMap,
     private readonly beeper: Beeper,
   ) {}
 

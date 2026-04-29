@@ -1,7 +1,7 @@
 import logLib from "log";
 
-import type { u8 } from "../../flavours.js";
 import type { IOBus } from "../../core/IOBus.js";
+import type { u8 } from "../../flavours.js";
 
 const log = logLib.get("crtc");
 
@@ -30,7 +30,7 @@ const PARAM_COUNT: Record<number, number> = {
   0x53: 0,
 };
 
-export class Crtc3301 {
+export class μPD3301 {
   // Status bits surfaced at 0x51. Bit 4 is VBL, set by the runner's
   // VBL pump. Other bits report "ready" (real chip uses bit 7 for
   // light-pen, etc.; we don't model those).

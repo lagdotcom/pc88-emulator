@@ -280,7 +280,7 @@ run to a clean exit on the ops2 dispatcher (the default).
 
 ## PC88 machine wiring
 
-Memory layout (mkI). All 16 addresses dispatch through `Pc88MemoryMap`
+Memory layout (mkI). All 16 addresses dispatch through `PC88MemoryMap`
 at 4 KB page granularity, which keeps `read(addr)` to one array load
 + one indexed Uint8Array load even with bank-switching active:
 

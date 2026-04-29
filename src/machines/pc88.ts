@@ -1,17 +1,17 @@
 import { Beeper } from "../chips/io/beeper.js";
 import { Calendar } from "../chips/io/calendar.js";
-import { Crtc3301 } from "../chips/io/crtc-3301.js";
-import { Dmac8257 } from "../chips/io/dmac-8257.js";
-import { Ppi8255 } from "../chips/io/ppi-8255.js";
+import { i8255 } from "../chips/io/i8255.js";
 import { SystemController } from "../chips/io/sysctrl.js";
+import { μPD3301 } from "../chips/io/μPD3301.js";
+import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
 import type { PC88Config } from "./config.js";
-import { Pc88TextDisplay, type Pc88Display } from "./pc88-display.js";
+import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import {
-  Pc88MemoryMap,
   type LoadedRoms as MemoryLoadedRoms,
+  PC88MemoryMap,
 } from "./pc88-memory.js";
 
 // VBL pump runs at 60 Hz (V1 mode default; CRTC reprogramming
@@ -27,42 +27,42 @@ export interface PC88MachineParts {
   cpu: Z80;
   memBus: MemoryBus;
   ioBus: IOBus;
-  memoryMap: Pc88MemoryMap;
+  memoryMap: PC88MemoryMap;
   sysctrl: SystemController;
-  ppi: Ppi8255;
-  crtc: Crtc3301;
-  dmac: Dmac8257;
+  ppi: i8255;
+  crtc: μPD3301;
+  dmac: μPD8257;
   calendar: Calendar;
   beeper: Beeper;
-  display: Pc88Display;
+  display: PC88Display;
 }
 
 export class PC88Machine {
   readonly cpu: Z80;
   readonly memBus: MemoryBus;
   readonly ioBus: IOBus;
-  readonly memoryMap: Pc88MemoryMap;
+  readonly memoryMap: PC88MemoryMap;
   readonly sysctrl: SystemController;
-  readonly ppi: Ppi8255;
-  readonly crtc: Crtc3301;
-  readonly dmac: Dmac8257;
+  readonly ppi: i8255;
+  readonly crtc: μPD3301;
+  readonly dmac: μPD8257;
   readonly calendar: Calendar;
   readonly beeper: Beeper;
-  readonly display: Pc88Display;
+  readonly display: PC88Display;
 
   constructor(
     public config: PC88Config,
     roms: MemoryLoadedRoms,
   ) {
-    this.memoryMap = new Pc88MemoryMap(roms);
+    this.memoryMap = new PC88MemoryMap(roms);
     this.memBus = new MemoryBus([this.memoryMap]);
     this.ioBus = new IOBus();
 
     this.beeper = new Beeper();
     this.sysctrl = new SystemController(this.memoryMap, this.beeper);
-    this.ppi = new Ppi8255();
-    this.crtc = new Crtc3301();
-    this.dmac = new Dmac8257();
+    this.ppi = new i8255();
+    this.crtc = new μPD3301();
+    this.dmac = new μPD8257();
     this.calendar = new Calendar();
 
     this.sysctrl.register(this.ioBus);
@@ -72,7 +72,7 @@ export class PC88Machine {
     this.calendar.register(this.ioBus);
 
     this.cpu = new Z80(this.memBus, this.ioBus);
-    this.display = new Pc88TextDisplay(this.memoryMap);
+    this.display = new PC88TextDisplay(this.memoryMap);
   }
 
   // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.

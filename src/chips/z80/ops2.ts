@@ -39,8 +39,8 @@ import {
   dec8,
   di,
   do_adc_hl,
-  do_add16,
   do_add_a,
+  do_add16,
   do_cp_a,
   do_cp_block,
   do_io_block_flags,
@@ -68,15 +68,7 @@ import {
   scf,
   xor_a,
 } from "./ops.js";
-import {
-  FLAG_C,
-  FLAG_H,
-  FLAG_PV,
-  FLAG_S,
-  FLAG_X,
-  FLAG_Y,
-  FLAG_Z,
-} from "./regs.js";
+import { FLAG_C, FLAG_PV, FLAG_S, FLAG_X, FLAG_Y, FLAG_Z } from "./regs.js";
 
 // Local helper for the JR/JR cc displacement step. Returns the new PC
 // after the jump (already includes the displacement-fetch advance) and

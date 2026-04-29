@@ -6,10 +6,10 @@ import type { u8 } from "../../flavours.js";
 import { byte, isDefined, word } from "../../tools.js";
 import {
   cbOpCodes,
-  ddcbOpCodes,
+  ddCbOpCodes,
   ddOpCodes,
   edOpCodes,
-  fdcbOpCodes,
+  fdCbOpCodes,
   fdOpCodes,
   opCodes,
 } from "./ops.js";
@@ -48,10 +48,10 @@ export type Prefix =
 const opTables = {
   CB: cbOpCodes,
   DD: ddOpCodes,
-  DDCB: ddcbOpCodes,
+  DDCB: ddCbOpCodes,
   ED: edOpCodes,
   FD: fdOpCodes,
-  FDCB: fdcbOpCodes,
+  FDCB: fdCbOpCodes,
 };
 
 export class Z80 {

@@ -1,14 +1,10 @@
 import { config as loadDotEnv } from "dotenv";
 import startNodeLogging from "log-node";
 
-import { MKI } from "./machines/variants/mk1.js";
-import {
-  PC88Machine,
-  runMachine,
-  type RunOptions,
-} from "./machines/pc88.js";
-import { loadRoms } from "./machines/rom-loader.js";
+import { PC88Machine, runMachine, type RunOptions } from "./machines/pc88.js";
 import type { LoadedRoms } from "./machines/pc88-memory.js";
+import { loadRoms } from "./machines/rom-loader.js";
+import { MKI } from "./machines/variants/mk1.js";
 
 const DEFAULT_MAX_OPS = 5_000_000;
 
@@ -46,7 +42,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
   console.error(e);
   process.exit(1);
 });

@@ -6,7 +6,7 @@ export const MKI_DISC = makeROM(
   "793f86784e5608352a5d7f03f03e0858",
 );
 const MKI_N80 = makeROM("mkI-n80", 32, "5d6854624dd01cd791f58727fc43a525");
-const MKI_N88 = makeROM("mkI-n88", 32, "d8a5dcd9a38e6d8268fbb8bdd9469517");
+const MKI_N88 = makeROM("mkI-n88", 32, "22be239bc0c4298bc0561252eed98633");
 const MKI_E0 = makeROM("mkI-e0", 8, "e28fe3f520bea594350ea8fb00395370");
 const MKI_FONT = makeROM("mkI-font", 2, "cd428f9ee8ff9f84c60beb7a8a0ef628");
 const MKI_KANJI1 = makeROM(

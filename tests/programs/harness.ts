@@ -213,7 +213,6 @@ export function runCpm(
         const pct = ((ops / total) * 100).toFixed(1);
         eta = `, ${pct}% done, ETA ~${formatHms((total - ops) / rate)}`;
       }
-      // eslint-disable-next-line no-console
       console.error(
         `[cpm] ${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ` +
           `${mops} Mops/s${eta}, output: ${JSON.stringify(output.slice(-80))}`,

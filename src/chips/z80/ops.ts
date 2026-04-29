@@ -278,8 +278,6 @@ const fetch_b = fetch_r8("B");
 const fetch_c = fetch_r8("C");
 const fetch_d = fetch_r8("D");
 const fetch_e = fetch_r8("E");
-const fetch_h = fetch_r8("H");
-const fetch_l = fetch_r8("L");
 const fetch_w = fetch_r8("W");
 const fetch_z = fetch_r8("Z");
 const fetch_sph = fetch_r8("SPH");
@@ -1692,7 +1690,7 @@ const set_im = (value: number) => (cpu: Z80) => (cpu.im = value);
 const ld_a_ir = (src: Reg8): MCycle =>
   opcode_fetch_and((cpu) => do_ld_a_ir(cpu, cpu.regs[src]));
 
-const ld_nn_rr = (hi: Reg8, lo: Reg8, mnem: string): OpCode["mCycles"] => [
+const ld_nn_rr = (hi: Reg8, lo: Reg8): OpCode["mCycles"] => [
   opcode_fetch,
   fetch_z,
   fetch_w,
@@ -1879,7 +1877,7 @@ export const edOpCodes = makeOpTable(
   op(0x40, "IN B,(C)", [opcode_fetch, io_read_bc("B")]),
   op(0x41, "OUT (C),B", [opcode_fetch, io_write_bc("B")]),
   op(0x42, "SBC HL,BC", [opcode_fetch, sbc_hl_rr("BC")]),
-  op(0x43, "LD (nn),BC", ld_nn_rr("B", "C", "BC")),
+  op(0x43, "LD (nn),BC", ld_nn_rr("B", "C")),
   op(0x44, "NEG", [opcode_fetch_and(do_neg)]),
   op(0x45, "RETN", ret(retn_setup)),
   op(0x46, "IM 0", im(0)),
@@ -1897,7 +1895,7 @@ export const edOpCodes = makeOpTable(
   op(0x50, "IN D,(C)", [opcode_fetch, io_read_bc("D")]),
   op(0x51, "OUT (C),D", [opcode_fetch, io_write_bc("D")]),
   op(0x52, "SBC HL,DE", [opcode_fetch, sbc_hl_rr("DE")]),
-  op(0x53, "LD (nn),DE", ld_nn_rr("D", "E", "DE")),
+  op(0x53, "LD (nn),DE", ld_nn_rr("D", "E")),
   op(0x54, "NEG", [opcode_fetch_and(do_neg)]),
   op(0x55, "RETN", ret(retn_setup)),
   op(0x56, "IM 1", im(1)),
@@ -1915,7 +1913,7 @@ export const edOpCodes = makeOpTable(
   op(0x60, "IN H,(C)", [opcode_fetch, io_read_bc("H")]),
   op(0x61, "OUT (C),H", [opcode_fetch, io_write_bc("H")]),
   op(0x62, "SBC HL,HL", [opcode_fetch, sbc_hl_rr("HL")]),
-  op(0x63, "LD (nn),HL", ld_nn_rr("H", "L", "HL")),
+  op(0x63, "LD (nn),HL", ld_nn_rr("H", "L")),
   op(0x64, "NEG", [opcode_fetch_and(do_neg)]),
   op(0x65, "RETN", ret(retn_setup)),
   op(0x66, "IM 0", im(0)),
@@ -2314,8 +2312,8 @@ export const cbOpCodes = buildCbTable(HL_SET);
 
 export const ddOpCodes = buildOpTable(IX_SET);
 
-export const ddcbOpCodes = buildIndexedCbTable(IX_SET);
+export const ddCbOpCodes = buildIndexedCbTable(IX_SET);
 
 export const fdOpCodes = buildOpTable(IY_SET);
 
-export const fdcbOpCodes = buildIndexedCbTable(IY_SET);
+export const fdCbOpCodes = buildIndexedCbTable(IY_SET);

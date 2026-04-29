@@ -10,7 +10,7 @@ const log = logLib.get("ppi");
 //
 // Reads return 0xFF (= "no key pressed" — the matrix is active-low).
 // Writes are accepted and logged once per port.
-export class Ppi8255 {
+export class i8255 {
   private warned = new Set<number>();
 
   register(bus: IOBus): void {
