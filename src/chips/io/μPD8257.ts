@@ -2,6 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { word } from "../../tools.js";
 
 const log = logLib.get("dmac");
 
@@ -61,12 +62,18 @@ export class μPD8257 {
     if (!this.toggle) this.addressLow[ch] = v;
     else this.addressHigh[ch] = v;
     this.toggle = !this.toggle;
+
+    if (!this.toggle)
+      log.info(`ch${ch}.address=${word(this.channelAddress(ch))}`);
   }
 
   private writeCount(ch: number, v: u8): void {
     if (!this.toggle) this.countLow[ch] = v;
     else this.countHigh[ch] = v;
     this.toggle = !this.toggle;
+
+    if (!this.toggle)
+      log.info(`ch${ch}.count=${word(this.channelByteCount(ch))}`);
   }
 
   private writeMode(v: u8): void {
