@@ -463,7 +463,7 @@ const add_hl_rr = (src: Reg16, set: RegSet): MCycle => ({
 // 16-bit ADC: HL = HL + value + C. Sets full flag set including S/Z/PV
 // (which plain ADD HL,rr leaves alone). Used only by the ED-prefixed
 // ADC HL,rr variants.
-function do_adc_hl(cpu: Z80, value: u16) {
+export function do_adc_hl(cpu: Z80, value: u16) {
   const hl = cpu.regs.HL;
   const c = cpu.regs.F & FLAG_C ? 1 : 0;
   cpu.regs.WZ = (hl + 1) & 0xffff;
@@ -484,7 +484,7 @@ function do_adc_hl(cpu: Z80, value: u16) {
 }
 
 // 16-bit SBC: HL = HL - value - C. Standard SUB direction flags.
-function do_sbc_hl(cpu: Z80, value: u16) {
+export function do_sbc_hl(cpu: Z80, value: u16) {
   const hl = cpu.regs.HL;
   const c = cpu.regs.F & FLAG_C ? 1 : 0;
   cpu.regs.WZ = (hl + 1) & 0xffff;
@@ -598,7 +598,7 @@ export function do_rld(cpu: Z80, value: u8) {
 //     X = bit 3 of n; Y = bit 1 of n.
 //   For repeating iterations (BC != 0 after dec, PC has been pulled back):
 //     X = bit 3 of (PC+1).high; Y = bit 5 of (PC+1).high.
-function do_ld_block(cpu: Z80, value: u8, repeating: boolean) {
+export function do_ld_block(cpu: Z80, value: u8, repeating: boolean) {
   let x: number;
   let y: number;
   if (repeating) {
@@ -626,7 +626,7 @@ function do_ld_block(cpu: Z80, value: u8, repeating: boolean) {
 //     X = bit 3 of (result - H), Y = bit 1.
 //   Repeating (BC != 0 AND no match, PC has been pulled back):
 //     X = bit 3 of (PC+1).high; Y = bit 5 of (PC+1).high.
-function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
+export function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
   const a = cpu.regs.A;
   const result = (a - value) & 0xff;
   const h = ((a & 0xf) - (value & 0xf)) & 0x10;
@@ -663,7 +663,7 @@ function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
 //   Repeating iteration: X/Y from (PC+1).high.
 //   The H/PV behaviour during repeat follows additional silicon-level quirks
 //   not yet captured here (see TODO note above buildEdTable).
-function do_io_block_flags(
+export function do_io_block_flags(
   cpu: Z80,
   value: u8,
   base: number,

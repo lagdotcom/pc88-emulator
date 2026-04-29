@@ -28,7 +28,8 @@
 // the displacement byte (an MR cycle); CALL-not-taken still has to
 // fetch both bytes of the target address.
 
-import { asS8 } from "../../numbers.js";
+import type { u8 } from "../../flavours.js";
+import { asS8, parity } from "../../numbers.js";
 import type { Z80 } from "./cpu.js";
 import {
   and_a,
@@ -37,9 +38,18 @@ import {
   daa,
   dec8,
   di,
+  do_adc_hl,
   do_add16,
   do_add_a,
   do_cp_a,
+  do_cp_block,
+  do_io_block_flags,
+  do_ld_a_ir,
+  do_ld_block,
+  do_neg,
+  do_rld,
+  do_rrd,
+  do_sbc_hl,
   do_sub_a,
   ei,
   ex_af,
@@ -58,7 +68,15 @@ import {
   scf,
   xor_a,
 } from "./ops.js";
-import { FLAG_C, FLAG_PV, FLAG_S, FLAG_Z } from "./regs.js";
+import {
+  FLAG_C,
+  FLAG_H,
+  FLAG_PV,
+  FLAG_S,
+  FLAG_X,
+  FLAG_Y,
+  FLAG_Z,
+} from "./regs.js";
 
 // Local helper for the JR/JR cc displacement step. Returns the new PC
 // after the jump (already includes the displacement-fetch advance) and
@@ -671,4 +689,940 @@ export function dispatchBase(cpu: Z80): void {
   // dead-code elimination check; it's kept available for whoever
   // extends this dispatcher to ED/CB/etc.
   void condition;
+}
+
+// ---------------------------------------------------------------------------
+// ED-prefix dispatcher.
+//
+// Most ED bytes have no effect (real Z80 treats unmapped ED-XX as a 2-byte
+// NOP that consumes 8 t-states). The implemented set covers IN/OUT,
+// SBC/ADC HL,rr, LD (nn),rr / LD rr,(nn), LD I/R/A inter-transfers, NEG,
+// RETN/RETI, IM modes, RRD/RLD, and the block ops (LDI/LDD/LDIR/LDDR,
+// CPI/CPD/CPIR/CPDR, INI/IND/INIR/INDR, OUTI/OUTD/OTIR/OTDR).
+//
+// runOneOp has already done the M1 fetch for the ED byte AND the M1
+// fetch for the operation byte (the prefix dispatch fetched ED → set
+// prefix=ED → next runOneOp fetched the op byte). Both R increments
+// and both 4-state charges happened. dispatchED only needs to add the
+// per-op extras.
+
+function inRegFromC(cpu: Z80): u8 {
+  const port = cpu.regs.BC;
+  const value = cpu.io.read(port);
+  cpu.regs.WZ = (port + 1) & 0xffff;
+  cpu.updateFlags({
+    n: 0,
+    pv: parity(value),
+    h: 0,
+    z: value === 0,
+    s: value & 0x80,
+    x: value & FLAG_X,
+    y: value & FLAG_Y,
+  });
+  return value;
+}
+
+function outRegFromC(cpu: Z80, value: u8): void {
+  const port = cpu.regs.BC;
+  cpu.io.write(port, value);
+  cpu.regs.WZ = (port + 1) & 0xffff;
+}
+
+// LD (nn),rr — write rr lo/hi to nn / nn+1. WZ ends up at nn+1.
+function ldNNrr(cpu: Z80, hi: number, lo: number): void {
+  const nn = fetchNN(cpu);
+  cpu.mem.write(nn, lo);
+  const wz = (nn + 1) & 0xffff;
+  cpu.regs.WZ = wz;
+  cpu.mem.write(wz, hi);
+  cpu.cycles += 12;
+}
+
+// LD rr,(nn) — read into rr lo/hi from nn / nn+1. WZ at nn+1.
+function ldRRnn(cpu: Z80): { lo: u8; hi: u8 } {
+  const nn = fetchNN(cpu);
+  const lo = cpu.mem.read(nn);
+  const wz = (nn + 1) & 0xffff;
+  cpu.regs.WZ = wz;
+  const hi = cpu.mem.read(wz);
+  cpu.cycles += 12;
+  return { lo, hi };
+}
+
+// RETN / RETI both pop PC and on real silicon also restore IFF1 from IFF2.
+function retn(cpu: Z80): void {
+  cpu.iff1 = cpu.iff2;
+  const target = pop16(cpu);
+  cpu.regs.WZ = target;
+  cpu.regs.PC = target;
+  cpu.cycles += 10;
+}
+
+// LDI/LDD/LDIR/LDDR shared body. delta = +1 for forward, -1 for backward;
+// repeat = true loops while BC != 0.
+function ldBlock(cpu: Z80, delta: 1 | -1, repeat: boolean): void {
+  const regs = cpu.regs;
+  const v = cpu.mem.read(regs.HL);
+  cpu.mem.write(regs.DE, v);
+  regs.HL = (regs.HL + delta) & 0xffff;
+  regs.DE = (regs.DE + delta) & 0xffff;
+  regs.BC = (regs.BC - 1) & 0xffff;
+  const repeating = repeat && regs.BC !== 0;
+  if (repeating) {
+    regs.PC = (regs.PC - 2) & 0xffff;
+    regs.WZ = (regs.PC + 1) & 0xffff;
+  }
+  do_ld_block(cpu, v, repeating);
+  cpu.cycles += repeating ? 13 : 8;
+}
+
+function cpBlock(cpu: Z80, delta: 1 | -1, repeat: boolean): void {
+  const regs = cpu.regs;
+  const v = cpu.mem.read(regs.HL);
+  regs.BC = (regs.BC - 1) & 0xffff;
+  const result = (regs.A - v) & 0xff;
+  regs.HL = (regs.HL + delta) & 0xffff;
+  regs.WZ = (regs.WZ + delta) & 0xffff;
+  const repeating = repeat && regs.BC !== 0 && result !== 0;
+  if (repeating) {
+    regs.PC = (regs.PC - 2) & 0xffff;
+    regs.WZ = (regs.PC + 1) & 0xffff;
+  }
+  do_cp_block(cpu, v, repeating);
+  cpu.cycles += repeating ? 13 : 8;
+}
+
+function inBlock(cpu: Z80, delta: 1 | -1, repeat: boolean): void {
+  const regs = cpu.regs;
+  const port = regs.BC;
+  const v = cpu.io.read(port);
+  regs.WZ = (port + delta) & 0xffff;
+  cpu.mem.write(regs.HL, v);
+  regs.HL = (regs.HL + delta) & 0xffff;
+  regs.B = (regs.B - 1) & 0xff;
+  const base = ((regs.C + delta) & 0xff) + v;
+  const repeating = repeat && regs.B !== 0;
+  if (repeating) {
+    regs.PC = (regs.PC - 2) & 0xffff;
+    regs.WZ = (regs.PC + 1) & 0xffff;
+  }
+  do_io_block_flags(cpu, v, base, repeating);
+  cpu.cycles += repeating ? 13 : 8;
+}
+
+function outBlock(cpu: Z80, delta: 1 | -1, repeat: boolean): void {
+  const regs = cpu.regs;
+  const v = cpu.mem.read(regs.HL);
+  regs.B = (regs.B - 1) & 0xff;
+  const port = regs.BC;
+  cpu.io.write(port, v);
+  regs.HL = (regs.HL + delta) & 0xffff;
+  regs.WZ = (port + delta) & 0xffff;
+  const base = (regs.L + v) & 0x1ff;
+  const repeating = repeat && regs.B !== 0;
+  if (repeating) {
+    regs.PC = (regs.PC - 2) & 0xffff;
+    regs.WZ = (regs.PC + 1) & 0xffff;
+  }
+  do_io_block_flags(cpu, v, base, repeating);
+  cpu.cycles += repeating ? 13 : 8;
+}
+
+export function dispatchED(cpu: Z80): void {
+  const regs = cpu.regs;
+  const op = regs.OP;
+
+  switch (op) {
+    // ---------------- 0x40-0x4F ----------------
+    case 0x40: regs.B = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x41: outRegFromC(cpu, regs.B); cpu.cycles += 4; return;
+    case 0x42: do_sbc_hl(cpu, regs.BC); cpu.cycles += 7; return;
+    case 0x43: ldNNrr(cpu, regs.B, regs.C); return;
+    case 0x44: do_neg(cpu); return;
+    case 0x45: retn(cpu); return;
+    case 0x46: cpu.im = 0; return;
+    case 0x47: regs.I = regs.A; cpu.cycles += 1; return; // LD I,A
+    case 0x48: regs.C = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x49: outRegFromC(cpu, regs.C); cpu.cycles += 4; return;
+    case 0x4a: do_adc_hl(cpu, regs.BC); cpu.cycles += 7; return;
+    case 0x4b: { const { lo, hi } = ldRRnn(cpu); regs.C = lo; regs.B = hi; return; }
+    case 0x4c: do_neg(cpu); return; // NEG (alias)
+    case 0x4d: retn(cpu); return; // RETI (same as RETN per silicon)
+    case 0x4e: cpu.im = 0; return; // IM 0/1 alias
+    case 0x4f: regs.R = regs.A; cpu.cycles += 1; return; // LD R,A
+
+    // ---------------- 0x50-0x5F ----------------
+    case 0x50: regs.D = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x51: outRegFromC(cpu, regs.D); cpu.cycles += 4; return;
+    case 0x52: do_sbc_hl(cpu, regs.DE); cpu.cycles += 7; return;
+    case 0x53: ldNNrr(cpu, regs.D, regs.E); return;
+    case 0x54: do_neg(cpu); return;
+    case 0x55: retn(cpu); return;
+    case 0x56: cpu.im = 1; return;
+    case 0x57: do_ld_a_ir(cpu, regs.I); cpu.cycles += 1; return; // LD A,I
+    case 0x58: regs.E = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x59: outRegFromC(cpu, regs.E); cpu.cycles += 4; return;
+    case 0x5a: do_adc_hl(cpu, regs.DE); cpu.cycles += 7; return;
+    case 0x5b: { const { lo, hi } = ldRRnn(cpu); regs.E = lo; regs.D = hi; return; }
+    case 0x5c: do_neg(cpu); return;
+    case 0x5d: retn(cpu); return;
+    case 0x5e: cpu.im = 2; return;
+    case 0x5f: do_ld_a_ir(cpu, regs.R); cpu.cycles += 1; return; // LD A,R
+
+    // ---------------- 0x60-0x6F ----------------
+    case 0x60: regs.H = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x61: outRegFromC(cpu, regs.H); cpu.cycles += 4; return;
+    case 0x62: do_sbc_hl(cpu, regs.HL); cpu.cycles += 7; return;
+    case 0x63: ldNNrr(cpu, regs.H, regs.L); return;
+    case 0x64: do_neg(cpu); return;
+    case 0x65: retn(cpu); return;
+    case 0x66: cpu.im = 0; return;
+    case 0x67: { // RRD
+      const v = cpu.mem.read(regs.HL);
+      do_rrd(cpu, v);
+      cpu.mem.write(regs.HL, regs.OPx);
+      cpu.cycles += 14;
+      return;
+    }
+    case 0x68: regs.L = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x69: outRegFromC(cpu, regs.L); cpu.cycles += 4; return;
+    case 0x6a: do_adc_hl(cpu, regs.HL); cpu.cycles += 7; return;
+    case 0x6b: { const { lo, hi } = ldRRnn(cpu); regs.L = lo; regs.H = hi; return; }
+    case 0x6c: do_neg(cpu); return;
+    case 0x6d: retn(cpu); return;
+    case 0x6e: cpu.im = 0; return;
+    case 0x6f: { // RLD
+      const v = cpu.mem.read(regs.HL);
+      do_rld(cpu, v);
+      cpu.mem.write(regs.HL, regs.OPx);
+      cpu.cycles += 14;
+      return;
+    }
+
+    // ---------------- 0x70-0x7F ----------------
+    case 0x70: { // IN F,(C) — read for flags only, no register write
+      const port = regs.BC;
+      const value = cpu.io.read(port);
+      regs.WZ = (port + 1) & 0xffff;
+      cpu.updateFlags({
+        n: 0, pv: parity(value), h: 0,
+        z: value === 0, s: value & 0x80,
+        x: value & FLAG_X, y: value & FLAG_Y,
+      });
+      cpu.cycles += 4;
+      return;
+    }
+    case 0x71: { // OUT (C),0
+      const port = regs.BC;
+      cpu.io.write(port, 0);
+      regs.WZ = (port + 1) & 0xffff;
+      cpu.cycles += 4;
+      return;
+    }
+    case 0x72: do_sbc_hl(cpu, regs.SP); cpu.cycles += 7; return;
+    case 0x73: ldNNrr(cpu, regs.SPH, regs.SPL); return; // LD (nn),SP
+    case 0x74: do_neg(cpu); return;
+    case 0x75: retn(cpu); return;
+    case 0x76: cpu.im = 1; return;
+    case 0x77: return; // documented NOP (ED 77)
+    case 0x78: regs.A = inRegFromC(cpu); cpu.cycles += 4; return;
+    case 0x79: outRegFromC(cpu, regs.A); cpu.cycles += 4; return;
+    case 0x7a: do_adc_hl(cpu, regs.SP); cpu.cycles += 7; return;
+    case 0x7b: { const { lo, hi } = ldRRnn(cpu); regs.SPL = lo; regs.SPH = hi; return; }
+    case 0x7c: do_neg(cpu); return;
+    case 0x7d: retn(cpu); return;
+    case 0x7e: cpu.im = 2; return;
+    case 0x7f: return; // documented NOP (ED 7F)
+
+    // ---------------- 0xA0-0xA3, 0xA8-0xAB: non-repeating block ops ----------------
+    case 0xa0: ldBlock(cpu, 1, false); return; // LDI
+    case 0xa1: cpBlock(cpu, 1, false); return; // CPI
+    case 0xa2: inBlock(cpu, 1, false); return; // INI
+    case 0xa3: outBlock(cpu, 1, false); return; // OUTI
+    case 0xa8: ldBlock(cpu, -1, false); return; // LDD
+    case 0xa9: cpBlock(cpu, -1, false); return; // CPD
+    case 0xaa: inBlock(cpu, -1, false); return; // IND
+    case 0xab: outBlock(cpu, -1, false); return; // OUTD
+
+    // ---------------- 0xB0-0xB3, 0xB8-0xBB: repeating block ops ----------------
+    case 0xb0: ldBlock(cpu, 1, true); return; // LDIR
+    case 0xb1: cpBlock(cpu, 1, true); return; // CPIR
+    case 0xb2: inBlock(cpu, 1, true); return; // INIR
+    case 0xb3: outBlock(cpu, 1, true); return; // OTIR
+    case 0xb8: ldBlock(cpu, -1, true); return; // LDDR
+    case 0xb9: cpBlock(cpu, -1, true); return; // CPDR
+    case 0xba: inBlock(cpu, -1, true); return; // INDR
+    case 0xbb: outBlock(cpu, -1, true); return; // OTDR
+
+    default:
+      // Every other ED byte is a documented 2-byte NOP. The M1 fetches
+      // for both bytes have already happened (R bumped twice, 8 t-states
+      // charged); nothing more to do.
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CB-prefix dispatcher.
+//
+// Encoding: bbb_ttt where bbb is the operation group and ttt is the target.
+//   00_ooo_ttt   rotate/shift (RLC/RRC/RL/RR/SLA/SRA/SLL/SRL)
+//   01_bbb_ttt   BIT b,target
+//   10_bbb_ttt   RES b,target
+//   11_bbb_ttt   SET b,target
+//
+// Target slot 6 means (HL) — read+modify+write. Slots 0..5,7 are the
+// registers B/C/D/E/H/L/-/A. Rather than 256 hand-written cases, the
+// dispatcher reads the operand once into a single local, applies the
+// appropriate operation, and writes back; the operation switch is on the
+// top 5 bits and the target switch is on the bottom 3.
+//
+// Flag-setting on shift/rotate ops mirrors `setShiftFlags` from ops.ts.
+// BIT's flag rule for BIT b,(HL) takes X/Y from W (the high half of WZ
+// at the time of the read), per Sean Young.
+
+function setShiftFlags(cpu: Z80, result: u8, carryOut: number): void {
+  cpu.updateFlags({
+    c: carryOut,
+    n: 0,
+    pv: parity(result),
+    h: 0,
+    z: result === 0,
+    s: result & 0x80,
+    x: result & FLAG_X,
+    y: result & FLAG_Y,
+  });
+}
+
+// Read the operand for a CB op given the target slot. Slot 6 = (HL); also
+// charges 3 t-states for the memory read.
+function cbReadOperand(cpu: Z80, slot: number): u8 {
+  const regs = cpu.regs;
+  switch (slot) {
+    case 0: return regs.B;
+    case 1: return regs.C;
+    case 2: return regs.D;
+    case 3: return regs.E;
+    case 4: return regs.H;
+    case 5: return regs.L;
+    case 6: cpu.cycles += 3; return cpu.mem.read(regs.HL);
+    default: return regs.A;
+  }
+}
+
+function cbWriteOperand(cpu: Z80, slot: number, value: u8): void {
+  const regs = cpu.regs;
+  switch (slot) {
+    case 0: regs.B = value; return;
+    case 1: regs.C = value; return;
+    case 2: regs.D = value; return;
+    case 3: regs.E = value; return;
+    case 4: regs.H = value; return;
+    case 5: regs.L = value; return;
+    case 6: cpu.mem.write(regs.HL, value); cpu.cycles += 4; return;
+    case 7: regs.A = value; return;
+  }
+}
+
+export function dispatchCB(cpu: Z80): void {
+  const op = cpu.regs.OP;
+  const slot = op & 7;
+  const isMem = slot === 6;
+  const v = cbReadOperand(cpu, slot);
+  const subOp = (op >> 3) & 7;
+  const group = op >> 6;
+
+  if (group === 0) {
+    // Rotate / shift.
+    let result: u8;
+    let c: number;
+    switch (subOp) {
+      case 0: // RLC
+        c = (v >> 7) & 1;
+        result = ((v << 1) | c) & 0xff;
+        break;
+      case 1: // RRC
+        c = v & 1;
+        result = ((v >> 1) | (c << 7)) & 0xff;
+        break;
+      case 2: { // RL — through carry
+        const carryIn = cpu.regs.F & FLAG_C ? 1 : 0;
+        c = (v >> 7) & 1;
+        result = ((v << 1) | carryIn) & 0xff;
+        break;
+      }
+      case 3: { // RR
+        const carryIn = cpu.regs.F & FLAG_C ? 0x80 : 0;
+        c = v & 1;
+        result = ((v >> 1) | carryIn) & 0xff;
+        break;
+      }
+      case 4: // SLA
+        c = (v >> 7) & 1;
+        result = (v << 1) & 0xff;
+        break;
+      case 5: // SRA
+        c = v & 1;
+        result = ((v >> 1) | (v & 0x80)) & 0xff;
+        break;
+      case 6: // SLL (undocumented)
+        c = (v >> 7) & 1;
+        result = ((v << 1) | 1) & 0xff;
+        break;
+      default: // SRL
+        c = v & 1;
+        result = (v >> 1) & 0xff;
+        break;
+    }
+    setShiftFlags(cpu, result, c);
+    cbWriteOperand(cpu, slot, result);
+    return;
+  }
+
+  if (group === 1) {
+    // BIT b,target — no write-back. X/Y for the (HL) variant come from
+    // W (the high byte of WZ); for register variants, from the operand.
+    const isSet = (v & (1 << subOp)) !== 0;
+    const xySource = isMem ? cpu.regs.W : v;
+    cpu.updateFlags({
+      n: 0,
+      pv: !isSet,
+      h: 1,
+      z: !isSet,
+      s: subOp === 7 && isSet ? 1 : 0,
+      x: xySource & FLAG_X,
+      y: xySource & FLAG_Y,
+    });
+    return;
+  }
+
+  if (group === 2) {
+    // RES b,target
+    const result = v & ~(1 << subOp) & 0xff;
+    cbWriteOperand(cpu, slot, result);
+    return;
+  }
+
+  // group === 3: SET b,target
+  const result = v | (1 << subOp);
+  cbWriteOperand(cpu, slot, result);
+}
+
+// ---------------------------------------------------------------------------
+// DD-prefix (IX) dispatcher.
+//
+// DD prefix replaces HL with IX, H with IXH, L with IXL, and (HL) with
+// (IX+d) (a signed displacement byte fetched after the op byte).
+// Sean Young's H/L disambiguation rule applies: when an opcode has both
+// a register operand AND an (HL) memory operand (LD r,(HL), LD (HL),r,
+// arithmetic with (HL)), the H/L register operand is *not* swapped to
+// IXH/IXL — only the address mode is. The literal H/L paths fall
+// through to dispatchBase.
+//
+// runOneOp has done the M1 fetch for both DD and the op byte. dispatchDD
+// only adds the per-op extras.
+//
+// For ops that don't touch HL/H/L (NOP, EX AF, INC B, etc.) the DD
+// prefix is wasted and dispatchDD falls through to dispatchBase.
+
+// Fetch the signed displacement byte and return IX + d (mod 0x10000).
+// Adds the 5-state "internal delay" the real CPU spends computing the
+// effective address before the memory operation.
+function ixDisp(cpu: Z80, base: number): number {
+  const d = cpu.mem.read(cpu.regs.PC);
+  cpu.regs.PC = (cpu.regs.PC + 1) & 0xffff;
+  const addr = (base + asS8(d)) & 0xffff;
+  cpu.regs.WZ = addr;
+  cpu.cycles += 8; // 3 (disp fetch) + 5 (internal delay)
+  return addr;
+}
+
+// LD (IX+d),n — disp-fetch order is unusual: opcode, disp, n, 2-state
+// pause, write. (Most indexed ops have 5 internal states between disp
+// and the memory access; LD (IX+d),n has 2 because the n-fetch overlaps
+// the address calculation.)
+function ixDispImm(cpu: Z80, base: number): { addr: number; n: u8 } {
+  const d = cpu.mem.read(cpu.regs.PC);
+  const n = cpu.mem.read((cpu.regs.PC + 1) & 0xffff);
+  cpu.regs.PC = (cpu.regs.PC + 2) & 0xffff;
+  const addr = (base + asS8(d)) & 0xffff;
+  cpu.regs.WZ = addr;
+  cpu.cycles += 8; // disp + n + 2
+  return { addr, n };
+}
+
+export function dispatchDD(cpu: Z80): void {
+  const regs = cpu.regs;
+  const mem = cpu.mem;
+  const op = regs.OP;
+
+  switch (op) {
+    // ---------------- 16-bit / IX-pair ----------------
+    case 0x09: do_add16(cpu, "IX", regs.BC); cpu.cycles += 7; return;
+    case 0x19: do_add16(cpu, "IX", regs.DE); cpu.cycles += 7; return;
+    case 0x29: do_add16(cpu, "IX", regs.IX); cpu.cycles += 7; return;
+    case 0x39: do_add16(cpu, "IX", regs.SP); cpu.cycles += 7; return;
+    case 0x21: // LD IX,nn
+      regs.IXL = mem.read(regs.PC);
+      regs.IXH = mem.read((regs.PC + 1) & 0xffff);
+      regs.PC = (regs.PC + 2) & 0xffff;
+      cpu.cycles += 6;
+      return;
+    case 0x22: { // LD (nn),IX
+      const nn = fetchNN(cpu);
+      mem.write(nn, regs.IXL);
+      const wz = (nn + 1) & 0xffff;
+      regs.WZ = wz;
+      mem.write(wz, regs.IXH);
+      cpu.cycles += 12;
+      return;
+    }
+    case 0x2a: { // LD IX,(nn)
+      const nn = fetchNN(cpu);
+      regs.IXL = mem.read(nn);
+      const wz = (nn + 1) & 0xffff;
+      regs.WZ = wz;
+      regs.IXH = mem.read(wz);
+      cpu.cycles += 12;
+      return;
+    }
+    case 0x23: regs.IX = (regs.IX + 1) & 0xffff; cpu.cycles += 2; return;
+    case 0x2b: regs.IX = (regs.IX - 1) & 0xffff; cpu.cycles += 2; return;
+
+    // ---------------- IXH / IXL ----------------
+    case 0x24: regs.IXH = inc8(cpu, regs.IXH); return;
+    case 0x25: regs.IXH = dec8(cpu, regs.IXH); return;
+    case 0x26: regs.IXH = mem.read(regs.PC); regs.PC = (regs.PC + 1) & 0xffff; cpu.cycles += 3; return;
+    case 0x2c: regs.IXL = inc8(cpu, regs.IXL); return;
+    case 0x2d: regs.IXL = dec8(cpu, regs.IXL); return;
+    case 0x2e: regs.IXL = mem.read(regs.PC); regs.PC = (regs.PC + 1) & 0xffff; cpu.cycles += 3; return;
+
+    // ---------------- (IX+d) read/modify/write ----------------
+    case 0x34: { // INC (IX+d)
+      const addr = ixDisp(cpu, regs.IX);
+      mem.write(addr, inc8(cpu, mem.read(addr)));
+      cpu.cycles += 7;
+      return;
+    }
+    case 0x35: { // DEC (IX+d)
+      const addr = ixDisp(cpu, regs.IX);
+      mem.write(addr, dec8(cpu, mem.read(addr)));
+      cpu.cycles += 7;
+      return;
+    }
+    case 0x36: { // LD (IX+d),n
+      const { addr, n } = ixDispImm(cpu, regs.IX);
+      mem.write(addr, n);
+      cpu.cycles += 3;
+      return;
+    }
+
+    // ---------------- LD r,IXH / LD r,IXL (no mem operand) ----------------
+    case 0x44: regs.B = regs.IXH; return;
+    case 0x45: regs.B = regs.IXL; return;
+    case 0x4c: regs.C = regs.IXH; return;
+    case 0x4d: regs.C = regs.IXL; return;
+    case 0x54: regs.D = regs.IXH; return;
+    case 0x55: regs.D = regs.IXL; return;
+    case 0x5c: regs.E = regs.IXH; return;
+    case 0x5d: regs.E = regs.IXL; return;
+    case 0x7c: regs.A = regs.IXH; return;
+    case 0x7d: regs.A = regs.IXL; return;
+
+    // ---------------- LD IXH,r / LD IXL,r (0x60-0x67, 0x68-0x6f) ----------------
+    // Sean Young: IXH/IXL as destination is unaffected when source is
+    // (HL) (which becomes (IX+d) instead). 0x66 / 0x6e keep the H/L
+    // destination literal — see below.
+    case 0x60: regs.IXH = regs.B; return;
+    case 0x61: regs.IXH = regs.C; return;
+    case 0x62: regs.IXH = regs.D; return;
+    case 0x63: regs.IXH = regs.E; return;
+    case 0x64: return; // LD IXH,IXH
+    case 0x65: regs.IXH = regs.IXL; return;
+    case 0x67: regs.IXH = regs.A; return;
+    case 0x68: regs.IXL = regs.B; return;
+    case 0x69: regs.IXL = regs.C; return;
+    case 0x6a: regs.IXL = regs.D; return;
+    case 0x6b: regs.IXL = regs.E; return;
+    case 0x6c: regs.IXL = regs.IXH; return;
+    case 0x6d: return; // LD IXL,IXL
+    case 0x6f: regs.IXL = regs.A; return;
+
+    // ---------------- LD r,(IX+d) — H/L stay literal ----------------
+    case 0x46: regs.B = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x4e: regs.C = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x56: regs.D = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x5e: regs.E = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x66: regs.H = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x6e: regs.L = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+    case 0x7e: regs.A = mem.read(ixDisp(cpu, regs.IX)); cpu.cycles += 3; return;
+
+    // ---------------- LD (IX+d),r — H/L stay literal ----------------
+    case 0x70: mem.write(ixDisp(cpu, regs.IX), regs.B); cpu.cycles += 3; return;
+    case 0x71: mem.write(ixDisp(cpu, regs.IX), regs.C); cpu.cycles += 3; return;
+    case 0x72: mem.write(ixDisp(cpu, regs.IX), regs.D); cpu.cycles += 3; return;
+    case 0x73: mem.write(ixDisp(cpu, regs.IX), regs.E); cpu.cycles += 3; return;
+    case 0x74: mem.write(ixDisp(cpu, regs.IX), regs.H); cpu.cycles += 3; return;
+    case 0x75: mem.write(ixDisp(cpu, regs.IX), regs.L); cpu.cycles += 3; return;
+    case 0x77: mem.write(ixDisp(cpu, regs.IX), regs.A); cpu.cycles += 3; return;
+    // 0x76 HALT is unaffected by DD — falls through to dispatchBase.
+
+    // ---------------- 8-bit ALU with IXH / IXL / (IX+d) ----------------
+    case 0x84: do_add_a(cpu, regs.IXH, false); return;
+    case 0x85: do_add_a(cpu, regs.IXL, false); return;
+    case 0x86: do_add_a(cpu, mem.read(ixDisp(cpu, regs.IX)), false); cpu.cycles += 3; return;
+    case 0x8c: do_add_a(cpu, regs.IXH, true); return;
+    case 0x8d: do_add_a(cpu, regs.IXL, true); return;
+    case 0x8e: do_add_a(cpu, mem.read(ixDisp(cpu, regs.IX)), true); cpu.cycles += 3; return;
+    case 0x94: do_sub_a(cpu, regs.IXH, false); return;
+    case 0x95: do_sub_a(cpu, regs.IXL, false); return;
+    case 0x96: do_sub_a(cpu, mem.read(ixDisp(cpu, regs.IX)), false); cpu.cycles += 3; return;
+    case 0x9c: do_sub_a(cpu, regs.IXH, true); return;
+    case 0x9d: do_sub_a(cpu, regs.IXL, true); return;
+    case 0x9e: do_sub_a(cpu, mem.read(ixDisp(cpu, regs.IX)), true); cpu.cycles += 3; return;
+    case 0xa4: and_a(cpu, regs.IXH); return;
+    case 0xa5: and_a(cpu, regs.IXL); return;
+    case 0xa6: and_a(cpu, mem.read(ixDisp(cpu, regs.IX))); cpu.cycles += 3; return;
+    case 0xac: xor_a(cpu, regs.IXH); return;
+    case 0xad: xor_a(cpu, regs.IXL); return;
+    case 0xae: xor_a(cpu, mem.read(ixDisp(cpu, regs.IX))); cpu.cycles += 3; return;
+    case 0xb4: or_a(cpu, regs.IXH); return;
+    case 0xb5: or_a(cpu, regs.IXL); return;
+    case 0xb6: or_a(cpu, mem.read(ixDisp(cpu, regs.IX))); cpu.cycles += 3; return;
+    case 0xbc: do_cp_a(cpu, regs.IXH); return;
+    case 0xbd: do_cp_a(cpu, regs.IXL); return;
+    case 0xbe: do_cp_a(cpu, mem.read(ixDisp(cpu, regs.IX))); cpu.cycles += 3; return;
+
+    // ---------------- IX-pair stack/jump ops ----------------
+    case 0xe1: regs.IX = pop16(cpu); cpu.cycles += 6; return;
+    case 0xe3: { // EX (SP),IX
+      const sp = regs.SP;
+      const lo = mem.read(sp);
+      const hi = mem.read((sp + 1) & 0xffff);
+      mem.write((sp + 1) & 0xffff, regs.IXH);
+      mem.write(sp, regs.IXL);
+      regs.IXL = lo;
+      regs.IXH = hi;
+      regs.WZ = (hi << 8) | lo;
+      cpu.cycles += 15;
+      return;
+    }
+    case 0xe5: push16(cpu, regs.IX); cpu.cycles += 7; return;
+    case 0xe9: regs.PC = regs.IX; return; // JP (IX)
+    case 0xf9: regs.SP = regs.IX; cpu.cycles += 2; return;
+
+    // ---------------- prefix bytes ----------------
+    // DD followed by another DD/FD/ED/CB — the inner prefix takes over.
+    // For DDCB, the displacement and op byte are fetched here so the
+    // CB-table dispatch sees a populated WZ.
+    case 0xdd: prefix_dd(cpu); return;
+    case 0xed: prefix_ed(cpu); return;
+    case 0xfd: prefix_fd(cpu); return;
+    case 0xcb: { // PREFIX CB, with the DDCB fetch sequence
+      const d = mem.read(regs.PC);
+      regs.PC = (regs.PC + 1) & 0xffff;
+      const disp = asS8(d);
+      regs.WZ = (regs.IX + disp) & 0xffff;
+      cpu.prefix = { type: "DDCB", displacement: disp };
+      cpu.cycles += 4; // disp fetch + 1 internal
+      return;
+    }
+
+    default:
+      // Anything not in the override list is unaffected by DD — run the
+      // base-table semantics. NOP, EX AF, EI, ADD A,B, etc. all land here.
+      dispatchBase(cpu);
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FD-prefix (IY) dispatcher.
+//
+// Mechanically identical to dispatchDD with IX → IY / IXH → IYH / IXL → IYL.
+// Kept as its own function so V8 sees a stable hidden class on each
+// dispatch site; an alternative would be a single parameterised dispatcher
+// with a RegSet, but the indirect property accesses cost more than the
+// duplication in maintenance.
+
+function iyDisp(cpu: Z80, base: number): number {
+  const d = cpu.mem.read(cpu.regs.PC);
+  cpu.regs.PC = (cpu.regs.PC + 1) & 0xffff;
+  const addr = (base + asS8(d)) & 0xffff;
+  cpu.regs.WZ = addr;
+  cpu.cycles += 8;
+  return addr;
+}
+
+function iyDispImm(cpu: Z80, base: number): { addr: number; n: u8 } {
+  const d = cpu.mem.read(cpu.regs.PC);
+  const n = cpu.mem.read((cpu.regs.PC + 1) & 0xffff);
+  cpu.regs.PC = (cpu.regs.PC + 2) & 0xffff;
+  const addr = (base + asS8(d)) & 0xffff;
+  cpu.regs.WZ = addr;
+  cpu.cycles += 8;
+  return { addr, n };
+}
+
+export function dispatchFD(cpu: Z80): void {
+  const regs = cpu.regs;
+  const mem = cpu.mem;
+  const op = regs.OP;
+
+  switch (op) {
+    case 0x09: do_add16(cpu, "IY", regs.BC); cpu.cycles += 7; return;
+    case 0x19: do_add16(cpu, "IY", regs.DE); cpu.cycles += 7; return;
+    case 0x29: do_add16(cpu, "IY", regs.IY); cpu.cycles += 7; return;
+    case 0x39: do_add16(cpu, "IY", regs.SP); cpu.cycles += 7; return;
+    case 0x21:
+      regs.IYL = mem.read(regs.PC);
+      regs.IYH = mem.read((regs.PC + 1) & 0xffff);
+      regs.PC = (regs.PC + 2) & 0xffff;
+      cpu.cycles += 6;
+      return;
+    case 0x22: {
+      const nn = fetchNN(cpu);
+      mem.write(nn, regs.IYL);
+      const wz = (nn + 1) & 0xffff;
+      regs.WZ = wz;
+      mem.write(wz, regs.IYH);
+      cpu.cycles += 12;
+      return;
+    }
+    case 0x2a: {
+      const nn = fetchNN(cpu);
+      regs.IYL = mem.read(nn);
+      const wz = (nn + 1) & 0xffff;
+      regs.WZ = wz;
+      regs.IYH = mem.read(wz);
+      cpu.cycles += 12;
+      return;
+    }
+    case 0x23: regs.IY = (regs.IY + 1) & 0xffff; cpu.cycles += 2; return;
+    case 0x2b: regs.IY = (regs.IY - 1) & 0xffff; cpu.cycles += 2; return;
+
+    case 0x24: regs.IYH = inc8(cpu, regs.IYH); return;
+    case 0x25: regs.IYH = dec8(cpu, regs.IYH); return;
+    case 0x26: regs.IYH = mem.read(regs.PC); regs.PC = (regs.PC + 1) & 0xffff; cpu.cycles += 3; return;
+    case 0x2c: regs.IYL = inc8(cpu, regs.IYL); return;
+    case 0x2d: regs.IYL = dec8(cpu, regs.IYL); return;
+    case 0x2e: regs.IYL = mem.read(regs.PC); regs.PC = (regs.PC + 1) & 0xffff; cpu.cycles += 3; return;
+
+    case 0x34: { const addr = iyDisp(cpu, regs.IY); mem.write(addr, inc8(cpu, mem.read(addr))); cpu.cycles += 7; return; }
+    case 0x35: { const addr = iyDisp(cpu, regs.IY); mem.write(addr, dec8(cpu, mem.read(addr))); cpu.cycles += 7; return; }
+    case 0x36: { const { addr, n } = iyDispImm(cpu, regs.IY); mem.write(addr, n); cpu.cycles += 3; return; }
+
+    case 0x44: regs.B = regs.IYH; return;
+    case 0x45: regs.B = regs.IYL; return;
+    case 0x4c: regs.C = regs.IYH; return;
+    case 0x4d: regs.C = regs.IYL; return;
+    case 0x54: regs.D = regs.IYH; return;
+    case 0x55: regs.D = regs.IYL; return;
+    case 0x5c: regs.E = regs.IYH; return;
+    case 0x5d: regs.E = regs.IYL; return;
+    case 0x7c: regs.A = regs.IYH; return;
+    case 0x7d: regs.A = regs.IYL; return;
+
+    case 0x60: regs.IYH = regs.B; return;
+    case 0x61: regs.IYH = regs.C; return;
+    case 0x62: regs.IYH = regs.D; return;
+    case 0x63: regs.IYH = regs.E; return;
+    case 0x64: return;
+    case 0x65: regs.IYH = regs.IYL; return;
+    case 0x67: regs.IYH = regs.A; return;
+    case 0x68: regs.IYL = regs.B; return;
+    case 0x69: regs.IYL = regs.C; return;
+    case 0x6a: regs.IYL = regs.D; return;
+    case 0x6b: regs.IYL = regs.E; return;
+    case 0x6c: regs.IYL = regs.IYH; return;
+    case 0x6d: return;
+    case 0x6f: regs.IYL = regs.A; return;
+
+    case 0x46: regs.B = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x4e: regs.C = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x56: regs.D = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x5e: regs.E = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x66: regs.H = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x6e: regs.L = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+    case 0x7e: regs.A = mem.read(iyDisp(cpu, regs.IY)); cpu.cycles += 3; return;
+
+    case 0x70: mem.write(iyDisp(cpu, regs.IY), regs.B); cpu.cycles += 3; return;
+    case 0x71: mem.write(iyDisp(cpu, regs.IY), regs.C); cpu.cycles += 3; return;
+    case 0x72: mem.write(iyDisp(cpu, regs.IY), regs.D); cpu.cycles += 3; return;
+    case 0x73: mem.write(iyDisp(cpu, regs.IY), regs.E); cpu.cycles += 3; return;
+    case 0x74: mem.write(iyDisp(cpu, regs.IY), regs.H); cpu.cycles += 3; return;
+    case 0x75: mem.write(iyDisp(cpu, regs.IY), regs.L); cpu.cycles += 3; return;
+    case 0x77: mem.write(iyDisp(cpu, regs.IY), regs.A); cpu.cycles += 3; return;
+
+    case 0x84: do_add_a(cpu, regs.IYH, false); return;
+    case 0x85: do_add_a(cpu, regs.IYL, false); return;
+    case 0x86: do_add_a(cpu, mem.read(iyDisp(cpu, regs.IY)), false); cpu.cycles += 3; return;
+    case 0x8c: do_add_a(cpu, regs.IYH, true); return;
+    case 0x8d: do_add_a(cpu, regs.IYL, true); return;
+    case 0x8e: do_add_a(cpu, mem.read(iyDisp(cpu, regs.IY)), true); cpu.cycles += 3; return;
+    case 0x94: do_sub_a(cpu, regs.IYH, false); return;
+    case 0x95: do_sub_a(cpu, regs.IYL, false); return;
+    case 0x96: do_sub_a(cpu, mem.read(iyDisp(cpu, regs.IY)), false); cpu.cycles += 3; return;
+    case 0x9c: do_sub_a(cpu, regs.IYH, true); return;
+    case 0x9d: do_sub_a(cpu, regs.IYL, true); return;
+    case 0x9e: do_sub_a(cpu, mem.read(iyDisp(cpu, regs.IY)), true); cpu.cycles += 3; return;
+    case 0xa4: and_a(cpu, regs.IYH); return;
+    case 0xa5: and_a(cpu, regs.IYL); return;
+    case 0xa6: and_a(cpu, mem.read(iyDisp(cpu, regs.IY))); cpu.cycles += 3; return;
+    case 0xac: xor_a(cpu, regs.IYH); return;
+    case 0xad: xor_a(cpu, regs.IYL); return;
+    case 0xae: xor_a(cpu, mem.read(iyDisp(cpu, regs.IY))); cpu.cycles += 3; return;
+    case 0xb4: or_a(cpu, regs.IYH); return;
+    case 0xb5: or_a(cpu, regs.IYL); return;
+    case 0xb6: or_a(cpu, mem.read(iyDisp(cpu, regs.IY))); cpu.cycles += 3; return;
+    case 0xbc: do_cp_a(cpu, regs.IYH); return;
+    case 0xbd: do_cp_a(cpu, regs.IYL); return;
+    case 0xbe: do_cp_a(cpu, mem.read(iyDisp(cpu, regs.IY))); cpu.cycles += 3; return;
+
+    case 0xe1: regs.IY = pop16(cpu); cpu.cycles += 6; return;
+    case 0xe3: {
+      const sp = regs.SP;
+      const lo = mem.read(sp);
+      const hi = mem.read((sp + 1) & 0xffff);
+      mem.write((sp + 1) & 0xffff, regs.IYH);
+      mem.write(sp, regs.IYL);
+      regs.IYL = lo;
+      regs.IYH = hi;
+      regs.WZ = (hi << 8) | lo;
+      cpu.cycles += 15;
+      return;
+    }
+    case 0xe5: push16(cpu, regs.IY); cpu.cycles += 7; return;
+    case 0xe9: regs.PC = regs.IY; return;
+    case 0xf9: regs.SP = regs.IY; cpu.cycles += 2; return;
+
+    case 0xdd: prefix_dd(cpu); return;
+    case 0xed: prefix_ed(cpu); return;
+    case 0xfd: prefix_fd(cpu); return;
+    case 0xcb: {
+      const d = mem.read(regs.PC);
+      regs.PC = (regs.PC + 1) & 0xffff;
+      const disp = asS8(d);
+      regs.WZ = (regs.IY + disp) & 0xffff;
+      cpu.prefix = { type: "FDCB", displacement: disp };
+      cpu.cycles += 4;
+      return;
+    }
+
+    default:
+      dispatchBase(cpu);
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// DDCB / FDCB dispatchers.
+//
+// By the time we get here, the prefix-CB transition has already fetched
+// the displacement byte and stored IX/IY+d in WZ. The op byte was just
+// fetched as a regular MR (runOneOp's M1 branch was skipped because
+// prefix.type was DDCB/FDCB).
+//
+// Encoding is the same as plain CB, but every operation works on
+// memory at WZ, and for non-(HL) target slots (0..5, 7) the modified
+// value is *also* written into the named register (the undocumented
+// "register copy" side-effect). BIT b ignores the slot — same flag set
+// regardless, no register write.
+
+function indexedCbWriteCopy(cpu: Z80, slot: number, value: u8): void {
+  const regs = cpu.regs;
+  switch (slot) {
+    case 0: regs.B = value; return;
+    case 1: regs.C = value; return;
+    case 2: regs.D = value; return;
+    case 3: regs.E = value; return;
+    case 4: regs.H = value; return;
+    case 5: regs.L = value; return;
+    case 6: return; // pure (IX+d) form, no register copy
+    case 7: regs.A = value; return;
+  }
+}
+
+export function dispatchIndexedCB(cpu: Z80): void {
+  const regs = cpu.regs;
+  const mem = cpu.mem;
+  const op = regs.OP;
+  const slot = op & 7;
+  const subOp = (op >> 3) & 7;
+  const group = op >> 6;
+  const addr = regs.WZ; // already IX/IY + d from the prefix dispatch
+
+  if (group === 1) {
+    // BIT b,(IX+d) — flags only, no write, X/Y from W (high byte of WZ).
+    const v = mem.read(addr);
+    const isSet = (v & (1 << subOp)) !== 0;
+    cpu.updateFlags({
+      n: 0,
+      pv: !isSet,
+      h: 1,
+      z: !isSet,
+      s: subOp === 7 && isSet ? 1 : 0,
+      x: regs.W & FLAG_X,
+      y: regs.W & FLAG_Y,
+    });
+    cpu.cycles += 12;
+    return;
+  }
+
+  // Read, modify, write, optionally also copy to register.
+  const v = mem.read(addr);
+  let result: u8;
+
+  if (group === 0) {
+    // rotate/shift
+    let c: number;
+    switch (subOp) {
+      case 0:
+        c = (v >> 7) & 1;
+        result = ((v << 1) | c) & 0xff;
+        break;
+      case 1:
+        c = v & 1;
+        result = ((v >> 1) | (c << 7)) & 0xff;
+        break;
+      case 2: {
+        const carryIn = regs.F & FLAG_C ? 1 : 0;
+        c = (v >> 7) & 1;
+        result = ((v << 1) | carryIn) & 0xff;
+        break;
+      }
+      case 3: {
+        const carryIn = regs.F & FLAG_C ? 0x80 : 0;
+        c = v & 1;
+        result = ((v >> 1) | carryIn) & 0xff;
+        break;
+      }
+      case 4:
+        c = (v >> 7) & 1;
+        result = (v << 1) & 0xff;
+        break;
+      case 5:
+        c = v & 1;
+        result = ((v >> 1) | (v & 0x80)) & 0xff;
+        break;
+      case 6:
+        c = (v >> 7) & 1;
+        result = ((v << 1) | 1) & 0xff;
+        break;
+      default:
+        c = v & 1;
+        result = (v >> 1) & 0xff;
+        break;
+    }
+    setShiftFlags(cpu, result, c);
+  } else if (group === 2) {
+    result = v & ~(1 << subOp) & 0xff;
+  } else {
+    // group === 3
+    result = v | (1 << subOp);
+  }
+
+  mem.write(addr, result);
+  indexedCbWriteCopy(cpu, slot, result);
+  cpu.cycles += 16;
 }

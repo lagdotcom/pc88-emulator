@@ -12,7 +12,14 @@ import {
   fdOpCodes,
   opCodes,
 } from "./ops.js";
-import { dispatchBase } from "./ops2.js";
+import {
+  dispatchBase,
+  dispatchCB,
+  dispatchDD,
+  dispatchED,
+  dispatchFD,
+  dispatchIndexedCB,
+} from "./ops2.js";
 import {
   FLAG_C,
   FLAG_H,
@@ -144,10 +151,20 @@ export class Z80 {
       this.cycles += 4;
     }
 
-    if (this.useDispatchBase && prefixType === undefined) {
-      // ops2.dispatchBase handles every unprefixed opcode inline. Nothing
-      // further to do here.
-      dispatchBase(this);
+    // ops2 now covers all seven prefix tables. The decode() fallback is
+    // only kept for the (off-by-default) useDispatchBase=false path so
+    // changes can be A/B-compared against the original table dispatcher.
+    if (this.useDispatchBase) {
+      this.prefix = undefined;
+      switch (prefixType) {
+        case undefined: dispatchBase(this); break;
+        case "ED": dispatchED(this); break;
+        case "CB": dispatchCB(this); break;
+        case "DD": dispatchDD(this); break;
+        case "FD": dispatchFD(this); break;
+        case "DDCB":
+        case "FDCB": dispatchIndexedCB(this); break;
+      }
     } else {
       const inst = this.decode();
       if (inst) {
