@@ -1,12 +1,97 @@
 import { config as loadDotEnv } from "dotenv";
 import startNodeLogging from "log-node";
 
-import { PC88Machine, runMachine, type RunOptions } from "./machines/pc88.js";
+import {
+  PC88Machine,
+  runMachine,
+  type RunOptions,
+  type RunResult,
+} from "./machines/pc88.js";
 import type { LoadedRoms } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
 
 const DEFAULT_MAX_OPS = 5_000_000;
+
+function hex(n: number, w: number): string {
+  return n.toString(16).padStart(w, "0");
+}
+
+// Pretty-print the head of TVRAM as hex+ASCII rows. Useful for catching
+// "the BIOS wrote bytes but they're outside the printable range" cases
+// — the toAsciiDump() output silently maps non-printables to "·" which
+// can hide a partly-initialised banner.
+function tvramHexHead(tvram: Uint8Array, lines: number): string {
+  const out: string[] = [];
+  for (let row = 0; row < lines; row++) {
+    const base = row * 16;
+    const bytes = Array.from(tvram.subarray(base, base + 16))
+      .map((b) => hex(b, 2))
+      .join(" ");
+    let ascii = "";
+    for (let i = 0; i < 16; i++) {
+      const b = tvram[base + i]!;
+      ascii += b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".";
+    }
+    out.push(`  ${hex(0xf000 + base, 4)}  ${bytes}  ${ascii}`);
+  }
+  return out.join("\n");
+}
+
+function diagnostics(machine: PC88Machine, result: RunResult): string {
+  const { memoryMap, sysctrl, crtc, dmac, beeper, irq, misc, ppi } = machine;
+  const lines: string[] = [];
+
+  lines.push(`reason         : ${result.reason}`);
+  lines.push(
+    `ops / cycles   : ${result.ops.toLocaleString()} / ${result.cycles.toLocaleString()}`,
+  );
+  lines.push(
+    `PC / SP        : 0x${hex(result.finalPC, 4)} / 0x${hex(result.finalSP, 4)}`,
+  );
+  lines.push(`IFF1 / halted  : ${result.iff1} / ${result.halted}`);
+  lines.push(
+    `VBL IRQs       : ${result.vblIrqsRaised} raised, ${result.vblIrqsMasked} masked`,
+  );
+  lines.push(
+    `IRQ mask (E6)  : 0x${hex(irq.mask, 2)} (programmed=${irq.programmed})`,
+  );
+  lines.push(
+    `bank state     : basic=${memoryMap.basicMode} romEnabled=${memoryMap.basicRomEnabled} tvram=${memoryMap.tvramEnabled} vram=${memoryMap.vramEnabled}`,
+  );
+  lines.push(`sys status     : 0x${hex(sysctrl.systemStatus, 2)}`);
+  lines.push(`crtc status    : 0x${hex(crtc.status, 2)}`);
+  lines.push(`dmac status    : 0x${hex(dmac.status, 2)}`);
+  lines.push(`beeper toggles : ${beeper.toggles}`);
+  lines.push(
+    `misc ports     : 0x09 reads=${misc.in09Reads} 0xE7 last=${misc.lastE7 ?? "-"} 0xF8 last=${misc.lastF8 ?? "-"}`,
+  );
+
+  // TVRAM activity: if any byte is non-zero, the BIOS got far enough to
+  // write something into the text plane (even if it's not ASCII yet).
+  let nonZero = 0;
+  let firstNz = -1;
+  let lastNz = -1;
+  for (let i = 0; i < memoryMap.tvram.length; i++) {
+    if (memoryMap.tvram[i] !== 0) {
+      nonZero++;
+      if (firstNz < 0) firstNz = i;
+      lastNz = i;
+    }
+  }
+  if (nonZero === 0) {
+    lines.push(`TVRAM          : empty (BIOS never wrote a byte)`);
+  } else {
+    lines.push(
+      `TVRAM          : ${nonZero} non-zero bytes, range [0xF${hex(firstNz, 3)}..0xF${hex(lastNz, 3)}]`,
+    );
+    lines.push(`TVRAM hex head :`);
+    lines.push(tvramHexHead(memoryMap.tvram, 4));
+  }
+
+  void ppi; // PPI is just a logger right now; keep destructure stable.
+  return lines.join("\n");
+}
 
 async function main(): Promise<void> {
   loadDotEnv({ quiet: true });
@@ -28,17 +113,30 @@ async function main(): Promise<void> {
   const machine = new PC88Machine(MKI, roms);
   machine.reset();
 
+  // PC88_TRACE_IO=1 logs every IN/OUT with the CPU PC at the time of
+  // the access. Cheap to enable, expensive to read — use only when
+  // chasing down "BIOS hits port X then bails" issues.
+  if (process.env.PC88_TRACE_IO === "1") {
+    const cpu = machine.cpu;
+    machine.ioBus.tracer = (kind, port, value) => {
+      const pc = cpu.regs.PC;
+      const dir = kind === "r" ? "IN " : "OUT";
+      console.log(
+        `[io] PC=0x${hex(pc, 4)} ${dir} 0x${hex(port & 0xff, 2)} = 0x${hex(value, 2)}`,
+      );
+    };
+  }
+
   const opts: RunOptions = {
     maxOps: parseInt(process.env.PC88_MAX_OPS ?? `${DEFAULT_MAX_OPS}`, 10),
   };
   const result = runMachine(machine, opts);
 
-  process.stdout.write("\n--- TVRAM dump ---\n");
+  process.stdout.write("\n--- Diagnostics ---\n");
+  process.stdout.write(diagnostics(machine, result));
+  process.stdout.write("\n\n--- TVRAM dump ---\n");
   process.stdout.write(machine.display.toAsciiDump());
   process.stdout.write("\n------------------\n");
-  process.stdout.write(
-    `Ran ${result.ops.toLocaleString()} ops in ${result.cycles.toLocaleString()} cycles (${result.reason}).\n`,
-  );
 }
 
 main().catch((e) => {

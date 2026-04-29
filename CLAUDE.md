@@ -303,6 +303,7 @@ noisy-once 0xff read / no-op write):
 
 ```
 0x00-0x03    PPI #1                  (ppi-8255.ts: keyboard, idle)
+0x09         hardware probe           (misc.ts: returns 0xff)
 0x10         calendar / cassette     (calendar.ts)
 0x30         system DIP 1 / ROM bank (sysctrl.ts)
 0x31         system DIP 2 / ext ROM  (sysctrl.ts)
@@ -312,12 +313,28 @@ noisy-once 0xff read / no-op write):
 0x5C         GVRAM plane select      (sysctrl.ts)
 0x60-0x68    DMAC 8257               (dmac-8257.ts: param eater)
 0x71         secondary ROM bank      (sysctrl.ts: noop)
+0xE4         IRQ priority             (irq.ts: latched, no behaviour)
+0xE6         IRQ mask                 (irq.ts: bit 0 = VBL — runner honours)
+0xE7         IRQ-related (mkII+)      (misc.ts: latched, no behaviour)
+0xF8         boot/FDD-IF (mkII+)      (misc.ts: latched, no behaviour)
 ```
 
 The runner (`runMachine` in `pc88.ts`) pumps a 60 Hz VBL: every
-~66,667 Z80 cycles it sets the VBL bits on sysctrl + crtc, calls
-`cpu.requestIrq()`, then clears the bits ~3,200 cycles later. The
-60 Hz constant lives at the top of `pc88.ts`.
+~66,667 Z80 cycles it sets the VBL bits on sysctrl + crtc and (if
+bit 0 of the IRQ mask is set) calls `cpu.requestIrq()`, then clears
+the bits ~3,200 cycles later. Masked pulses still toggle the status
+bit so polling-based BIOS code sees them. The 60 Hz constant lives
+at the top of `pc88.ts`.
+
+`runMachine` returns a `RunResult` with the final PC/SP, IFF1 state,
+HALTed flag, and counts of VBL IRQs raised vs masked. `src/main.ts`
+prints this plus bank state, chip-stub status bytes, and a TVRAM
+hex-dump head as a "Diagnostics" block before the ASCII dump — first
+port of call when "BIOS got stuck".
+
+Set `PC88_TRACE_IO=1` to log every IN/OUT with the CPU PC at the
+time of the access. Hooks in via `IOBus.tracer` (null in normal use,
+so the hot path stays branch-cheap).
 
 ## Branch / pushing
 

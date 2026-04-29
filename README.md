@@ -212,6 +212,21 @@ Roughly ordered by what's blocking what.
 - [ ] **End-to-end real-ROM smoke test**. Gate behind `PC88_ROM_DIR`
   pointing at a real mkI ROM dump and assert the BASIC banner appears
   in `display.toAsciiDump()`. Don't check ROMs into the repo.
+- [ ] **mkI BASIC banner reaches TVRAM**. `yarn pc88` against a real
+  mkI N-BASIC dump currently runs the ROM but the banner doesn't
+  land — TVRAM stays empty. The runner now prints rich diagnostics
+  on stop (final PC/SP, IRQ mask state, bank state, TVRAM
+  byte-touched count, port last-values) and `PC88_TRACE_IO=1` logs
+  every IN/OUT with the CPU PC; next step is to use these to find
+  where the BIOS bails. Likely culprits: incorrect DIP-switch
+  defaults at 0x30/0x31, CRTC parameter-count mismatch on the SET
+  MODE command, or a missing register handshake the DMAC stub
+  doesn't satisfy.
+- [x] **Stub IRQ mask register (0xE6)**. VBL pulses now respect the
+  per-bit mask — when the BIOS clears bit 0 during init, the runner
+  flips the status bit but doesn't assert /INT.
+- [x] **Stub low-traffic ports** 0x09 (read) / 0xE7 / 0xF8 (write).
+  Quietly idle so they don't pollute diagnostics.
 
 ## Test harness notes
 

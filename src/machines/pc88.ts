@@ -1,6 +1,8 @@
 import { Beeper } from "../chips/io/beeper.js";
 import { Calendar } from "../chips/io/calendar.js";
 import { i8255 } from "../chips/io/i8255.js";
+import { IrqController } from "../chips/io/irq.js";
+import { MiscPorts } from "../chips/io/misc.js";
 import { SystemController } from "../chips/io/sysctrl.js";
 import { μPD3301 } from "../chips/io/μPD3301.js";
 import { μPD8257 } from "../chips/io/μPD8257.js";
@@ -34,6 +36,8 @@ export interface PC88MachineParts {
   dmac: μPD8257;
   calendar: Calendar;
   beeper: Beeper;
+  irq: IrqController;
+  misc: MiscPorts;
   display: PC88Display;
 }
 
@@ -48,6 +52,8 @@ export class PC88Machine {
   readonly dmac: μPD8257;
   readonly calendar: Calendar;
   readonly beeper: Beeper;
+  readonly irq: IrqController;
+  readonly misc: MiscPorts;
   readonly display: PC88Display;
 
   constructor(
@@ -64,12 +70,16 @@ export class PC88Machine {
     this.crtc = new μPD3301();
     this.dmac = new μPD8257();
     this.calendar = new Calendar();
+    this.irq = new IrqController();
+    this.misc = new MiscPorts();
 
     this.sysctrl.register(this.ioBus);
     this.ppi.register(this.ioBus);
     this.crtc.register(this.ioBus);
     this.dmac.register(this.ioBus);
     this.calendar.register(this.ioBus);
+    this.irq.register(this.ioBus);
+    this.misc.register(this.ioBus);
 
     this.cpu = new Z80(this.memBus, this.ioBus);
     this.display = new PC88TextDisplay(this.memoryMap);
@@ -109,17 +119,32 @@ export interface RunResult {
   ops: number;
   cycles: number;
   reason: "max-ops" | "max-cycles" | "halted-no-irq" | "stopped";
+  // Snapshot of CPU state at stop. Useful for tracking down "BIOS got
+  // stuck somewhere"-class failures without re-running.
+  finalPC: number;
+  finalSP: number;
+  iff1: boolean;
+  halted: boolean;
+  // Number of VBL IRQs the runner injected (for sanity-checking
+  // interrupt-driven boot paths).
+  vblIrqsRaised: number;
+  // Number of VBL pulses suppressed because the IRQ mask register
+  // disabled bit 0. If non-zero, the BIOS has explicitly programmed
+  // the mask to ignore VBL — usually transient during init.
+  vblIrqsMasked: number;
 }
 
 // Run the machine, pumping a 60 Hz VBL onto the CPU's interrupt line.
 // Stops on max-ops / max-cycles. If the CPU is HALTed and interrupts
 // are disabled the runner aborts (otherwise it would loop forever
-// burning cycles).
+// burning cycles). VBL IRQ delivery respects the mask register at
+// 0xE6 — masked pulses still flip the status bit (the BIOS can poll
+// it) but don't assert /INT.
 export function runMachine(
   machine: PC88Machine,
   opts: RunOptions = {},
 ): RunResult {
-  const { cpu, sysctrl, crtc } = machine;
+  const { cpu, sysctrl, crtc, irq } = machine;
   const maxOps = opts.maxOps ?? 50_000_000;
   const maxCycles = opts.maxCycles ?? Number.POSITIVE_INFINITY;
 
@@ -127,12 +152,20 @@ export function runMachine(
   let nextVblOn = VBL_PERIOD_CYCLES - VBL_PULSE_CYCLES;
   let nextVblOff = VBL_PERIOD_CYCLES;
   let vblActive = false;
+  let vblIrqsRaised = 0;
+  let vblIrqsMasked = 0;
+  let stopReason: RunResult["reason"] | null = null;
 
   while (ops < maxOps && cpu.cycles < maxCycles) {
     if (!vblActive && cpu.cycles >= nextVblOn) {
       sysctrl.setVBlank(true);
       crtc.setVBlank(true);
-      cpu.requestIrq();
+      if (!irq.vblMasked()) {
+        cpu.requestIrq();
+        vblIrqsRaised++;
+      } else {
+        vblIrqsMasked++;
+      }
       vblActive = true;
     }
     if (vblActive && cpu.cycles >= nextVblOff) {
@@ -143,18 +176,30 @@ export function runMachine(
       nextVblOff += VBL_PERIOD_CYCLES;
     }
     if (cpu.halted && !cpu.iff1) {
-      return { ops, cycles: cpu.cycles, reason: "halted-no-irq" };
+      stopReason = "halted-no-irq";
+      break;
     }
     cpu.runOneOp();
     ops++;
     if (opts.onProgress && opts.onProgress(ops)) {
-      return { ops, cycles: cpu.cycles, reason: "stopped" };
+      stopReason = "stopped";
+      break;
     }
+  }
+
+  if (!stopReason) {
+    stopReason = cpu.cycles >= maxCycles ? "max-cycles" : "max-ops";
   }
 
   return {
     ops,
     cycles: cpu.cycles,
-    reason: cpu.cycles >= maxCycles ? "max-cycles" : "max-ops",
+    reason: stopReason,
+    finalPC: cpu.regs.PC,
+    finalSP: cpu.regs.SP,
+    iff1: cpu.iff1,
+    halted: cpu.halted,
+    vblIrqsRaised,
+    vblIrqsMasked,
   };
 }

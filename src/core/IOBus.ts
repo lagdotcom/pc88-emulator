@@ -24,11 +24,18 @@ type Writer = (port: number, value: u8) => void;
 // writer (no-op). Real chip stubs replace specific slots via
 // `register()` / `registerRange()`. The hot path is one array load and
 // one call — no branch on every IN/OUT.
+export type IOTracer = (kind: "r" | "w", port: number, value: u8) => void;
+
 export class IOBus {
   private readers: Reader[];
   private writers: Writer[];
   private warnedRead = new Set<number>();
   private warnedWrite = new Set<number>();
+  // Optional opt-in tracer. When set, called on every IN/OUT before
+  // dispatch — used by the CLI runner's PC88_TRACE_IO=1 mode. The hot
+  // path stays one extra null check; cost is negligible vs. the
+  // dispatch itself.
+  tracer: IOTracer | null = null;
 
   constructor() {
     this.readers = new Array(256);
@@ -60,10 +67,13 @@ export class IOBus {
   }
 
   read(port: number): u8 {
-    return this.readers[port & 0xff]!(port);
+    const v = this.readers[port & 0xff]!(port);
+    if (this.tracer) this.tracer("r", port, v);
+    return v;
   }
 
   write(port: number, value: u8): void {
+    if (this.tracer) this.tracer("w", port, value);
     this.writers[port & 0xff]!(port, value);
   }
 
