@@ -63,14 +63,21 @@ export class μPD3301 {
   }
 
   register(bus: IOBus): void {
+    // PC-88 maps the chip's C/D (command/data) pin to address bit 0:
+    //   port 0x50 (C/D=0) → DATA register (parameter write, status read)
+    //   port 0x51 (C/D=1) → COMMAND register (cmd write)
+    // Previous wiring had these swapped, which made the BIOS's
+    // "command at 0x51 then 5 params at 0x50" sequence look like
+    // a stray data byte followed by 5 unrelated commands.
     bus.register(0x50, {
-      name: "crtc/cmd",
-      write: (_p, v) => this.writeCommand(v),
-    });
-    bus.register(0x51, {
       name: "crtc/data",
       read: () => this.status,
       write: (_p, v) => this.writeParam(v),
+    });
+    bus.register(0x51, {
+      name: "crtc/cmd",
+      read: () => this.status,
+      write: (_p, v) => this.writeCommand(v),
     });
   }
 
