@@ -21,6 +21,13 @@ export const MKII: PC88Config = {
   },
   sound: { psg: "beeper" }, // TODO is it?
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
+  // mkII factory defaults: same DIP layout as mkI, with disk-boot
+  // mode as the typical out-of-the-box configuration. Verify against
+  // a real mkII service manual when one is to hand.
+  dipSwitches: {
+    port30: 0b1111_1011,
+    port31: 0b1110_1101,
+  },
   roms: {
     n80: MKII_N80,
     n88: MKII_N88,

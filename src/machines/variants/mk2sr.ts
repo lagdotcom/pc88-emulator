@@ -27,6 +27,13 @@ export const MKII_SR: PC88Config = {
   },
   sound: { psg: "YM2203" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
+  // mkII SR factory defaults: same DIP shape as mkI but bit 5 of
+  // port31 indicates V2 mode availability. For first-light we mirror
+  // the mkI defaults — refine when an SR-specific boot is wired up.
+  dipSwitches: {
+    port30: 0b1111_1011,
+    port31: 0b1110_1101,
+  },
   roms: {
     disk: MKI_DISC,
     font: SR_FONT,

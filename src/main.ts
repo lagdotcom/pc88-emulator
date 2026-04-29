@@ -1,4 +1,5 @@
 import { createWriteStream } from "node:fs";
+import { parseArgs } from "node:util";
 
 import ansiRegex from "ansi-regex";
 import { config as loadDotEnv } from "dotenv";
@@ -16,6 +17,77 @@ import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
 
 const DEFAULT_MAX_OPS = 150_000;
+
+interface CliFlags {
+  romDir: string;
+  maxOps: number;
+  traceIo: "off" | "deduped" | "raw";
+  rawTvram: boolean;
+  logFile: string | null;
+  help: boolean;
+}
+
+// Parse CLI flags with env-var fallback so .env still works for
+// values you'd want to keep across runs (ROM dir, log file path).
+// Boolean-style switches default to off; `--trace-io=raw` opts into
+// the unfiltered IO trace, `--trace-io` alone uses dedupe.
+function parseCliFlags(argv: string[]): CliFlags {
+  const { values } = parseArgs({
+    args: argv,
+    strict: true,
+    allowPositionals: false,
+    options: {
+      "rom-dir": { type: "string" },
+      "max-ops": { type: "string" },
+      "trace-io": { type: "string" },
+      "raw-tvram": { type: "boolean" },
+      "log-file": { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+
+  const romDir = values["rom-dir"] ?? process.env.PC88_ROM_DIR ?? "roms";
+  const maxOpsRaw = values["max-ops"] ?? process.env.PC88_MAX_OPS;
+  const maxOps = maxOpsRaw ? parseInt(maxOpsRaw, 10) : DEFAULT_MAX_OPS;
+
+  // Trace mode: CLI wins over env, "raw" beats "deduped" beats "off".
+  const traceRaw = values["trace-io"] ?? process.env.PC88_TRACE_IO ?? null;
+  const traceIo: CliFlags["traceIo"] =
+    traceRaw === "raw"
+      ? "raw"
+      : traceRaw === null || traceRaw === "0" || traceRaw === ""
+        ? "off"
+        : "deduped";
+
+  const rawTvram = !!values["raw-tvram"] || process.env.PC88_RAW_TVRAM === "1";
+
+  // --log-file (bare) and LOG_TO_FILE both default to ./main.log;
+  // --log-file=PATH overrides.
+  const logFlag = values["log-file"];
+  const logFile =
+    typeof logFlag === "string" && logFlag.length > 0
+      ? logFlag
+      : logFlag === "" || process.env.LOG_TO_FILE
+        ? "main.log"
+        : null;
+
+  return { romDir, maxOps, traceIo, rawTvram, logFile, help: !!values.help };
+}
+
+const HELP = `\
+yarn pc88 — boot mkI N-BASIC, dump TVRAM after a fixed op budget
+
+  --rom-dir=PATH      ROM directory (default: roms; env: PC88_ROM_DIR)
+  --max-ops=N         instruction budget (default: ${DEFAULT_MAX_OPS}; env: PC88_MAX_OPS)
+  --trace-io[=raw]    log every IN/OUT with PC; bare flag dedupes
+                      consecutive identical lines, =raw shows them all
+                      (env: PC88_TRACE_IO=1 / =raw)
+  --raw-tvram         always print the 4 KB hex dump after the visible
+                      screen (env: PC88_RAW_TVRAM=1)
+  --log-file[=PATH]   tee log output to PATH (default: main.log)
+                      (env: LOG_TO_FILE=anything → main.log)
+  -h, --help          show this help
+`;
 
 function hex(n: number, w: number): string {
   return n.toString(16).padStart(w, "0");
@@ -100,8 +172,8 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   return lines.join("\n");
 }
 
-function addFileLogger() {
-  const ws = createWriteStream("main.log", { encoding: "utf-8" });
+function addFileLogger(path: string) {
+  const ws = createWriteStream(path, { encoding: "utf-8" });
   emitter.on("log", (event) => {
     const msg = event.message.replace(ansiRegex(), "");
     ws.write(msg + "\n");
@@ -109,15 +181,21 @@ function addFileLogger() {
 }
 
 async function main(): Promise<void> {
+  // .env loads first so process.env is populated before parseCliFlags
+  // checks for fallbacks.
   loadDotEnv({ quiet: true });
+  const flags = parseCliFlags(process.argv.slice(2));
+  if (flags.help) {
+    process.stdout.write(HELP);
+    return;
+  }
   startNodeLogging();
-  if (process.env.LOG_TO_FILE) addFileLogger();
+  if (flags.logFile) addFileLogger(flags.logFile);
 
-  const dir = process.env.PC88_ROM_DIR ?? "roms";
-  const loaded = await loadRoms(MKI, { dir });
+  const loaded = await loadRoms(MKI, { dir: flags.romDir });
   if (!loaded.n80 || !loaded.n88 || !loaded.e0) {
     throw new Error(
-      `mkI requires n80, n88, e0 ROMs in ${dir}/ (got ${Object.keys(loaded).join(", ")})`,
+      `mkI requires n80, n88, e0 ROMs in ${flags.romDir}/ (got ${Object.keys(loaded).join(", ")})`,
     );
   }
   const roms: LoadedRoms = {
@@ -129,14 +207,9 @@ async function main(): Promise<void> {
   const machine = new PC88Machine(MKI, roms);
   machine.reset();
 
-  // PC88_TRACE_IO=1 logs every IN/OUT with the CPU PC at the time of
-  // the access. Consecutive identical lines collapse into a single
-  // "(× N times)" report so that tight polling loops don't drown the
-  // log. Set PC88_TRACE_IO=raw to disable the dedupe.
-  const traceMode = process.env.PC88_TRACE_IO ?? "";
-  if (traceMode === "1" || traceMode === "raw") {
+  if (flags.traceIo !== "off") {
     const cpu = machine.cpu;
-    const dedupe = traceMode === "1";
+    const dedupe = flags.traceIo === "deduped";
     let last: string | null = null;
     let lastCount = 0;
     const flush = () => {
@@ -158,9 +231,7 @@ async function main(): Promise<void> {
     process.on("exit", flush);
   }
 
-  const opts: RunOptions = {
-    maxOps: parseInt(process.env.PC88_MAX_OPS ?? `${DEFAULT_MAX_OPS}`, 10),
-  };
+  const opts: RunOptions = { maxOps: flags.maxOps };
   const result = runMachine(machine, opts);
 
   process.stdout.write("\n--- Diagnostics ---\n");
@@ -173,11 +244,10 @@ async function main(): Promise<void> {
   process.stdout.write(visible);
   // The raw 4 KB hex+ASCII dump is noisy in the normal "boot
   // succeeded" case — the visible region tells you everything. Show
-  // it only when explicitly requested via PC88_RAW_TVRAM=1, or when
-  // the visible region is empty (nothing programmed → nothing else
-  // to look at).
+  // it only on --raw-tvram, or when the visible region is empty
+  // (nothing programmed → nothing else to look at).
   const visibleEmpty = visible.startsWith("(CRTC not yet programmed");
-  if (process.env.PC88_RAW_TVRAM === "1" || visibleEmpty) {
+  if (flags.rawTvram || visibleEmpty) {
     process.stdout.write("\n\n--- Raw TVRAM (4 KB hex) ---\n");
     process.stdout.write(machine.display.rawTvramDump());
   }

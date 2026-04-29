@@ -75,7 +75,11 @@ export class PC88Machine {
     this.ioBus = new IOBus();
 
     this.beeper = new Beeper();
-    this.sysctrl = new SystemController(this.memoryMap, this.beeper);
+    this.sysctrl = new SystemController(
+      this.memoryMap,
+      this.beeper,
+      config.dipSwitches,
+    );
     this.ppi = new i8255();
     this.crtc = new μPD3301();
     this.dmac = new μPD8257();

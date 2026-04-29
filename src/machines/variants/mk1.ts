@@ -32,6 +32,13 @@ export const MKI: PC88Config = {
   },
   sound: { psg: "beeper" },
   disk: { count: 0, model: "μPD765a", hasSubCpu: false },
+  // mkI factory defaults: 80 cols, mono bit set, 200 lines / V1
+  // mode, ROM boot, N-BASIC. Reproduces the typical "out of the
+  // box" configuration users would have seen in 1981.
+  dipSwitches: {
+    port30: 0b1111_1011,
+    port31: 0b1110_1101,
+  },
   roms: {
     disk: MKI_DISC,
     font: MKI_FONT,

@@ -65,10 +65,15 @@ yarn zex zexall          # same, all-behaviour variant
 yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 ```
 
-`yarn pc88` reads ROMs from `roms/` (override with `PC88_ROM_DIR`).
-The required mkI files are `mkI-n80.rom`, `mkI-n88.rom`, `mkI-e0.rom`
-with the md5s declared in `src/machines/variants/mk1.ts`. The `roms/`
-directory is gitignored so dumps stay local.
+`yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
+`--rom-dir`, `--max-ops`, `--trace-io[=raw]`, `--raw-tvram`,
+`--log-file[=PATH]`. Each flag also has an env-var fallback
+(`PC88_ROM_DIR`, `PC88_MAX_OPS`, `PC88_TRACE_IO`, `PC88_RAW_TVRAM`,
+`LOG_TO_FILE`) so values you'd want to keep across runs can live in
+a `.env`. The required mkI ROM files are `mkI-n80.rom`,
+`mkI-n88.rom`, `mkI-e0.rom` with md5s declared in
+`src/machines/variants/mk1.ts`. The `roms/` directory is gitignored
+so dumps stay local.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the
@@ -174,10 +179,12 @@ Roughly ordered by what's blocking what.
   parser bolts on top.
 - [x] **`pc88.ts` factory** consuming `PC88Config` — `PC88Machine`
   wires the chip set, memory map, and I/O ports for mkI.
-- [ ] **`PC88Config` cleanup**: `DipSwitchState` is currently a
-  `Record<string, never>` placeholder, `dipSwitches` is optional,
-  `ROMManifest.disk` is optional. Replace with real DIP-switch
-  state once any chip needs to read it.
+- [x] **`DipSwitchState` is a real shape** — `{ port30: u8, port31: u8 }`,
+  required on `PC88Config`, with mkI/mkII/SR variants supplying their
+  factory defaults. `SystemController` consumes them via constructor
+  injection rather than hardcoding magic bytes.
+- [ ] **`ROMManifest.disk` is still optional** — once at least one
+  chip needs the disk ROM at runtime, lift the field to required.
 - [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80
   instances + a shared latch object; FDC connects to the sub-CPU
   bus, not the main bus. Design the IPC latch before writing FDC

@@ -1,4 +1,4 @@
-import type { Kilobytes } from "../flavours.js";
+import type { Kilobytes, u8 } from "../flavours.js";
 
 export interface PC88Config {
   readonly model: PC88Model;
@@ -8,13 +8,38 @@ export interface PC88Config {
   readonly sound: SoundConfig;
   readonly disk: DiskConfig;
   readonly roms: ROMManifest;
-  readonly dipSwitches?: DipSwitchState;
+  readonly dipSwitches: DipSwitchState;
 }
 
-// Placeholder until per-variant DIP-switch defaults are defined.
-// Concrete shape (memory expansion, terminal mode, baud rate, etc.)
-// belongs to whichever code first reads it.
-export type DipSwitchState = Record<string, never>;
+// Raw bytes returned by the BIOS reads of ports 0x30 and 0x31 — the
+// physical DIP-switch state. Bit assignments are per the NEC mkI/mkII
+// hardware manual:
+//
+//   port30:
+//     bit 0    1 = 80 cols, 0 = 40 cols
+//     bit 1    1 = mono, 0 = colour          (BIOS bit invert)
+//     bit 2    serial carrier mark/space
+//     bit 3    cassette motor on/off
+//     bits 4-5 USART rate (0=CMT600, 1=CMT1200, 2/3=RS-232C)
+//     bits 6-7 model-specific
+//
+//   port31:
+//     bit 0    1 = 200 lines, 0 = 400 lines (V1/V2 mode)
+//     bit 1    1 = boot from RAM, 0 = boot from ROM
+//     bit 2    1 = N-BASIC, 0 = N88-BASIC
+//     bit 3    graphics enable
+//     bit 4    high-resolution colour
+//     bit 5    high-res mode
+//     bits 6-7 model-specific
+//
+// Per-variant defaults live on each PC88Config in src/machines/variants/.
+// SystemController consumes them via `register()` and surfaces them to
+// the CPU via port reads — it does not re-encode them from named
+// fields, so adding a new bit is a one-line change here.
+export interface DipSwitchState {
+  readonly port30: u8;
+  readonly port31: u8;
+}
 
 export type PC88Model =
   | "PC-8801"

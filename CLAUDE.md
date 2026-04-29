@@ -383,9 +383,27 @@ that never reaches the screen** — token tables (`auto`, `go to`,
 as 25 × 80 cells; useful for spotting what the BIOS is using
 TVRAM for outside the visible area.
 
-Set `PC88_TRACE_IO=1` to log every IN/OUT with the CPU PC at the
-time of the access. Hooks in via `IOBus.tracer` (null in normal use,
-so the hot path stays branch-cheap).
+`yarn pc88` exposes its options as CLI flags (`yarn pc88 --help`
+for the full list): `--rom-dir=PATH`, `--max-ops=N`,
+`--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`. Every flag
+also has an env-var fallback with the same name uppercased and
+`PC88_`-prefixed (or `LOG_TO_FILE` for the file logger), so .env
+values work too. CLI wins over env when both are set.
+
+`--trace-io` (bare) dedupes consecutive identical IO lines; the
+`=raw` form prints them all. The tracer hooks in via
+`IOBus.tracer` (null in normal use, so the hot path stays
+branch-cheap).
+
+## DIP-switch defaults
+
+Per-variant DIP-switch state lives on `PC88Config.dipSwitches`
+(`{ port30: u8, port31: u8 }`) — never hardcode magic bytes in
+chip stubs. `SystemController` consumes the bytes via constructor
+injection and surfaces them at port reads. To add a new model,
+copy the shape from `MKI` in `src/machines/variants/mk1.ts` and
+adjust the bits per the model's hardware manual. Bit assignments
+are documented inline on `DipSwitchState` in `config.ts`.
 
 ## Branch / pushing
 

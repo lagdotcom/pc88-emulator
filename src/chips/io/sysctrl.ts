@@ -2,6 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import type { DipSwitchState } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
 import type { Beeper } from "./beeper.js";
 
@@ -16,17 +17,19 @@ const log = logLib.get("sysctrl");
 //   - https://www.maroon.dk/pc88_io.txt (community port table)
 //   - PC-8801 Hardware Manual (NEC) for the bit assignments on 0x30/0x31
 //
+// DIP defaults come from `PC88Config.dipSwitches` per machine variant
+// — never hardcode a magic byte here. SystemController only knows
+// "what to do with port writes", not "what model this is".
+//
 // Anything outside this set falls through to the IOBus default
 // (noisy-once 0xff / no-op).
 export class SystemController {
-  // DIP-switch byte presented at port 0x30. Bit layout per NEC docs;
-  // for first-light we report a vanilla "BASIC mode 5, terminal off,
-  // 80×25, 4 MHz" configuration.
-  dipSwitch1: u8 = 0b1111_1011;
-
-  // Secondary DIP byte at port 0x31. "8 colour, V1 mode, 200-line, no
-  // memory wait" per NEC.
-  dipSwitch2: u8 = 0b1110_1101;
+  // Live DIP-switch bytes returned by reads at 0x30 / 0x31. Mutable
+  // because the BIOS can OUT to these ports too — that overwrites
+  // the "presented" value (real silicon: writes go to a system
+  // register that shadows the same port number for read-back).
+  dipSwitch1: u8;
+  dipSwitch2: u8;
 
   // System status latch (read at 0x40). Returns "VRAM not in use,
   // sub-CPU not busy" idle state. Bit 5 toggles VBL state per the
@@ -42,7 +45,11 @@ export class SystemController {
   constructor(
     private readonly memoryMap: PC88MemoryMap,
     private readonly beeper: Beeper,
-  ) {}
+    dips: DipSwitchState,
+  ) {
+    this.dipSwitch1 = dips.port30;
+    this.dipSwitch2 = dips.port31;
+  }
 
   register(bus: IOBus): void {
     bus.register(0x30, {
