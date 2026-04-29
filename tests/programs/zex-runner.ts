@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
-import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
+import { MemoryBus } from "../../src/core/MemoryBus.js";
+import { RAM64k } from "../tools.testHelpers.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, "fixtures");
@@ -62,26 +63,13 @@ async function loadBinary(name: string): Promise<Uint8Array> {
   return buf;
 }
 
-class Ram implements MemoryProvider {
-  name = "ram";
-  start = 0;
-  end = 0x10000;
-  bytes = new Uint8Array(0x10000);
-  read(o: number) {
-    return this.bytes[o]!;
-  }
-  write(o: number, v: number) {
-    this.bytes[o] = v;
-  }
-}
-
 async function main() {
   const which = process.argv[2] ?? "zexdoc";
   const filename = `${which}.com`;
   const bin = await loadBinary(filename);
   const totalOps = APPROX_TOTAL_OPS[filename];
 
-  const ram = new Ram();
+  const ram = new RAM64k();
   ram.bytes[0x0000] = 0xc9; // RET at warm-boot
   ram.bytes[0x0005] = 0xc9; // RET at BDOS
   for (let i = 0; i < bin.length; i++) ram.bytes[0x0100 + i] = bin[i]!;

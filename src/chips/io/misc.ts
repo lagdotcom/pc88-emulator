@@ -1,6 +1,7 @@
 import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
+import type { u8 } from "../../flavours.js";
 
 const log = logLib.get("misc-io");
 
@@ -19,8 +20,8 @@ const log = logLib.get("misc-io");
 export class MiscPorts {
   // Track whether each port has been touched, for end-of-run
   // diagnostics ("did the BIOS write to F8, and with what?").
-  lastE7: number | null = null;
-  lastF8: number | null = null;
+  lastE7: u8 | null = null;
+  lastF8: u8 | null = null;
 
   register(bus: IOBus): void {
     bus.register(0xe7, {

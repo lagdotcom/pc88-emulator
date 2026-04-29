@@ -4,18 +4,13 @@ import {
   type LoadedRoms,
   PC88MemoryMap,
 } from "../../src/machines/pc88-memory.js";
-
-function makeRom(size: number, fill: number): Uint8Array {
-  const u = new Uint8Array(size);
-  u.fill(fill);
-  return u;
-}
+import { filledROM } from "../tools.testHelpers.js";
 
 function fixture(): LoadedRoms {
   return {
-    n80: makeRom(0x8000, 0x80),
-    n88: makeRom(0x8000, 0x88),
-    e0: makeRom(0x2000, 0xe0),
+    n80: filledROM(0x8000, 0x80),
+    n88: filledROM(0x8000, 0x88),
+    e0: filledROM(0x2000, 0xe0),
   };
 }
 

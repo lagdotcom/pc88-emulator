@@ -1,7 +1,7 @@
 import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
-import type { u8 } from "../../flavours.js";
+import type { u8, u16 } from "../../flavours.js";
 import { word } from "../../tools.js";
 
 const log = logLib.get("dmac");
@@ -17,10 +17,10 @@ const log = logLib.get("dmac");
 // at 0x68. We track the byte-pair flip-flop because real BIOS resets
 // it between writes; without that, the second byte is misread.
 export class μPD8257 {
-  private addressLow: number[] = [0, 0, 0, 0];
-  private addressHigh: number[] = [0, 0, 0, 0];
-  private countLow: number[] = [0, 0, 0, 0];
-  private countHigh: number[] = [0, 0, 0, 0];
+  private addressLow: u8[] = [0, 0, 0, 0];
+  private addressHigh: u8[] = [0, 0, 0, 0];
+  private countLow: u8[] = [0, 0, 0, 0];
+  private countHigh: u8[] = [0, 0, 0, 0];
   private toggle = false;
   private mode = 0;
   status: u8 = 0;
@@ -30,10 +30,10 @@ export class μPD8257 {
   // length pair tells the display which TVRAM region is "what would
   // appear on screen". The low 14 bits of the count are the byte
   // count - 1 per the 8257 datasheet; we mask + add 1.
-  channelAddress(ch: number): number {
+  channelAddress(ch: number): u16 {
     return ((this.addressHigh[ch]! << 8) | this.addressLow[ch]!) & 0xffff;
   }
-  channelByteCount(ch: number): number {
+  channelByteCount(ch: number): u16 {
     const raw = ((this.countHigh[ch]! << 8) | this.countLow[ch]!) & 0x3fff;
     return raw + 1;
   }

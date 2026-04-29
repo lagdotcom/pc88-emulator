@@ -6,24 +6,13 @@
 
 import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
-import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
-
-class Ram implements MemoryProvider {
-  name = "ram";
-  start = 0;
-  end = 0x10000;
-  bytes = new Uint8Array(0x10000);
-  read(o: number) {
-    return this.bytes[o]!;
-  }
-  write(o: number, v: number) {
-    this.bytes[o] = v;
-  }
-}
+import { MemoryBus } from "../../src/core/MemoryBus.js";
+import type { u8 } from "../../src/flavours.js";
+import { RAM64k } from "../tools.testHelpers.js";
 
 interface Bench {
   name: string;
-  program: number[];
+  program: u8[];
   iterations: number; // how many ops per program completion
 }
 
@@ -103,10 +92,10 @@ function ldirLoop(bytes: number): Bench {
 }
 
 function run(bench: Bench, repeats: number): { mops: number; ms: number } {
-  const ram = new Ram();
-  for (let i = 0; i < bench.program.length; i++) {
+  const ram = new RAM64k();
+  for (let i = 0; i < bench.program.length; i++)
     ram.bytes[0x0100 + i] = bench.program[i]!;
-  }
+
   // Plant some recognisable bytes at the LDIR source.
   for (let i = 0; i < 0x100; i++) ram.bytes[0x0200 + i] = i & 0xff;
   const cpu = new Z80(new MemoryBus([ram], 0xff), new IOBus());

@@ -15,6 +15,7 @@ import {
 import type { LoadedRoms } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
+import { hex } from "./tools.js";
 
 const DEFAULT_MAX_OPS = 150_000;
 
@@ -88,10 +89,6 @@ yarn pc88 — boot mkI N-BASIC, dump TVRAM after a fixed op budget
                       (env: LOG_TO_FILE=anything → main.log)
   -h, --help          show this help
 `;
-
-function hex(n: number, w: number): string {
-  return n.toString(16).padStart(w, "0");
-}
 
 function diagnostics(machine: PC88Machine, result: RunResult): string {
   const { memoryMap, sysctrl, crtc, dmac, beeper, irq, misc, ppi } = machine;

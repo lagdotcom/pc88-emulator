@@ -16,6 +16,7 @@ import {
   fdOpCodes,
   opCodes,
 } from "../../src/chips/z80/ops.js";
+import { byte } from "../../src/tools.js";
 import { loadTests } from "./fetch.js";
 import {
   diffState,
@@ -27,10 +28,6 @@ import {
 import type { TestCase } from "./types.js";
 
 const PREFIX_BYTES = new Set([0xcb, 0xdd, 0xed, 0xfd]);
-
-function hex2(n: number): string {
-  return n.toString(16).padStart(2, "0");
-}
 
 interface OpGroup {
   prefix: string;
@@ -53,8 +50,8 @@ function gatherOps(): OpGroup[] {
     if (isPrefixOp(opCodes[code]!.mnemonic)) continue;
     groups.push({
       prefix: "base",
-      filename: hex2(code),
-      description: `${hex2(code)} ${opCodes[code]!.mnemonic}`,
+      filename: byte(code),
+      description: `${byte(code)} ${opCodes[code]!.mnemonic}`,
     });
   }
 
@@ -68,8 +65,8 @@ function gatherOps(): OpGroup[] {
       if (isPrefixOp(table[code]!.mnemonic)) continue;
       groups.push({
         prefix,
-        filename: `${prefix} ${hex2(code)}`,
-        description: `${prefix.toUpperCase()} ${hex2(code)} ${table[code]!.mnemonic}`,
+        filename: `${prefix} ${byte(code)}`,
+        description: `${prefix.toUpperCase()} ${byte(code)} ${table[code]!.mnemonic}`,
       });
     }
   }
@@ -83,8 +80,8 @@ function gatherOps(): OpGroup[] {
     for (const code of Object.keys(table).map(Number)) {
       groups.push({
         prefix: `${prefix}cb`,
-        filename: `${prefix} cb __ ${hex2(code)}`,
-        description: `${prefix.toUpperCase()} CB __ ${hex2(code)} ${table[code]!.mnemonic}`,
+        filename: `${prefix} cb __ ${byte(code)}`,
+        description: `${prefix.toUpperCase()} CB __ ${byte(code)} ${table[code]!.mnemonic}`,
       });
     }
   }
@@ -146,13 +143,13 @@ function diffMessage(
             .map((b, i) => (xor & (1 << i) ? b : null))
             .filter(Boolean)
             .join(",");
-          return `f: got ${hex2(d.got)} want ${hex2(d.want)} (diff bits: ${bits})`;
+          return `f: got ${byte(d.got)} want ${byte(d.want)} (diff bits: ${bits})`;
         }
         const w = get(d.reg) ?? 0;
         const wid = d.want > 0xff || w > 0xff ? 4 : 2;
         return `${d.reg}: got ${d.got.toString(16).padStart(wid, "0")} want ${d.want.toString(16).padStart(wid, "0")}`;
       }
-      return `ram[${d.ramAddr!.toString(16).padStart(4, "0")}]: got ${hex2(d.got)} want ${hex2(d.want)}`;
+      return `ram[${d.ramAddr!.toString(16).padStart(4, "0")}]: got ${byte(d.got)} want ${byte(d.want)}`;
     })
     .join("; ");
 }

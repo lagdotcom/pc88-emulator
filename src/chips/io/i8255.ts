@@ -1,6 +1,7 @@
 import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
+import type { u8, u16 } from "../../flavours.js";
 import { byte } from "../../tools.js";
 
 const log = logLib.get("ppi");
@@ -27,7 +28,7 @@ export class i8255 {
     }
   }
 
-  private warn(port: number, value: number): void {
+  private warn(port: u16, value: u8): void {
     if (this.warned.has(port)) return;
     this.warned.add(port);
     log.info(

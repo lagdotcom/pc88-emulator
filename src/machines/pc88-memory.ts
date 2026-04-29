@@ -1,7 +1,7 @@
 import logLib from "log";
 
 import type { MemoryProvider } from "../core/MemoryBus.js";
-import type { u8 } from "../flavours.js";
+import type { u8, u16 } from "../flavours.js";
 
 const log = logLib.get("pc88-memory");
 
@@ -72,11 +72,11 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
-  read(offset: number): u8 {
+  read(offset: u16): u8 {
     return this.readPages[offset >> PAGE_SHIFT]![offset & PAGE_MASK]!;
   }
 
-  write(offset: number, value: u8): void {
+  write(offset: u16, value: u8): void {
     this.writePages[offset >> PAGE_SHIFT]![offset & PAGE_MASK] = value;
   }
 
@@ -167,7 +167,7 @@ export class PC88MemoryMap implements MemoryProvider {
     fromPage: number,
     toPage: number,
     rom: Uint8Array,
-    romOffset: number,
+    romOffset: u16,
   ): void {
     for (let p = fromPage; p < toPage; p++) {
       const off = romOffset + (p - fromPage) * PAGE_SIZE;
@@ -184,7 +184,7 @@ export class PC88MemoryMap implements MemoryProvider {
     }
   }
 
-  private mapRamPage(page: number, backing: Uint8Array, offset: number): void {
+  private mapRamPage(page: number, backing: Uint8Array, offset: u16): void {
     const slice = backing.subarray(offset, offset + PAGE_SIZE);
     this.readPages[page] = slice;
     this.writePages[page] = slice;

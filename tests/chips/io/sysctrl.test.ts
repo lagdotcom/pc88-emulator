@@ -3,19 +3,16 @@ import { describe, expect, it } from "vitest";
 import { Beeper } from "../../../src/chips/io/beeper.js";
 import { SystemController } from "../../../src/chips/io/sysctrl.js";
 import { IOBus } from "../../../src/core/IOBus.js";
+import type { u8 } from "../../../src/flavours.js";
 import { PC88MemoryMap } from "../../../src/machines/pc88-memory.js";
+import { filledROM } from "../../tools.testHelpers.js";
 
-function setup(dipPort30 = 0xab, dipPort31 = 0xcd) {
-  const roms = {
-    n80: new Uint8Array(0x8000),
-    n88: new Uint8Array(0x8000),
-    e0: new Uint8Array(0x2000),
-  };
-  // Fill ROMs with distinguishable bytes so memory-map state changes
-  // are observable via reads.
-  roms.n80.fill(0x80);
-  roms.e0.fill(0xe0);
-  const memoryMap = new PC88MemoryMap(roms);
+function setup(dipPort30: u8 = 0xab, dipPort31: u8 = 0xcd) {
+  const memoryMap = new PC88MemoryMap({
+    n80: filledROM(0x8000, 0x80),
+    n88: filledROM(0x8000, 0x88),
+    e0: filledROM(0x2000, 0xe0),
+  });
   const beeper = new Beeper();
   const bus = new IOBus();
   const sysctrl = new SystemController(memoryMap, beeper, {

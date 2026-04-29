@@ -11,6 +11,7 @@ import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
+import type { u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
@@ -134,8 +135,8 @@ export interface RunResult {
   reason: "max-ops" | "max-cycles" | "halted-no-irq" | "stopped";
   // Snapshot of CPU state at stop. Useful for tracking down "BIOS got
   // stuck somewhere"-class failures without re-running.
-  finalPC: number;
-  finalSP: number;
+  finalPC: u16;
+  finalSP: u16;
   iff1: boolean;
   halted: boolean;
   // Z80 interrupt mode (0 / 1 / 2). PC-88 BIOS uses IM 2 with a

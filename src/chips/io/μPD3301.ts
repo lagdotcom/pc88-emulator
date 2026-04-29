@@ -21,7 +21,7 @@ const log = logLib.get("crtc");
 //
 // The chip has no separate STOP DISPLAY command on the PC-88; the
 // raster is blanked by RESET or by clearing the START DISPLAY flag.
-function paramCount(cmd: number): number {
+function paramCount(cmd: u8) {
   switch (cmd & 0xe0) {
     case 0x00:
       return 5;
@@ -54,7 +54,7 @@ export class μPD3301 {
   // Parameter parser state. After a command byte is written we know
   // how many parameter bytes are coming; subsequent writes go into
   // `params` until the count is satisfied.
-  private command: number | null = null;
+  private command: u8 | null = null;
   private paramsLeft = 0;
   private params: number[] = [];
 

@@ -1,46 +1,18 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
-import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
-
-class Ram64K implements MemoryProvider {
-  name = "ram";
-  start = 0;
-  end = 0x10000;
-  bytes = new Uint8Array(0x10000);
-
-  read(offset: number): number {
-    return this.bytes[offset]!;
-  }
-
-  write(offset: number, value: number): void {
-    this.bytes[offset] = value;
-  }
-}
-
-class StubIo {
-  name = "io";
-  reads: [number, number][] = [];
-  writes: [number, number][] = [];
-
-  read = (port: number): number => {
-    this.reads.push([port, 0]);
-    return 0xff;
-  };
-
-  write = (port: number, value: number): void => {
-    this.writes.push([port, value]);
-  };
-}
+import { MemoryBus } from "../../src/core/MemoryBus.js";
+import type { u16 } from "../../src/flavours.js";
+import { RAM64k, TestIO } from "../tools.testHelpers.js";
 
 export interface ProgramHarness {
   cpu: Z80;
-  ram: Ram64K;
-  io: StubIo;
+  ram: RAM64k;
+  io: TestIO;
 }
 
 export function makeProgramHarness(): ProgramHarness {
-  const ram = new Ram64K();
-  const io = new StubIo();
+  const ram = new RAM64k();
+  const io = new TestIO();
   const ioBus = new IOBus();
   ioBus.registerAll({ name: io.name, read: io.read, write: io.write });
   const cpu = new Z80(new MemoryBus([ram], 0xff), ioBus);
@@ -49,11 +21,11 @@ export function makeProgramHarness(): ProgramHarness {
 
 export interface RunOptions {
   // Address to load bytes at.
-  loadAddr?: number;
+  loadAddr?: u16;
   // Initial PC; defaults to loadAddr.
-  startPc?: number;
+  startPc?: u16;
   // Initial SP.
-  sp?: number;
+  sp?: u16;
   // Hard cap on instructions executed (catches infinite loops in broken
   // tests). Defaults to ten million, which is enough for most small
   // programs but won't accidentally hang vitest forever.

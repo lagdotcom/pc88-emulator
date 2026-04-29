@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import type { u8 } from "../../src/flavours.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
 import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
+import { filledROM } from "../tools.testHelpers.js";
 
-function syntheticRoms(program: number[]): LoadedRoms {
-  const n80 = new Uint8Array(0x8000);
-  n80.fill(0x76);
+function syntheticRoms(program: u8[]): LoadedRoms {
+  const n80 = filledROM(0x8000, 0x76);
   for (let i = 0; i < program.length; i++) n80[i] = program[i]!;
-  const n88 = new Uint8Array(0x8000);
-  n88.fill(0x76);
-  const e0 = new Uint8Array(0x2000);
-  e0.fill(0x76);
+
+  const n88 = filledROM(0x8000, 0x76);
+  const e0 = filledROM(0x2000, 0x76);
+
   return { n80, n88, e0 };
 }
 
