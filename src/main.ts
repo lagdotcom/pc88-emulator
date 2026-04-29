@@ -130,13 +130,13 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     };
     const cont = findContiguous();
     const inter = findInterleaved();
-    if (cont >= 0) {
+    if (inter >= 0) {
       lines.push(
-        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → row stride = 80`,
+        `"BASIC"        : 0xF${hex(inter, 3)} (chars at even offsets, attrs at odd) → 160-byte row stride`,
       );
-    } else if (inter >= 0) {
+    } else if (cont >= 0) {
       lines.push(
-        `"BASIC"        : 0xF${hex(inter, 3)} (interleaved with 1-byte gap) → 160-byte stride or 40-col mode`,
+        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → 80-byte row stride`,
       );
     } else {
       lines.push(`"BASIC"        : not found in TVRAM at any common stride`);

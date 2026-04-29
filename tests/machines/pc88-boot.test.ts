@@ -21,13 +21,14 @@ function syntheticRoms(program: number[]): LoadedRoms {
 describe("PC88Machine boot path", () => {
   it("writes 'HI' to TVRAM and the display dumps it", () => {
     // TVRAM at 0xF000 is permanently mapped on PC-8801 mkI; no port
-    // handshake is needed before writes.
+    // handshake is needed. Cells are 2 bytes each (char + attr), so
+    // 'H' goes at +0 and 'I' at +2.
     // prettier-ignore
     const program = [
       0x3e, 0x48,             // LD A, 'H'
-      0x32, 0x00, 0xf0,       // LD (0xF000), A
+      0x32, 0x00, 0xf0,       // LD (0xF000), A   — col 0 char
       0x3e, 0x49,             // LD A, 'I'
-      0x32, 0x01, 0xf0,       // LD (0xF001), A
+      0x32, 0x02, 0xf0,       // LD (0xF002), A   — col 1 char
       0x76,                   // HALT
     ];
     const machine = new PC88Machine(MKI, syntheticRoms(program));

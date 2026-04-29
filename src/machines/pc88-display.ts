@@ -33,13 +33,18 @@ export interface PC88Display {
   toAsciiDump(): string;
 }
 
-// PC-88 TVRAM at 0xF000–0xFFFF is laid out as 25 rows × 120 bytes:
-// the first 80 bytes of each row are character codes, followed by 40
-// bytes of attribute information that doesn't quite map cell-by-cell.
-// For first-light we just read the character half; attributes come
-// across as zeroes until a renderer needs them.
-const ROW_STRIDE = 40;
-const CHARS_PER_ROW = 40;
+// PC-8801 mkI TVRAM is laid out at 0xF000-0xFFFF as 25 rows × 160
+// bytes: each character cell occupies 2 bytes — even offset = char
+// code, odd offset = attribute byte (colour, reverse, blink,
+// underline). 25 × 160 = 4000 bytes; the trailing 96 bytes of the
+// 4 KB region are CRTC scratch / line-attribute state we don't
+// model yet. The earlier "stride 120, 80 chars contiguous" theory
+// was wrong (no real hardware lays it out that way); reading the
+// attribute byte as a char is what produced the "N E C   P C..."
+// pattern with NULs between every visible character.
+const ROW_STRIDE = 160;
+const CHAR_OFFSET = 0; // char byte at row*160 + col*2
+const ATTR_OFFSET = 1; // attr byte at row*160 + col*2 + 1
 
 export class PC88TextDisplay implements PC88Display {
   constructor(private readonly memory: PC88MemoryMap) {}
@@ -50,8 +55,10 @@ export class PC88TextDisplay implements PC88Display {
     const attrs = new Uint8Array(TEXT_COLS * TEXT_ROWS);
     for (let row = 0; row < TEXT_ROWS; row++) {
       const rowBase = row * ROW_STRIDE;
-      for (let col = 0; col < CHARS_PER_ROW; col++) {
-        chars[row * TEXT_COLS + col] = tvram[rowBase + col] ?? 0;
+      for (let col = 0; col < TEXT_COLS; col++) {
+        const cellBase = rowBase + col * 2;
+        chars[row * TEXT_COLS + col] = tvram[cellBase + CHAR_OFFSET] ?? 0;
+        attrs[row * TEXT_COLS + col] = tvram[cellBase + ATTR_OFFSET] ?? 0;
       }
     }
     return {
