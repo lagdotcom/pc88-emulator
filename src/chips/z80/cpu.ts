@@ -126,23 +126,41 @@ export class Z80 {
     this.qWritten = true;
   }
 
+  // Vector byte the device asserts on the data bus during the IRQ
+  // acknowledge cycle. Used by IM 0 (treated as RST) and IM 2
+  // (indexes the I:db table). Real PC-88 VBL puts 0x00 here; sub-CPU
+  // and other sources use different bytes. Default 0xFF matches the
+  // "/INT pulled low, no chip driving the bus" pattern most emulators
+  // assume when nothing has set it explicitly.
+  irqVector: u8 = 0xff;
+
   // Raise the maskable interrupt request line. Cleared on acceptance.
   // Idempotent: calling twice without an accept in between is the same
-  // as calling once. This is the only IRQ path implemented; NMI and the
-  // IM 0 / IM 2 acknowledgement vectors are TODO.
-  requestIrq(): void {
+  // as calling once. The optional vector byte is what the source chip
+  // would assert on the data bus — used in IM 0 / IM 2 dispatch.
+  requestIrq(vector: u8 = 0xff): void {
     this.irqLine = true;
+    this.irqVector = vector;
   }
 
   runOneOp() {
     // Maskable interrupt acceptance, sampled at the instruction
     // boundary. Conditions: IRQ asserted, IFF1 set, no in-flight EI
     // grace period, no pending prefix (would split a DD CB d xx into
-    // an IRQ-acknowledged half). On accept, push PC and vector to
-    // 0x0038 (IM 1 only). HALT is exited; PC is already at HALT+1
-    // because the M1 fetch advanced it when HALT first dispatched.
-    // T-state cost is 13 (M1 + memory writes + 7-state penalty), the
-    // standard IM 1 acceptance cost.
+    // an IRQ-acknowledged half).
+    //
+    // Dispatch by IM:
+    //   IM 0 — execute the byte on the data bus as an opcode. Real
+    //          silicon usually sees RST 38h (0xFF with /INT low), so
+    //          we fast-path "vector to 0x0038". Other RST bytes work
+    //          by shape but no PC-88 source uses them.
+    //   IM 1 — vector to 0x0038, no bus byte read. 13 t-states.
+    //   IM 2 — read PC from word at (I << 8) | (vector & 0xFE). 19
+    //          t-states. Bit 0 of the vector is forced to 0 because
+    //          the LSB of the read goes to the table's low byte.
+    //
+    // Common to all: clear IFF1/IFF2, push current PC, exit HALT,
+    // bump R like a normal M1 fetch would.
     if (
       this.irqLine &&
       this.iff1 &&
@@ -158,8 +176,21 @@ export class Z80 {
       this.regs.SP = sp;
       this.mem.write(sp, pc & 0xff);
       this.mem.write((sp + 1) & 0xffff, (pc >> 8) & 0xff);
-      this.regs.PC = 0x0038;
-      this.cycles += 13;
+
+      if (this.im === 2) {
+        const ptr =
+          ((this.regs.I << 8) | (this.irqVector & 0xfe)) & 0xffff;
+        const lo = this.mem.read(ptr);
+        const hi = this.mem.read((ptr + 1) & 0xffff);
+        this.regs.PC = (hi << 8) | lo;
+        this.cycles += 19;
+      } else {
+        // IM 0 with bus byte 0xFF (RST 38h) and IM 1 both vector here.
+        // IM 0 with non-RST bus bytes is not modelled; no PC-88 source
+        // uses them.
+        this.regs.PC = 0x0038;
+        this.cycles += 13;
+      }
       // Increment R like a normal M1 fetch would have.
       const r = this.regs.R;
       this.regs.R = (r & 0x80) | ((r + 1) & 0x7f);

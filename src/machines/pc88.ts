@@ -24,6 +24,11 @@ const Z80_HZ = 4_000_000;
 export const VBL_HZ = 60;
 const VBL_PERIOD_CYCLES = Math.round(Z80_HZ / VBL_HZ);
 const VBL_PULSE_CYCLES = Math.round(Z80_HZ * 0.0008); // ~0.8 ms VBL pulse
+// Vector byte the VBL source asserts on the data bus during IM 2 IRQ
+// acknowledge. PC-88 BIOS lays its IM 2 jump table at I:0x00 with
+// VBL as the first entry, so the source byte is 0x00. Sub-CPU /
+// USART / etc. use different bytes; not modelled this branch.
+const VBL_IRQ_VECTOR = 0x00;
 
 export interface PC88MachineParts {
   cpu: Z80;
@@ -125,6 +130,12 @@ export interface RunResult {
   finalSP: number;
   iff1: boolean;
   halted: boolean;
+  // Z80 interrupt mode (0 / 1 / 2). PC-88 BIOS uses IM 2 with a
+  // vector table at I:0x00; if the runner stops with im=0 the BIOS
+  // hasn't programmed the mode yet (usually means it bailed early).
+  im: number;
+  // I register (high byte of IM 2 vector table base).
+  iReg: number;
   // Number of VBL IRQs the runner injected (for sanity-checking
   // interrupt-driven boot paths).
   vblIrqsRaised: number;
@@ -161,7 +172,7 @@ export function runMachine(
       sysctrl.setVBlank(true);
       crtc.setVBlank(true);
       if (!irq.vblMasked()) {
-        cpu.requestIrq();
+        cpu.requestIrq(VBL_IRQ_VECTOR);
         vblIrqsRaised++;
       } else {
         vblIrqsMasked++;
@@ -199,6 +210,8 @@ export function runMachine(
     finalSP: cpu.regs.SP,
     iff1: cpu.iff1,
     halted: cpu.halted,
+    im: cpu.im,
+    iReg: cpu.regs.I,
     vblIrqsRaised,
     vblIrqsMasked,
   };

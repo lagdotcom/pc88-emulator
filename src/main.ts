@@ -50,6 +50,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     `PC / SP        : 0x${hex(result.finalPC, 4)} / 0x${hex(result.finalSP, 4)}`,
   );
   lines.push(`IFF1 / halted  : ${result.iff1} / ${result.halted}`);
+  lines.push(`IM / I         : ${result.im} / 0x${hex(result.iReg, 2)}`);
   lines.push(
     `VBL IRQs       : ${result.vblIrqsRaised} raised, ${result.vblIrqsMasked} masked`,
   );
@@ -89,6 +90,22 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     lines.push(tvramHexHead(memoryMap.tvram, 4));
   }
 
+  // 32 bytes around the final PC, read through the memory map (so
+  // bank-switched ROM/RAM contents reflect what the CPU actually sees
+  // at the moment of stop). Useful for "what's the BIOS executing in
+  // this loop?" — paste the bytes into a Z80 disassembler to see.
+  const pc = result.finalPC;
+  const pcLo = Math.max(0, pc - 4);
+  const pcHi = Math.min(0xffff, pc + 28);
+  const surroundBytes: string[] = [];
+  for (let a = pcLo; a <= pcHi; a++) {
+    const tag = a === pc ? ">" : " ";
+    if ((a - pcLo) % 8 === 0) surroundBytes.push(`\n  ${hex(a, 4)} ${tag}`);
+    else surroundBytes.push(tag);
+    surroundBytes.push(hex(machine.memBus.read(a), 2));
+  }
+  lines.push(`bytes @ PC     :${surroundBytes.join(" ")}`);
+
   void ppi; // PPI is just a logger right now; keep destructure stable.
   return lines.join("\n");
 }
@@ -114,17 +131,32 @@ async function main(): Promise<void> {
   machine.reset();
 
   // PC88_TRACE_IO=1 logs every IN/OUT with the CPU PC at the time of
-  // the access. Cheap to enable, expensive to read — use only when
-  // chasing down "BIOS hits port X then bails" issues.
-  if (process.env.PC88_TRACE_IO === "1") {
+  // the access. Consecutive identical lines collapse into a single
+  // "(× N times)" report so that tight polling loops don't drown the
+  // log. Set PC88_TRACE_IO=raw to disable the dedupe.
+  const traceMode = process.env.PC88_TRACE_IO ?? "";
+  if (traceMode === "1" || traceMode === "raw") {
     const cpu = machine.cpu;
+    const dedupe = traceMode === "1";
+    let last: string | null = null;
+    let lastCount = 0;
+    const flush = () => {
+      if (lastCount > 1) console.log(`  (× ${lastCount} times)`);
+    };
     machine.ioBus.tracer = (kind, port, value) => {
       const pc = cpu.regs.PC;
       const dir = kind === "r" ? "IN " : "OUT";
-      console.log(
-        `[io] PC=0x${hex(pc, 4)} ${dir} 0x${hex(port & 0xff, 2)} = 0x${hex(value, 2)}`,
-      );
+      const line = `[io] PC=0x${hex(pc, 4)} ${dir} 0x${hex(port & 0xff, 2)} = 0x${hex(value, 2)}`;
+      if (dedupe && line === last) {
+        lastCount++;
+        return;
+      }
+      flush();
+      console.log(line);
+      last = line;
+      lastCount = 1;
     };
+    process.on("exit", flush);
   }
 
   const opts: RunOptions = {

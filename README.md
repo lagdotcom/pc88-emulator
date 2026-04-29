@@ -32,8 +32,8 @@ Not yet built:
 - Pixel-accurate CRT controller (currently a parameter-eating stub),
   graphics VRAM rendering, analogue palette.
 - PSG / YM2203 / YM2608 sound (beeper toggles are counted, not played).
-- IM 0 / IM 2 / NMI interrupt acceptance — IM 1 + a 60 Hz VBL pump
-  works, the rest are TODO.
+- IM 0 / NMI interrupt acceptance — IM 1 + IM 2 + a 60 Hz VBL pump
+  work, IM 0 + NMI are TODO.
 
 Working enough for first-light boot:
 
@@ -125,12 +125,15 @@ Roughly ordered by what's blocking what.
 - [x] **Block-instruction repeat-iteration flags** — fixed when
   running through ops2; remaining 77 SingleStepTests failures on
   the table path are documented above.
-- [ ] **Interrupt acceptance: IM 0, IM 2, NMI**. IM 1 + a 60 Hz
-  VBL request line are wired now (`Z80.requestIrq()` + the
-  acceptance check at the top of `runOneOp`); IM 0 (vector from
-  data-bus byte) and IM 2 (`I:db` indirection) and NMI (vector
-  0x0066, ignores IFF1) are still TODO. None are exercised by mkI
-  N-BASIC at the moment, but FDC + sub-CPU will need the IM 2 path.
+- [x] **IM 2 acceptance**. `requestIrq(vector)` carries the data-bus
+  byte; on accept the CPU reads PC from `(I << 8) | (vector & 0xFE)`.
+  The runner asserts vector 0x00 for VBL. PC-88 BIOS programs IM 2
+  early during init.
+- [ ] **Interrupt acceptance: IM 0, NMI**. IM 0 (execute the byte on
+  the data bus as an opcode — only the RST-38 case is reachable by
+  the same vector path as IM 1) and NMI (vector 0x0066, ignores
+  IFF1) are still TODO. No PC-88 source uses IM 0; NMI is unused on
+  mkI but the FDD-IF on later models can drive it.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
 - [x] **Performance: per-opcode switch dispatcher** — landed as

@@ -1,6 +1,6 @@
-// IM 1 maskable-interrupt acceptance. Drives the Z80 directly via
-// requestIrq() and asserts the dispatch shape: PC pushed, vector to
-// 0x0038, IFF1/IFF2 cleared, halted cleared.
+// IM 1 / IM 2 maskable-interrupt acceptance. Drives the Z80 directly
+// via requestIrq() and asserts the dispatch shape: PC pushed, vector
+// computed by mode, IFF1/IFF2 cleared, halted cleared.
 
 import { describe, expect, it } from "vitest";
 
@@ -80,5 +80,67 @@ describe("IM 1 IRQ acceptance", () => {
     cpu.runOneOp(); // NOP — IRQ now accepted
     expect(cpu.regs.PC).toBe(0x0038);
     expect(cpu.irqLine).toBe(false);
+  });
+});
+
+describe("IM 2 IRQ acceptance", () => {
+  it("dispatches via the I:vector table", () => {
+    const h = makeProgramHarness();
+    const { cpu, ram } = h;
+
+    // Vector table at 0x4000, vector byte 0x10. Target = 0x1234.
+    cpu.regs.I = 0x40;
+    ram.bytes[0x4010] = 0x34;
+    ram.bytes[0x4011] = 0x12;
+
+    ram.bytes[0x0100] = 0xfb; // EI
+    ram.bytes[0x0101] = 0x00; // NOP
+    ram.bytes[0x0102] = 0x76; // HALT
+    cpu.regs.PC = 0x0100;
+    cpu.regs.SP = 0xff00;
+    cpu.im = 2;
+
+    cpu.runOneOp(); // EI
+    cpu.runOneOp(); // NOP — eiDelay consumed
+    cpu.runOneOp(); // HALT
+    expect(cpu.halted).toBe(true);
+
+    cpu.requestIrq(0x10);
+    cpu.runOneOp();
+
+    expect(cpu.halted).toBe(false);
+    expect(cpu.regs.PC).toBe(0x1234);
+    expect(cpu.iff1).toBe(false);
+    expect(cpu.regs.SP).toBe(0xfefe);
+    // Return PC pushed = address after HALT.
+    const lo = ram.bytes[0xfefe]!;
+    const hi = ram.bytes[0xfeff]!;
+    expect((hi << 8) | lo).toBe(0x0103);
+  });
+
+  it("forces bit 0 of the vector byte to zero", () => {
+    // Real silicon ties D0 of the vector byte to ground for the table
+    // read so the low byte address is even. Our acceptance does the
+    // same — vector 0x11 reads from I:0x10, not I:0x11.
+    const h = makeProgramHarness();
+    const { cpu, ram } = h;
+
+    cpu.regs.I = 0x80;
+    ram.bytes[0x8010] = 0xcd;
+    ram.bytes[0x8011] = 0xab;
+
+    ram.bytes[0x0100] = 0xfb;
+    ram.bytes[0x0101] = 0x00;
+    ram.bytes[0x0102] = 0x00;
+    cpu.regs.PC = 0x0100;
+    cpu.regs.SP = 0xff00;
+    cpu.im = 2;
+
+    cpu.runOneOp(); // EI
+    cpu.runOneOp(); // NOP — eiDelay consumed
+    cpu.requestIrq(0x11);
+    cpu.runOneOp(); // NOP — IRQ accepted
+
+    expect(cpu.regs.PC).toBe(0xabcd);
   });
 });

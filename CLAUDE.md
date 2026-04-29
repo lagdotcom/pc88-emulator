@@ -353,13 +353,19 @@ propagates after a session restart.
 2. The sub-CPU model — mkII has `hasSubCpu: true`; the main CPU and
    sub-CPU communicate through shared latches. Two CPU instances + a
    latch object. The FDC connects to the sub-CPU, not the main bus.
-3. **IM 0 / IM 2 / NMI acceptance.** IM 1 + a 60 Hz VBL request line
-   are wired now (`Z80.requestIrq()` + the acceptance check at the
-   top of `runOneOp` — pushes PC, vectors to 0x0038, clears IFF1/2,
-   wakes from HALT). IM 0 (data-bus byte as opcode) and IM 2
-   (`I:db` indirection through a vector table) are not implemented;
-   FDC + sub-CPU IPC will drive them. NMI (vector 0x0066, ignores
-   IFF1) likewise.
+3. **IM 0 / NMI acceptance.** IM 1 + IM 2 are both wired now.
+   `Z80.requestIrq(vector?)` carries the data-bus byte the source
+   chip would assert during the IRQ ack cycle (default 0xff = "/INT
+   pulled low, no chip driving the bus"). Acceptance:
+     - IM 1 → push PC, vector to 0x0038, 13 t-states.
+     - IM 2 → push PC, read PC from word at `(I << 8) | (vector & 0xFE)`,
+              19 t-states. The `& 0xFE` mirrors real silicon tying
+              D0 of the table read low.
+   The runner asserts vector 0x00 for VBL (PC-88 IM 2 table puts VBL
+   at I:0x00). IM 0 (execute bus byte as opcode — only the RST 38h
+   case is reachable; no PC-88 source uses anything else) and NMI
+   (vector 0x0066, ignores IFF1) remain TODO; FDC + sub-CPU IPC
+   will surface them.
 
 ## Things to know about the harness
 
