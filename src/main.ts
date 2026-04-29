@@ -65,8 +65,17 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     `bank state     : basic=${memoryMap.basicMode} romEnabled=${memoryMap.basicRomEnabled} vram=${memoryMap.vramEnabled} (tvram is permanent at 0xF000)`,
   );
   lines.push(`sys status     : 0x${hex(sysctrl.systemStatus, 2)}`);
-  lines.push(`crtc status    : 0x${hex(crtc.status, 2)}`);
-  lines.push(`dmac status    : 0x${hex(dmac.status, 2)}`);
+  lines.push(
+    `crtc           : ${crtc.charsPerRow}x${crtc.rowsPerScreen}, ` +
+      `attr-pairs/row=${crtc.attrPairsPerRow}, ` +
+      `display=${crtc.displayOn ? "on" : "off"}, ` +
+      `status=0x${hex(crtc.status, 2)}`,
+  );
+  lines.push(
+    `dmac ch2       : src=0x${hex(dmac.channelAddress(2), 4)} ` +
+      `count=${dmac.channelByteCount(2)} ` +
+      `(status=0x${hex(dmac.status, 2)})`,
+  );
   lines.push(`beeper toggles : ${beeper.toggles}`);
   lines.push(
     `misc ports     : 0xE7 last=${misc.lastE7 ?? "-"} 0xF8 last=${misc.lastF8 ?? "-"}`,
@@ -231,8 +240,16 @@ async function main(): Promise<void> {
 
   process.stdout.write("\n--- Diagnostics ---\n");
   process.stdout.write(diagnostics(machine, result));
-  process.stdout.write("\n\n--- TVRAM dump ---\n");
+  // The visible dump renders only the CRTC+DMAC-fetched region — what
+  // a real screen would actually show. Falls back to a placeholder if
+  // the BIOS hasn't programmed SET MODE yet.
+  process.stdout.write("\n\n--- Visible screen ---\n");
   process.stdout.write(machine.display.toAsciiDump());
+  // The raw dump ignores CRTC/DMAC config and lays out the full 4 KB
+  // TVRAM as a 25 × 80 grid. Useful when the visible region is empty
+  // or to see the BIOS scratch areas (BASIC tokens, line buffers).
+  process.stdout.write("\n\n--- Raw TVRAM (4 KB, char bytes only) ---\n");
+  process.stdout.write(machine.display.rawTvramDump());
   process.stdout.write("\n------------------\n");
 }
 

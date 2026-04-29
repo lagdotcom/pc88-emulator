@@ -334,9 +334,33 @@ at the top of `pc88.ts`.
 
 `runMachine` returns a `RunResult` with the final PC/SP, IFF1 state,
 HALTed flag, and counts of VBL IRQs raised vs masked. `src/main.ts`
-prints this plus bank state, chip-stub status bytes, and a TVRAM
-hex-dump head as a "Diagnostics" block before the ASCII dump — first
-port of call when "BIOS got stuck".
+prints this plus bank state, chip-stub status bytes, CRTC mode, DMAC
+channel-2 source/length, and a TVRAM hex-dump head as a "Diagnostics"
+block — first port of call when "BIOS got stuck".
+
+## What the screen actually shows
+
+On real PC-88 hardware the visible image is decided by three pieces
+of state working together:
+
+- **μPD3301 SET MODE** (cmd `0x80`-`0x9F`) programs the visible
+  geometry: characters per row, rows per screen, attribute pairs
+  per row, character cell height. Stored as `crtc.charsPerRow`,
+  `crtc.rowsPerScreen`, etc.
+- **μPD8257 channel 2** carries the TVRAM start address + byte
+  count to the CRTC each frame. `dmac.channelAddress(2)` /
+  `dmac.channelByteCount(2)` expose this.
+- **μPD3301 START / STOP DISPLAY** (`0x47` / `0x44`) gates whether
+  the raster is unblanked. `crtc.displayOn` tracks it.
+
+`PC88TextDisplay.toAsciiDump()` honours all three: it reads only
+the bytes the DMAC is configured to fetch, and only the rows × cols
+the CRTC was told to show. **Anything else in TVRAM is BASIC scratch
+that never reaches the screen** — token tables (`auto`, `go to`,
+`list`, `run`), line buffers, attribute pair tables, etc.
+`rawTvramDump()` ignores the CRTC config and lays out the full 4 KB
+as 25 × 80 cells; useful for spotting what the BIOS is using
+TVRAM for outside the visible area.
 
 Set `PC88_TRACE_IO=1` to log every IN/OUT with the CPU PC at the
 time of the access. Hooks in via `IOBus.tracer` (null in normal use,

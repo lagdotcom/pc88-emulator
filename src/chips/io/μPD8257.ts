@@ -24,6 +24,19 @@ export class μPD8257 {
   private mode = 0;
   status: u8 = 0;
 
+  // Composite views per channel. The PC-88 uses channel 2 to feed
+  // TVRAM bytes to the μPD3301 every frame; the source address +
+  // length pair tells the display which TVRAM region is "what would
+  // appear on screen". The low 14 bits of the count are the byte
+  // count - 1 per the 8257 datasheet; we mask + add 1.
+  channelAddress(ch: number): number {
+    return ((this.addressHigh[ch]! << 8) | this.addressLow[ch]!) & 0xffff;
+  }
+  channelByteCount(ch: number): number {
+    const raw = ((this.countHigh[ch]! << 8) | this.countLow[ch]!) & 0x3fff;
+    return raw + 1;
+  }
+
   register(bus: IOBus): void {
     for (let ch = 0; ch < 4; ch++) {
       const addrPort = 0x60 + ch * 2;

@@ -35,7 +35,9 @@ describe("PC88Machine boot path", () => {
     machine.reset();
     runMachine(machine, { maxOps: 200 });
 
-    const dump = machine.display.toAsciiDump();
+    // toAsciiDump renders only what the CRTC+DMAC are configured to
+    // display; this test never programs them, so use the raw dump.
+    const dump = machine.display.rawTvramDump();
     expect(dump.split("\n")[0]).toBe("HI");
   });
 

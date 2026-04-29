@@ -92,7 +92,7 @@ export class PC88Machine {
     this.misc.register(this.ioBus);
 
     this.cpu = new Z80(this.memBus, this.ioBus);
-    this.display = new PC88TextDisplay(this.memoryMap);
+    this.display = new PC88TextDisplay(this.memoryMap, this.crtc, this.dmac);
   }
 
   // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.

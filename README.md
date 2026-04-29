@@ -224,6 +224,13 @@ Roughly ordered by what's blocking what.
   contiguous" theory was wrong — reading the attribute as a char
   produced the "char NUL char NUL" pattern in the dump. Display
   now reads chars at `row*160 + col*2` and attrs at `+col*2 + 1`.
+- [x] **Visible region driven by CRTC + DMAC**. The on-screen image
+  is whatever the μPD3301 (rows × cols, programmed via SET MODE
+  cmd 0x80–0x9F) tells it to lay out from the address the μPD8257
+  channel 2 streams in. `toAsciiDump()` now respects both, so it
+  shows only the visible region — not BASIC's TVRAM scratch
+  (token tables, line buffers, attribute pair tables). The full
+  4 KB is still dumped via `rawTvramDump()` for diagnostics.
 - [x] **Stub IRQ mask register (0xE6)**. VBL pulses now respect the
   per-bit mask — when the BIOS clears bit 0 during init, the runner
   flips the status bit but doesn't assert /INT.
