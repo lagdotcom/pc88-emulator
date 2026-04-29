@@ -2,12 +2,6 @@ import type { μPD3301 } from "../chips/io/μPD3301.js";
 import type { μPD8257 } from "../chips/io/μPD8257.js";
 import type { PC88MemoryMap } from "./pc88-memory.js";
 
-// Maximum text-mode geometry the mkI CRTC can be programmed to.
-// These are the upper-bound buffer dimensions; the actual visible
-// rows/cols come from the live CRTC SET MODE state at frame time.
-export const TEXT_COLS = 80;
-export const TEXT_ROWS = 25;
-
 export interface TextFrame {
   readonly chars: Uint8Array; // length cols * rows
   readonly attrs: Uint8Array; // same shape; attribute bytes from TVRAM
@@ -33,8 +27,10 @@ export interface PC88Display {
   // breaks. Used by the CLI runner and the synthetic-ROM tests.
   toAsciiDump(): string;
   // Raw whole-TVRAM dump for debugging — ignores CRTC + DMAC config
-  // and lays out 25 × 80 cells across the entire 4 KB region. Useful
-  // for "what's the BIOS scribbling outside the visible area?".
+  // and emits a classic hex+ASCII dump (16 bytes per line, 256
+  // lines for the full 4 KB region) addressed in absolute CPU
+  // memory (so 0xF000 is row 0). Useful for spotting what the BIOS
+  // is using TVRAM for outside the visible area.
   rawTvramDump(): string;
 }
 
@@ -63,11 +59,11 @@ const ATTR_OFFSET = 1;
 // many of those pairs are actually "active" — the BIOS reserves
 // the whole area regardless).
 const ATTR_AREA_BYTES = 40;
-// rawTvramDump default geometry (independent of live CRTC config).
-// 25 rows × 120-byte stride, 40 visible cells per row.
-const RAW_ROWS = 25;
-const RAW_VISIBLE_COLS = 40;
-const RAW_ROW_STRIDE = 120;
+// Hex-dump line width for rawTvramDump.
+const HEX_DUMP_WIDTH = 16;
+// CPU-side base address of TVRAM, shown in the first column of the
+// hex dump so addresses match what a Z80 disassembler would print.
+const TVRAM_BASE = 0xf000;
 
 export class PC88TextDisplay implements PC88Display {
   constructor(
@@ -136,17 +132,30 @@ export class PC88TextDisplay implements PC88Display {
   }
 
   rawTvramDump(): string {
-    const tvram = this.memory.tvram;
-    const chars = new Uint8Array(RAW_VISIBLE_COLS * RAW_ROWS);
-    for (let row = 0; row < RAW_ROWS; row++) {
-      const rowBase = row * RAW_ROW_STRIDE;
-      for (let col = 0; col < RAW_VISIBLE_COLS; col++) {
-        chars[row * RAW_VISIBLE_COLS + col] =
-          tvram[rowBase + col * CELL_BYTES] ?? 0;
-      }
-    }
-    return formatGrid(chars, RAW_VISIBLE_COLS, RAW_ROWS);
+    return hexDump(this.memory.tvram, TVRAM_BASE);
   }
+}
+
+// Classic hex+ASCII dump. Each line is:
+//   AAAA  bb bb bb bb bb bb bb bb  bb bb bb bb bb bb bb bb  cccccccccccccccc
+// where AAAA is the absolute address (CPU-side, with `base` added),
+// 16 bytes are shown in two 8-byte groups, and the ASCII column
+// renders printable bytes as-is and non-printables as ".".
+function hexDump(bytes: Uint8Array, base: number): string {
+  const lines: string[] = [];
+  for (let off = 0; off < bytes.length; off += HEX_DUMP_WIDTH) {
+    const addr = (base + off).toString(16).padStart(4, "0");
+    let hex = "";
+    let ascii = "";
+    for (let i = 0; i < HEX_DUMP_WIDTH; i++) {
+      const b = bytes[off + i] ?? 0;
+      hex += b.toString(16).padStart(2, "0");
+      hex += i === 7 ? "  " : i === HEX_DUMP_WIDTH - 1 ? "" : " ";
+      ascii += b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".";
+    }
+    lines.push(`${addr}  ${hex}  ${ascii}`);
+  }
+  return lines.join("\n");
 }
 
 function formatGrid(chars: Uint8Array, cols: number, rows: number): string {

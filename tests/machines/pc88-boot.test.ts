@@ -36,10 +36,13 @@ describe("PC88Machine boot path", () => {
     machine.reset();
     runMachine(machine, { maxOps: 200 });
 
-    // toAsciiDump renders only what the CRTC+DMAC are configured to
-    // display; this test never programs them, so use the raw dump.
+    // rawTvramDump is now a hex+ASCII dump addressed at 0xF000; the
+    // first line shows the bytes we wrote, with attribute bytes
+    // (which we left as 0x00) rendering as "." in the ASCII column.
     const dump = machine.display.rawTvramDump();
-    expect(dump.split("\n")[0]).toBe("HI");
+    const firstLine = dump.split("\n")[0];
+    expect(firstLine).toContain("48 00 49 00");
+    expect(firstLine).toContain("H.I.");
   });
 
   it("halts cleanly when the program HALTs with IFF1=0", () => {
