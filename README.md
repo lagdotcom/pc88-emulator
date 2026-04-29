@@ -100,8 +100,10 @@ src/
 tests/
   z80/              SingleStepTests harness
   programs/         hand-assembled programs + zexdoc runner +
-                    IM 1 IRQ-acceptance test
-  machines/         synthetic-ROM boot test, memory-map unit tests
+                    IM 1 / IM 2 IRQ-acceptance tests
+  chips/io/         per-chip I/O port unit tests (CRTC, DMAC, sysctrl)
+  machines/         memory-map, synthetic-ROM boot, visible-region
+                    rendering, runner / IRQ-mask gating
 ```
 
 Disk formats are intended to live separately from the FDC behind a
