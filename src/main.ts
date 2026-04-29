@@ -62,7 +62,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     `IRQ mask (E6)  : 0x${hex(irq.mask, 2)} (programmed=${irq.programmed})`,
   );
   lines.push(
-    `bank state     : basic=${memoryMap.basicMode} romEnabled=${memoryMap.basicRomEnabled} tvram=${memoryMap.tvramEnabled} vram=${memoryMap.vramEnabled}`,
+    `bank state     : basic=${memoryMap.basicMode} romEnabled=${memoryMap.basicRomEnabled} vram=${memoryMap.vramEnabled} (tvram is permanent at 0xF000)`,
   );
   lines.push(`sys status     : 0x${hex(sysctrl.systemStatus, 2)}`);
   lines.push(`crtc status    : 0x${hex(crtc.status, 2)}`);
@@ -90,6 +90,58 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     lines.push(
       `TVRAM          : ${nonZero} non-zero bytes, range [0xF${hex(firstNz, 3)}..0xF${hex(lastNz, 3)}]`,
     );
+
+    // Stride probe: scan for "BASIC" (the most distinctive ASCII run
+    // in the N-BASIC banner) at varied byte spacings. The first
+    // stride that finds it is the real per-row stride. Common PC-88
+    // candidates: 80 (mkI mono, no attrs), 120 (mkI with 40-byte
+    // attribute area), 128 (mkI with attrs + padding), 160 (mkII SR
+    // interleaved char/attr).
+    const tv = memoryMap.tvram;
+    const probe = "BASIC";
+    const probeBytes = Array.from(probe).map((c) => c.charCodeAt(0));
+    const findContiguous = () => {
+      for (let i = 0; i + probeBytes.length <= tv.length; i++) {
+        let ok = true;
+        for (let j = 0; j < probeBytes.length; j++) {
+          if (tv[i + j] !== probeBytes[j]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return i;
+      }
+      return -1;
+    };
+    const findInterleaved = () => {
+      // Same probe but with one byte gap between chars (so
+      // 'B' '?' 'A' '?' 'S' '?' 'I' '?' 'C').
+      for (let i = 0; i + probeBytes.length * 2 - 1 <= tv.length; i++) {
+        let ok = true;
+        for (let j = 0; j < probeBytes.length; j++) {
+          if (tv[i + j * 2] !== probeBytes[j]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return i;
+      }
+      return -1;
+    };
+    const cont = findContiguous();
+    const inter = findInterleaved();
+    if (cont >= 0) {
+      lines.push(
+        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → row stride = 80`,
+      );
+    } else if (inter >= 0) {
+      lines.push(
+        `"BASIC"        : 0xF${hex(inter, 3)} (interleaved with 1-byte gap) → 160-byte stride or 40-col mode`,
+      );
+    } else {
+      lines.push(`"BASIC"        : not found in TVRAM at any common stride`);
+    }
+
     lines.push(`TVRAM hex head :`);
     lines.push(tvramHexHead(memoryMap.tvram, 4));
   }

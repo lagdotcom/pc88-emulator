@@ -215,16 +215,15 @@ Roughly ordered by what's blocking what.
 - [ ] **End-to-end real-ROM smoke test**. Gate behind `PC88_ROM_DIR`
   pointing at a real mkI ROM dump and assert the BASIC banner appears
   in `display.toAsciiDump()`. Don't check ROMs into the repo.
-- [ ] **mkI BASIC banner reaches TVRAM**. `yarn pc88` against a real
-  mkI N-BASIC dump currently runs the ROM but the banner doesn't
-  land — TVRAM stays empty. The runner now prints rich diagnostics
-  on stop (final PC/SP, IRQ mask state, bank state, TVRAM
-  byte-touched count, port last-values) and `PC88_TRACE_IO=1` logs
-  every IN/OUT with the CPU PC; next step is to use these to find
-  where the BIOS bails. Likely culprits: incorrect DIP-switch
-  defaults at 0x30/0x31, CRTC parameter-count mismatch on the SET
-  MODE command, or a missing register handshake the DMAC stub
-  doesn't satisfy.
+- [x] **mkI BASIC banner reaches TVRAM**. The N-BASIC banner ("NEC
+  PC-8001 BASIC, Copyright 1979", "Ok") is now visible in the TVRAM
+  dump after IM 2 acceptance + always-on TVRAM landed. The text is
+  rendered with what looks like a 1-byte-gap interleave (each
+  character followed by a 0x20 / 0x00 byte) — possibly an attribute
+  byte being read back as a char. The diagnostics now scan TVRAM
+  for "BASIC" at contiguous and 1-byte-stride layouts to reveal
+  which case the BIOS is using; next step is to update
+  `PC88TextDisplay` to honour the real layout.
 - [x] **Stub IRQ mask register (0xE6)**. VBL pulses now respect the
   per-bit mask — when the BIOS clears bit 0 during init, the runner
   flips the status bit but doesn't assert /INT.

@@ -108,8 +108,6 @@ export class SystemController {
     log.info(
       `0x31 write: lines=${lines} mmode=${mmode} rmode=${rmode} graph=${graph} hcolor=${hcolor} highres=${highres}`,
     );
-
-    this.memoryMap.setTvramEnabled(mmode === "rom" && rmode === "n80");
   }
 
   private handle32(v: u8): void {

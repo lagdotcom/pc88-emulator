@@ -60,7 +60,6 @@ export class PC88MemoryMap implements MemoryProvider {
   private _e0RomEnabled = false;
   private _vramEnabled = false;
   private _gvramPlane: 0 | 1 | 2 = 0;
-  private _tvramEnabled = false;
 
   // 4 KB scratch that catches writes that target ROM. Anything written
   // here is silently lost; reads from it return zero.
@@ -105,12 +104,6 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
-  setTvramEnabled(enabled: boolean): void {
-    if (this._tvramEnabled === enabled) return;
-    this._tvramEnabled = enabled;
-    this.refreshPages();
-  }
-
   setGvramPlane(plane: 0 | 1 | 2): void {
     if (this._gvramPlane === plane) return;
     this._gvramPlane = plane;
@@ -125,9 +118,6 @@ export class PC88MemoryMap implements MemoryProvider {
   }
   get vramEnabled(): boolean {
     return this._vramEnabled;
-  }
-  get tvramEnabled(): boolean {
-    return this._tvramEnabled;
   }
 
   // Recompute every page pointer from current bank state. Cheap enough
@@ -154,7 +144,6 @@ export class PC88MemoryMap implements MemoryProvider {
     for (let p = 8; p < 12; p++) this.mapRamPage(p, ram, p * PAGE_SIZE);
 
     // 0xC000-0xEFFF: GVRAM plane when VRAM window enabled, else RAM.
-    // 0xF000-0xFFFF: TVRAM when window enabled, else RAM.
     if (this._vramEnabled) {
       const gv = this.gvram[this._gvramPlane];
       for (let p = 12; p < 15; p++) {
@@ -164,13 +153,14 @@ export class PC88MemoryMap implements MemoryProvider {
       for (let p = 12; p < 15; p++) this.mapRamPage(p, ram, p * PAGE_SIZE);
     }
 
-    // TVRAM is independently togglable on real hardware (driven by
-    // CRTC + 8255 PPI). Mirror that for the 0xF000 page.
-    if (this._tvramEnabled) {
-      this.mapRamPage(15, this.tvram, 0);
-    } else {
-      this.mapRamPage(15, ram, 15 * PAGE_SIZE);
-    }
+    // 0xF000-0xFFFF: TVRAM is permanently mapped here on PC-8801 mkI.
+    // The CRTC decides whether the contents are displayed, but CPU
+    // memory access always sees TVRAM at 0xF000 — there is no banking
+    // toggle for this range. Earlier code modelled a `_tvramEnabled`
+    // flag and mapped main RAM here as a fallback; that was wrong and
+    // caused BIOS writes to vanish into shadow RAM until a guess at
+    // a port write happened to flip the flag. Always map TVRAM.
+    this.mapRamPage(15, this.tvram, 0);
   }
 
   private mapRomPages(

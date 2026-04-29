@@ -47,15 +47,16 @@ describe("PC88MemoryMap", () => {
     expect(m.read(0x5fff)).toBe(0x80); // outside the E0 window
   });
 
-  it("masks RAM under TVRAM when the text window is enabled", () => {
+  it("maps TVRAM permanently at 0xF000 (no bank toggle)", () => {
+    // PC-8801 mkI has no bank-switch for the 0xF000-0xFFFF page —
+    // CPU reads/writes always hit TVRAM. The CRTC controls whether
+    // the contents are displayed, not whether they're addressable.
     const m = new PC88MemoryMap(fixture());
-    m.mainRam[0xf000] = 0xaa;
     m.tvram[0x0000] = 0x48; // 'H'
-    expect(m.read(0xf000)).toBe(0xaa);
-    m.setTvramEnabled(true);
     expect(m.read(0xf000)).toBe(0x48);
-    m.setTvramEnabled(false);
-    expect(m.read(0xf000)).toBe(0xaa);
+    m.write(0xf001, 0x49); // write should land in TVRAM
+    expect(m.tvram[0x0001]).toBe(0x49);
+    expect(m.read(0xf001)).toBe(0x49);
   });
 
   it("writes to RAM under 0x8000-0xBFFF go to mainRam regardless of bank state", () => {

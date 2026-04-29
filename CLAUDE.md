@@ -289,8 +289,14 @@ at 4 KB page granularity, which keeps `read(addr)` to one array load
 0x6000-0x7FFF  E0 extension ROM (or BASIC cont.)  [bank-switchable]
 0x8000-0xBFFF  main RAM (always)
 0xC000-0xEFFF  GVRAM plane 0/1/2 or main RAM      [VRAM enable + plane]
-0xF000-0xFFFF  TVRAM (4 KB) or main RAM           [TVRAM enable]
+0xF000-0xFFFF  TVRAM (4 KB)                       [permanently mapped]
 ```
+
+TVRAM is **not** bank-switchable on mkI: CPU reads/writes always hit
+the 4 KB TVRAM array. The CRTC controls whether the contents are
+displayed, but it doesn't toggle CPU addressability. Earlier code
+modelled a `_tvramEnabled` flag that fell back to main RAM; this was
+wrong and caused early BIOS writes to be lost.
 
 ROM/VRAM state lives on the map and is mutated by the system controller
 on writes to ports 0x30/0x31/0x32/0x5C. Writes to ROM-mapped pages go

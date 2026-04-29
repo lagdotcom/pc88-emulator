@@ -109,7 +109,6 @@ export class PC88Machine {
     this.memoryMap.setBasicMode("n80");
     this.memoryMap.setE0RomEnabled(false);
     this.memoryMap.setVramEnabled(false);
-    this.memoryMap.setTvramEnabled(false);
   }
 }
 
