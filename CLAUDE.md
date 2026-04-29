@@ -344,15 +344,30 @@ block — first port of call when "BIOS got stuck".
 On real PC-88 hardware the visible image is decided by three pieces
 of state working together:
 
-- **μPD3301 SET MODE** (cmd `0x80`-`0x9F`) programs the visible
-  geometry: characters per row, rows per screen, attribute pairs
-  per row, character cell height. Stored as `crtc.charsPerRow`,
-  `crtc.rowsPerScreen`, etc.
+- **μPD3301 RESET / SET MODE** (cmd `0x00`-`0x1F`) programs the
+  visible geometry via 5 follow-up parameter bytes: characters per
+  row, rows per screen, attribute pairs per row, character cell
+  height. The chip dispatches by the top 3 bits of the command byte
+  (RESET = 000, START DISPLAY = 001, INTERRUPT MASK = 010, LOAD
+  CURSOR = 100, etc.); the low 5 bits are flags.
+  N-BASIC sends `[0xCE 0x93 0x69 0xBE 0x13]` → 80 cols × 20 rows.
+  Stored as `crtc.charsPerRow`, `crtc.rowsPerScreen`, etc.
 - **μPD8257 channel 2** carries the TVRAM start address + byte
   count to the CRTC each frame. `dmac.channelAddress(2)` /
-  `dmac.channelByteCount(2)` expose this.
-- **μPD3301 START / STOP DISPLAY** (`0x47` / `0x44`) gates whether
-  the raster is unblanked. `crtc.displayOn` tracks it.
+  `dmac.channelByteCount(2)` expose this. N-BASIC programs
+  `src=0xF300, count=0x0960` → 20 rows × 120 bytes/row.
+- **μPD3301 START DISPLAY** (`0x20`-`0x3F`) gates whether the
+  raster is unblanked. `crtc.displayOn` tracks it. There is no
+  separate STOP DISPLAY on the PC-88; RESET clears it.
+
+The TVRAM per-row layout is **80 chars contiguous (offsets 0..79)
+followed by 40 bytes of attribute-pair area (offsets 80..119)**;
+each attribute pair is 2 bytes (column index, attribute byte).
+Total stride = 120 bytes, confirmed by the DMAC count BASIC
+programs (2400 / 20 = 120). An earlier "char+attr interleaved at
+2-byte cells" theory turned out to be wrong — the misleading
+"char NUL char NUL" pattern in the dump was just attribute bytes
+at offsets 80+ being read past the char run.
 
 `PC88TextDisplay.toAsciiDump()` honours all three: it reads only
 the bytes the DMAC is configured to fetch, and only the rows × cols

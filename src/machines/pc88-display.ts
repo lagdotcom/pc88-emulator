@@ -38,21 +38,32 @@ export interface PC88Display {
   rawTvramDump(): string;
 }
 
-// PC-8801 mkI TVRAM cells are 2 bytes each — char at the even offset,
-// attribute at the odd. The CRTC's μPD3301 DMAC channel 2 streams
-// these byte pairs to the character generator each frame; the start
-// address + byte count is exactly what the screen displays. Anything
-// in the rest of TVRAM is BASIC scratch (token tables, line buffers,
-// etc.) that never reaches the raster.
-const CHAR_OFFSET = 0;
-const ATTR_OFFSET = 1;
-// Cell size in bytes (char + attr).
-const CELL_BYTES = 2;
-// Layout used by rawTvramDump (the diagnostic view): assume a 25-row
-// × 80-col mkI screen at standard 160-byte stride. Independent of
-// the live CRTC config, so it doesn't go blank when the CRTC has been
-// reset.
-const RAW_ROW_STRIDE = 160;
+// PC-8801 mkI TVRAM layout per row, confirmed empirically against the
+// DMAC channel 2 byte count BASIC programs (0x0960 = 2400 = 20 rows ×
+// 120 bytes):
+//   bytes 0..79     : N character codes, contiguous
+//   bytes 80..119   : 20 attribute pair slots × 2 bytes (column, attr)
+// The actual stride per row equals chars-per-row + 2 × attribute-area
+// pairs (40 bytes when the CRTC's attribute area is reserved at full
+// size, regardless of the "active pairs" sub-count). We compute it
+// from the CRTC SET MODE state at frame time.
+//
+// The DMAC channel 2 source register tells us where the visible
+// region starts inside TVRAM (0xF300 on N-BASIC boot, not 0xF000).
+// Earlier versions of this file modelled char + attribute as
+// interleaved 2-byte cells (160-byte stride); that was wrong, the
+// confusion came from misreading attribute bytes as chars in the raw
+// dump.
+//
+// Default layout used by rawTvramDump (the diagnostic view, when the
+// CRTC hasn't been programmed): 25 rows × 120-byte stride, 80 chars
+// per row contiguous. Independent of live CRTC config so it doesn't
+// disappear when the CRTC is reset.
+const RAW_ROW_STRIDE = 120;
+const RAW_CHARS_PER_ROW = 80;
+// Number of attribute-pair slots reserved per row in the default
+// layout (each slot is 2 bytes: column + attribute).
+const DEFAULT_ATTR_AREA_BYTES = 40;
 
 export class PC88TextDisplay implements PC88Display {
   constructor(
@@ -70,8 +81,7 @@ export class PC88TextDisplay implements PC88Display {
   getTextFrame(): TextFrame {
     const cols = this.crtc.charsPerRow || 0;
     const rows = this.crtc.rowsPerScreen || 0;
-    const stride = cols * CELL_BYTES + this.crtc.attrPairsPerRow * 2;
-    if (cols === 0 || rows === 0 || stride === 0) {
+    if (cols === 0 || rows === 0) {
       return {
         chars: new Uint8Array(0),
         attrs: new Uint8Array(0),
@@ -80,6 +90,12 @@ export class PC88TextDisplay implements PC88Display {
         rows: 0,
       };
     }
+    // Per-row stride: N chars contiguous, followed by the attribute
+    // pair area. The CRTC always reserves space for 20 pair slots
+    // (40 bytes) on PC-88; attrPairsPerRow is just how many of them
+    // are "active" pairs, not the area size. This matches the DMAC
+    // count BASIC actually programs (2400 / 20 rows = 120).
+    const stride = cols + DEFAULT_ATTR_AREA_BYTES;
     // DMAC ch 2 source is the absolute CPU-side address of the first
     // byte. TVRAM lives at 0xF000; subtracting gives the offset into
     // the 4 KB array. If DMAC isn't programmed (returns 0), assume
@@ -93,9 +109,14 @@ export class PC88TextDisplay implements PC88Display {
     for (let row = 0; row < rows; row++) {
       const rowBase = (tvramOrigin + row * stride) & (tvram.length - 1);
       for (let col = 0; col < cols; col++) {
-        const cellBase = (rowBase + col * CELL_BYTES) & (tvram.length - 1);
-        chars[row * cols + col] = tvram[cellBase + CHAR_OFFSET] ?? 0;
-        attrs[row * cols + col] = tvram[cellBase + ATTR_OFFSET] ?? 0;
+        chars[row * cols + col] = tvram[(rowBase + col) & (tvram.length - 1)] ?? 0;
+      }
+      // Attribute pair area starts after the char run. We don't
+      // resolve pairs to per-cell attributes yet — that's a renderer
+      // job — but capture the raw bytes so the renderer has them.
+      for (let col = 0; col < cols && col < DEFAULT_ATTR_AREA_BYTES; col++) {
+        attrs[row * cols + col] =
+          tvram[(rowBase + cols + col) & (tvram.length - 1)] ?? 0;
       }
     }
     return { chars, attrs, cursor: null, cols, rows };
@@ -115,15 +136,14 @@ export class PC88TextDisplay implements PC88Display {
 
   rawTvramDump(): string {
     const tvram = this.memory.tvram;
-    const chars = new Uint8Array(TEXT_COLS * TEXT_ROWS);
+    const chars = new Uint8Array(RAW_CHARS_PER_ROW * TEXT_ROWS);
     for (let row = 0; row < TEXT_ROWS; row++) {
       const rowBase = row * RAW_ROW_STRIDE;
-      for (let col = 0; col < TEXT_COLS; col++) {
-        chars[row * TEXT_COLS + col] =
-          tvram[rowBase + col * CELL_BYTES + CHAR_OFFSET] ?? 0;
+      for (let col = 0; col < RAW_CHARS_PER_ROW; col++) {
+        chars[row * RAW_CHARS_PER_ROW + col] = tvram[rowBase + col] ?? 0;
       }
     }
-    return formatGrid(chars, TEXT_COLS, TEXT_ROWS);
+    return formatGrid(chars, RAW_CHARS_PER_ROW, TEXT_ROWS);
   }
 }
 

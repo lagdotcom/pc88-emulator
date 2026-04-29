@@ -5,49 +5,50 @@ import type { u8 } from "../../flavours.js";
 
 const log = logLib.get("crtc");
 
-// μPD3301 stub. The CRTC takes a command byte at 0x50 followed by a
-// command-specific run of parameter bytes. For first-light we accept
-// the command sequence — enough to keep the BIOS from looping on the
-// status read — but don't drive a renderer. The status surface at
-// 0x51 returns "ready" with VBL bit toggled by the runner.
+// μPD3301 stub. Commands are dispatched by the top 3 bits of the
+// command byte; the low 5 bits are flags / sub-selectors. This is
+// the actual chip behaviour per the NEC μPD3301 datasheet — earlier
+// code had an exact-byte table that mismatched what BASIC sends.
 //
-// Real chip command set (only the ones BASIC actually issues during
-// init are tracked here; the rest fall through to the default param
-// count of 5 from the data sheet):
-//   0x40  RESET            0 params
-//   0x47  START DISPLAY    0 params  (mkI BASIC issues this)
-//   0x44  STOP DISPLAY     0 params
-//   0x60  RESET COUNTERS   0 params
-//   0x21  LOAD CURSOR      2 params
-//   0x53  LIGHT-PEN ENABLE 0 params
-//   0x80–0x9F  SET MODE    5 params (the big one BASIC sends at boot)
-const PARAM_COUNT: Record<number, number> = {
-  0x40: 0,
-  0x44: 0,
-  0x47: 0,
-  0x60: 0,
-  0x21: 2,
-  0x53: 0,
-};
+//   0x00-0x1F  RESET / SET MODE        5 params (the big init block)
+//   0x20-0x3F  START DISPLAY           0 params
+//   0x40-0x5F  SET INTERRUPT MASK      0 params
+//   0x60-0x7F  READ LIGHT PEN          0 params
+//   0x80-0x9F  LOAD CURSOR POSITION    2 params
+//   0xA0-0xBF  RESET INTERRUPT         0 params
+//   0xC0-0xDF  RESET COUNTERS          0 params
+//   0xE0-0xFF  READ STATUS             0 params
+//
+// The chip has no separate STOP DISPLAY command on the PC-88; the
+// raster is blanked by RESET or by clearing the START DISPLAY flag.
+function paramCount(cmd: number): number {
+  switch (cmd & 0xe0) {
+    case 0x00:
+      return 5;
+    case 0x80:
+      return 2;
+    default:
+      return 0;
+  }
+}
 
 export class μPD3301 {
-  // Status bits surfaced at 0x51. Bit 4 is VBL, set by the runner's
-  // VBL pump. Other bits report "ready" (real chip uses bit 7 for
-  // light-pen, etc.; we don't model those).
+  // Status bits surfaced by reads at 0x50 / 0x51. Bit 4 is VBL, set
+  // by the runner's VBL pump. Other bits report "ready" (real chip
+  // uses bit 7 for light-pen, etc.; we don't model those).
   status: u8 = 0x80;
 
-  // Parsed SET MODE parameters (the 5-byte block following an 0x80
-  // command). The display surface uses these to know what region of
-  // TVRAM the CRTC actually visualises. Initialised to "not yet
-  // programmed" so PC88TextDisplay can fall back to a whole-TVRAM
-  // dump until BASIC issues a SET MODE.
-  charsPerRow = 0; // params[0] + 2 in real hardware
-  rowsPerScreen = 0; // params[1] & 0x3F + 1
-  attrPairsPerRow = 0; // params[2] & 0x1F (0 = no attribute area)
-  charHeightLines = 0; // params[3] & 0x1F + 1
-  // True after CRTC START DISPLAY (cmd 0x47); cleared by STOP
-  // DISPLAY (0x44) or RESET (0x40). When false, the screen would
-  // render as a blank raster on real hardware.
+  // Parsed SET MODE state. The display surface uses these to know
+  // what region of TVRAM the CRTC actually visualises. Initialised
+  // to "not yet programmed" so PC88TextDisplay can fall back to the
+  // raw dump until BASIC issues a SET MODE.
+  charsPerRow = 0;
+  rowsPerScreen = 0;
+  attrPairsPerRow = 0;
+  charHeightLines = 0;
+  // True after START DISPLAY (cmd 0x20-0x3F); cleared by RESET. A
+  // real CRTC blanks the raster when this is false; toAsciiDump
+  // doesn't enforce that since we'd want to see the banner regardless.
   displayOn = false;
 
   // Parameter parser state. After a command byte is written we know
@@ -65,10 +66,7 @@ export class μPD3301 {
   register(bus: IOBus): void {
     // PC-88 maps the chip's C/D (command/data) pin to address bit 0:
     //   port 0x50 (C/D=0) → DATA register (parameter write, status read)
-    //   port 0x51 (C/D=1) → COMMAND register (cmd write)
-    // Previous wiring had these swapped, which made the BIOS's
-    // "command at 0x51 then 5 params at 0x50" sequence look like
-    // a stray data byte followed by 5 unrelated commands.
+    //   port 0x51 (C/D=1) → COMMAND register (cmd write, status read)
     bus.register(0x50, {
       name: "crtc/data",
       read: () => this.status,
@@ -82,25 +80,30 @@ export class μPD3301 {
   }
 
   private writeCommand(v: u8): void {
-    // Commands with no parameters dispatch immediately; 0x47 START
-    // DISPLAY and 0x44 STOP DISPLAY are what gate `displayOn` (a real
-    // CRTC blanks the raster when stopped).
-    if (v === 0x40) {
-      // Soft reset — clears parsed mode, drops display.
+    const op = v & 0xe0;
+    // RESET clears the parsed mode and drops display. Real silicon
+    // only fully resets after the 5 follow-up param bytes; we mirror
+    // the user-visible bits early so a stale "displayOn" doesn't
+    // bleed across a soft reset.
+    if (op === 0x00) {
       this.charsPerRow = 0;
       this.rowsPerScreen = 0;
       this.attrPairsPerRow = 0;
       this.charHeightLines = 0;
       this.displayOn = false;
-    } else if (v === 0x47) {
+    } else if (op === 0x20) {
+      // START DISPLAY: bits [4:0] are display-format flags. We only
+      // care that the raster is unblanked.
       this.displayOn = true;
-    } else if (v === 0x44) {
-      this.displayOn = false;
     }
     this.command = v;
-    this.paramsLeft = PARAM_COUNT[v] ?? 5;
+    this.paramsLeft = paramCount(v);
     this.params = [];
-    log.info(`cmd 0x${v.toString(16)}, expects ${this.paramsLeft} params`);
+    log.info(
+      `cmd 0x${v.toString(16)} (op 0x${op.toString(16)}), expects ${this.paramsLeft} params`,
+    );
+    // Zero-param commands complete immediately.
+    if (this.paramsLeft === 0) this.command = null;
   }
 
   private writeParam(v: u8): void {
@@ -117,14 +120,15 @@ export class μPD3301 {
           .map((b) => "0x" + b.toString(16))
           .join(",")}]`,
       );
-      // SET MODE (0x80-0x9F): five-byte parameter block per the
-      // μPD3301 datasheet. Encodings used by N-BASIC at boot:
-      //   p0: high-bit + chars-per-row-1
-      //   p1: bits 0-5 = rows-1; bit 7 = transparent attr mode
-      //   p2: bits 0-4 = attribute pairs per row (0 = none)
-      //   p3: bits 0-4 = char height - 1
+      // RESET / SET MODE (0x00-0x1F): 5-byte parameter block per the
+      // μPD3301 datasheet. PC-8801 N-BASIC sends [0xCE 0x93 0x69 0xBE
+      // 0x13] which decodes to 80 chars × 20 rows.
+      //   p0: bits 0-6 = chars-per-row - 2
+      //   p1: bits 0-5 = rows - 1
+      //   p2: bits 0-4 = attribute pairs per row (active count)
+      //   p3: bits 0-4 = character height - 1
       //   p4: cursor / blink config
-      if ((cmd & 0xe0) === 0x80) {
+      if ((cmd & 0xe0) === 0x00) {
         const [p0 = 0, p1 = 0, p2 = 0, p3 = 0] = this.params;
         this.charsPerRow = (p0 & 0x7f) + 2;
         this.rowsPerScreen = (p1 & 0x3f) + 1;
@@ -132,7 +136,7 @@ export class μPD3301 {
         this.charHeightLines = (p3 & 0x1f) + 1;
         log.info(
           `SET MODE: ${this.charsPerRow}x${this.rowsPerScreen}, ` +
-            `attr-pairs/row=${this.attrPairsPerRow}, ` +
+            `active-attr-pairs/row=${this.attrPairsPerRow}, ` +
             `char-height=${this.charHeightLines}`,
         );
       }
