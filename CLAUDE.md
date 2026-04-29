@@ -204,10 +204,16 @@ output as zexdoc prints it, and every 50M ops logs a status line
 with elapsed time, Mops/s, percentage complete, and ETA. The
 percentage and ETA come from a hardcoded total of ~5.8 G
 instructions per run (measured on this emulator; refresh in both
-`zex-runner.ts` and `zexdoc.test.ts` if it drifts). Measured rates:
-~3 Mops/s on Linux, ~8 Mops/s on Windows V8; full run is roughly
-12 minutes wall-clock on Windows. The vitest `test:zex` path
-captures the same output but only surfaces it on completion.
+`zex-runner.ts` and `zexdoc.test.ts` if it drifts).
+
+Measured rates (Windows V8, `useDispatchBase` default-off):
+- table path: ~8 Mops/s, full zexdoc ~12 min, four CRC families
+  fail (the documented INIR/OTIR repeat bugs plus three more)
+- ops2 path (`DISPATCH=base`): ~36.8 Mops/s, full zexdoc ~2.5 min,
+  all CRC sections pass
+
+The vitest `test:zex` path captures the same output but only
+surfaces it on completion.
 
 The 3 Mops/s figure is the next obvious perf lever: the M-cycle list
 dispatcher allocates closure objects per cycle and walks an array per

@@ -80,72 +80,43 @@ Roughly ordered by what's blocking what.
 
 ### CPU
 
-- [ ] **Block-instruction repeat-iteration flags**. The non-repeating
-  CPI/CPD/INI/IND/OUTI/OUTD all pass at any sample size. The
-  repeating variants — CPIR, CPDR, INIR, INDR, OTIR, OTDR — have
-  edge cases the default `Z80_SAMPLE=25` misses but
-  `Z80_SAMPLE=200 yarn test:z80` (and zexdoc's `cpd<r>` test) catch:
-  - LDIR / LDDR pass in zexdoc, so the LD repeat path is fine.
-  - CPIR / CPDR fail at higher sample sizes despite the X/Y
-    rule (`(PC+1).high`) and WZ rule (`PC + 1` after `PC -= 2`)
-    looking correct. Suspect a flag at the loop boundary
-    (the dual `BC != 0 AND result != 0` exit condition is what
-    distinguishes them from LDIR/LDDR).
-  - INIR / INDR / OTIR / OTDR fail on H and PV during repeat. X/Y
-    and WZ are correct; H/PV follow undocumented hardware quirks
-    that haven't been matched against any simple formula over
-    `(B_post, C_flag, base, value)`. Empirical fitting against
-    test data tops out around 941/995. Cracking these needs a
-    known-correct reference (FUSE / mame / Patrik Rak's z80core).
-- [ ] **zexdoc/zexall failures**. Both fail the same families, so
-  these are documented-flag bugs (zexdoc masks X/Y from its CRC).
-  The `cpd<r>` failure is the same root cause as the CPIR/CPDR
-  SingleStepTests failures above — track it there. Remaining:
-  - `<inc,dec> (hl)` and `<inc,dec> (<ix,iy>+1)` — register form
-    of INC/DEC passes, so the bug is in the memory R-M-W
-    surrounding `inc8`/`dec8`, not the flag math itself. Suspect
-    spurious WZ updates: `INC (HL)` should leave WZ alone,
-    `INC (IX+d)` should leave WZ at IX+d.
-  - `<rrd,rld>` — flag mismatch. WZ rule (`WZ = HL + 1`) is
-    correct; likely a subtle F-flag bug.
+- [ ] **zexdoc/zexall failures (table dispatcher only)**. The
+  table-driven dispatch path fails four CRC families in both zexdoc
+  and zexall: `cpd<r>`, `<inc,dec> (hl)`, `<inc,dec> (<ix,iy>+1)`,
+  and `<rrd,rld>`. The same workload runs cleanly on the ops2
+  giant-switch dispatcher (see perf TODO below), so the bugs are
+  somewhere in the MCycle composition or closure layer rather than
+  the underlying flag math the helpers compute. Reproduce with
+  `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` (or
+  `Z80_SAMPLE=200`); they appear in CPIR/CPDR/INIR/OTIR/INDR/OTDR
+  too. Diagnosing the table path is no longer urgent now that ops2
+  is correct end-to-end.
 
-  Reproduce in the SingleStepTests harness with
-  `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` (or `Z80_SAMPLE=200`
-  if a smaller window is enough) to surface the exact cases.
+- [x] **Block-instruction repeat-iteration flags** — fixed when
+  running through ops2; remaining 77 SingleStepTests failures on
+  the table path are documented above.
 - [ ] **Interrupt acceptance**. IM 0/1/2 dispatch, NMI vector, edge-
   vs level-triggered handling, and the `iff1 && !eiDelay` gate on
   the M1 boundary. The Z80 has all the pieces; nothing acts as the
   request source yet.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [ ] **Extend the inlined dispatch switch in `runOneOp`**. The
-  dispatcher has been progressively unwrapped: each opcode's
-  M-cycle list is pre-composed into a length-specialised
-  `execute(cpu)` function at table-build time with no-branch and
-  abortable variants; the universal M1 fetch is hoisted into
-  `runOneOp`; `MemoryBus` exposes a fast-path `Uint8Array` for
-  single-provider RAM; and a peephole switch at the top of
-  `runOneOp` inlines a small set of unprefixed hot-path opcodes
-  (NOP, JR, DJNZ, INC/DEC rr, ADD HL,DE, HALT) so they don't pay
-  the indirect call into `inst.execute`. `tests/programs/bench.ts`
-  numbers (Linux V8, warm):
-
-  ```
-                     baseline   now      gain
-    NOP×16 loop      28         73       +161%
-    ADD HL,DE loop   12         29       +142%
-    LDIR 256 bytes   7          10       +43%
-  ```
-
-  The peephole only handles ~10 ops; everything else still goes
-  through the table. Extending it to cover the full 1600-op set
-  (256 base + 256 ED + 256 CB + 256 DD + 256 FD + 256 DDCB + 256
-  FDCB) is the natural next step — most can be code-generated from
-  the same factory pattern `buildOpTable` already uses, but
-  emitted as raw `case` bodies rather than `MCycle` arrays. Done
-  fully, this is the 50-100 Mops/s pattern of mature Z80
-  emulators and would collapse a BIOS boot from tens of seconds
-  to a couple.
+- [x] **Performance: per-opcode switch dispatcher** — landed as
+  `ops2.ts`, gated behind `cpu.useDispatchBase` (currently off by
+  default to keep the table path live for A/B comparison;
+  `DISPATCH=base` enables it through the test harness and
+  `tests/programs/bench.ts`). Six dispatchers: `dispatchBase` /
+  `dispatchED` / `dispatchCB` / `dispatchDD` / `dispatchFD` /
+  `dispatchIndexedCB`, one per prefix table.
+  Results: zexdoc passes all CRC sections cleanly on ops2;
+  measured throughput ~36.8 Mops/s on Windows V8, vs ~8 Mops/s on
+  the table path — a ~4.5× speedup that drops a full zexdoc run
+  from ~12 min to ~2.5 min wall-clock.
+- [ ] **Flip `useDispatchBase` to default-on** and retire the
+  MCycle table system in `ops.ts` once the surrounding chips
+  (CRT, FDC, sub-CPU) are wired up enough to validate via a real
+  workload. The two paths are equivalent for SingleStepTests but
+  ops2 is the one that passes zexdoc.
 
 ### Machine layer
 
