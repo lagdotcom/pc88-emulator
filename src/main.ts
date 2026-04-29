@@ -141,11 +141,11 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     const inter = findInterleaved();
     if (inter >= 0) {
       lines.push(
-        `"BASIC"        : 0xF${hex(inter, 3)} (chars at even offsets, attrs at odd) → 160-byte row stride`,
+        `"BASIC"        : 0xF${hex(inter, 3)} (chars at even offsets, attrs at odd) → attribute mode, 2-byte cells`,
       );
     } else if (cont >= 0) {
       lines.push(
-        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → 80-byte row stride`,
+        `"BASIC"        : 0xF${hex(cont, 3)} (contiguous) → no-attr mode, 1-byte cells`,
       );
     } else {
       lines.push(`"BASIC"        : not found in TVRAM at any common stride`);

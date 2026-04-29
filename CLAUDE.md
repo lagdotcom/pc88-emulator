@@ -360,14 +360,19 @@ of state working together:
   raster is unblanked. `crtc.displayOn` tracks it. There is no
   separate STOP DISPLAY on the PC-88; RESET clears it.
 
-The TVRAM per-row layout is **80 chars contiguous (offsets 0..79)
-followed by 40 bytes of attribute-pair area (offsets 80..119)**;
-each attribute pair is 2 bytes (column index, attribute byte).
-Total stride = 120 bytes, confirmed by the DMAC count BASIC
-programs (2400 / 20 = 120). An earlier "char+attr interleaved at
-2-byte cells" theory turned out to be wrong — the misleading
-"char NUL char NUL" pattern in the dump was just attribute bytes
-at offsets 80+ being read past the char run.
+PC-88 always uses **attribute mode**: each visible cell is 2 bytes
+(char at even offset, attribute at odd). The CRTC SET MODE
+parameter `chars-per-row` is the *byte length* of the cell run, so
+visible cells = `charsPerRow / 2`. N-BASIC's 80-byte cell run
+gives 40 visible columns (matching the `cols=40` reading off
+sysctrl port 0x30). The trailing 40 bytes of each row are the
+attribute-pair area: 20 slots × 2 bytes (column, attribute) for
+skip-zone attribute changes within the row, separate from the
+per-cell attribute bytes.
+
+Per-row stride = `charsPerRow + 40` bytes (cell run + pair area),
+confirmed by the DMAC channel-2 count BASIC programs (2400 / 20
+rows = 120 bytes/row).
 
 `PC88TextDisplay.toAsciiDump()` honours all three: it reads only
 the bytes the DMAC is configured to fetch, and only the rows × cols

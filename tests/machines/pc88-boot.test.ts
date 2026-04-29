@@ -21,15 +21,15 @@ function syntheticRoms(program: number[]): LoadedRoms {
 describe("PC88Machine boot path", () => {
   it("writes 'HI' to TVRAM and the display dumps it", () => {
     // TVRAM at 0xF000 is permanently mapped on PC-8801 mkI; no port
-    // handshake is needed. The mkI text layout stores characters
-    // contiguously at the start of each row (stride 120 = 80 chars +
-    // 40 attribute-area bytes), so 'H' goes at +0 and 'I' at +1.
+    // handshake is needed. PC-88 always uses attribute mode where
+    // each visible cell is 2 bytes (char at +0, attr at +1), so 'H'
+    // at TVRAM+0 (col 0 char) and 'I' at TVRAM+2 (col 1 char).
     // prettier-ignore
     const program = [
       0x3e, 0x48,             // LD A, 'H'
       0x32, 0x00, 0xf0,       // LD (0xF000), A   — col 0 char
       0x3e, 0x49,             // LD A, 'I'
-      0x32, 0x01, 0xf0,       // LD (0xF001), A   — col 1 char
+      0x32, 0x02, 0xf0,       // LD (0xF002), A   — col 1 char
       0x76,                   // HALT
     ];
     const machine = new PC88Machine(MKI, syntheticRoms(program));
