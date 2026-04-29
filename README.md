@@ -102,21 +102,35 @@ Roughly ordered by what's blocking what.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
 - [x] **Performance: per-opcode switch dispatcher** — landed as
-  `ops2.ts`, gated behind `cpu.useDispatchBase` (currently off by
-  default to keep the table path live for A/B comparison;
-  `DISPATCH=base` enables it through the test harness and
-  `tests/programs/bench.ts`). Six dispatchers: `dispatchBase` /
-  `dispatchED` / `dispatchCB` / `dispatchDD` / `dispatchFD` /
-  `dispatchIndexedCB`, one per prefix table.
-  Results: zexdoc passes all CRC sections cleanly on ops2;
-  measured throughput ~36.8 Mops/s on Windows V8, vs ~8 Mops/s on
-  the table path — a ~4.5× speedup that drops a full zexdoc run
-  from ~12 min to ~2.5 min wall-clock.
-- [ ] **Flip `useDispatchBase` to default-on** and retire the
-  MCycle table system in `ops.ts` once the surrounding chips
-  (CRT, FDC, sub-CPU) are wired up enough to validate via a real
-  workload. The two paths are equivalent for SingleStepTests but
-  ops2 is the one that passes zexdoc.
+  `ops2.ts`, six dispatchers (`dispatchBase` / `dispatchED` /
+  `dispatchCB` / `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`),
+  one per prefix table. **Default-on** as of validation against
+  Frank Cringle's full exerciser:
+  - **zexdoc**: all CRC sections clean.
+  - **zexall**: all CRC sections clean (this is the documented +
+    undocumented X/Y test, the stronger of the two).
+  - Throughput: ~36 Mops/s on Windows V8 vs ~8 Mops/s on the legacy
+    table path — a ~4.5× speedup, full zexdoc run ~2.5 min vs
+    ~12 min.
+
+  `cpu.useDispatchBase` is the kill-switch; flip to `false` (or
+  set `DISPATCH=table` in the test harness env) to run the legacy
+  table path for A/B comparison. The legacy path still fails four
+  CRC families in zexdoc — `cpd<r>`, `<inc,dec> (hl)`, `<inc,dec>
+  (<ix,iy>+1)`, `<rrd,rld>` — and the CPIR/CPDR/INIR/OTIR/INDR/OTDR
+  block-flag failures appear there at higher SingleStepTests sample
+  sizes. Both sets of bugs evaporate on ops2.
+
+- [ ] **Retire the MCycle table system in `ops.ts`**. Now that
+  ops2 is default and validated, `compile()`, `OpCode.execute`,
+  `MCycle`, and the `buildOpTable` / `buildCbTable` /
+  `buildIndexedCbTable` factories have no live consumers. They
+  remain in the tree as the A/B fallback (`useDispatchBase=false`)
+  and as the home of the shared helpers ops2 imports
+  (`do_add_a`, `inc8`, etc.). Once the surrounding chips (CRT,
+  FDC, sub-CPU) are wired up enough to validate via a real BIOS
+  boot, lift the helpers into a small `alu.ts` and delete
+  everything else in `ops.ts`.
 
 ### Machine layer
 

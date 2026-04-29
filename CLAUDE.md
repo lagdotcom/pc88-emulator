@@ -206,11 +206,11 @@ percentage and ETA come from a hardcoded total of ~5.8 G
 instructions per run (measured on this emulator; refresh in both
 `zex-runner.ts` and `zexdoc.test.ts` if it drifts).
 
-Measured rates (Windows V8, `useDispatchBase` default-off):
-- table path: ~8 Mops/s, full zexdoc ~12 min, four CRC families
-  fail (the documented INIR/OTIR repeat bugs plus three more)
-- ops2 path (`DISPATCH=base`): ~36.8 Mops/s, full zexdoc ~2.5 min,
-  all CRC sections pass
+Measured rates (Windows V8):
+- ops2 path (default): ~36 Mops/s; full zexdoc ~2.5 min; full
+  zexall ~2.5 min. Both pass cleanly (no CRC mismatches).
+- legacy table path (`DISPATCH=table`): ~8 Mops/s; ~12 min; four
+  CRC families fail in both zexdoc and zexall.
 
 The vitest `test:zex` path captures the same output but only
 surfaces it on completion.
@@ -226,22 +226,20 @@ PC-88 BIOS to boot, but not while the focus is correctness.
 
 SingleStepTests sample size 25 per opcode → 40100 total cases run by
 `yarn test:z80` (1604 ops × 25, covering base + CB + DD + FD + ED +
-DDCB + FDCB). **40023 / 40100** pass. The 77 remaining failures are
-entirely in the **H and PV flags during INIR/INDR/OTIR/OTDR
-repeating iterations**:
-
-- The X/Y rule and WZ rule for these block I/O repeats *are* correct:
-  X/Y come from `(PC+1).high`, WZ = `PC + 1` after `PC -= 2`.
-- The H/PV rules during repeat follow undocumented hardware-traced
-  silicon quirks. Empirical fitting against the test data gets to
-  941/995 with a `(C ? bp_lo == 0 : bp_lo == 0xf)` rule for H, but
-  the remaining ~5% don't fit any simple formula over `(B_post,
-  C_flag, base, value)`. Cracking this needs a known-correct
-  reference implementation (FUSE / mame / Patrik Rak's z80core).
+DDCB + FDCB). **40023 / 40100** pass on either dispatcher path. The
+77 remaining failures are all in the SingleStepTests harness's
+shared helpers (do_io_block_flags) — they appear via both ops2 and
+the legacy table — and concern undocumented H/PV bits during
+INIR/INDR/OTIR/OTDR repeating iterations. Empirical fitting against
+the test data gets to 941/995 with a `(C ? bp_lo == 0 : bp_lo ==
+0xf)` rule for H, but the remaining ~5% don't fit any simple formula
+over `(B_post, C_flag, base, value)`. Fixing them needs a
+known-correct reference (FUSE / mame / Patrik Rak's z80core).
 
 All non-repeat INI/IND/OUTI/OUTD pass, every base/CB/DD/FD opcode
 passes, and DDCB/FDCB pass cleanly. The `tests/programs/`
-hand-assembled suite passes 18/18.
+hand-assembled suite passes 18/18. Both **zexdoc** and **zexall**
+run to a clean exit on the ops2 dispatcher (the default).
 
 ## Style
 

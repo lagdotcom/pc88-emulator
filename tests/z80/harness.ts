@@ -56,7 +56,7 @@ export function makeHarness(): Harness {
   const memBus = new MemoryBus([ram], 0xff);
   const ioBus = new MemoryBus([io], 0xff);
   const cpu = new Z80(memBus, ioBus);
-  if (process.env.DISPATCH === "base") cpu.useDispatchBase = true;
+  if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
   return { cpu, ram, io };
 }
 

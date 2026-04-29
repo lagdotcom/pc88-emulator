@@ -66,12 +66,12 @@ export class Z80 {
   aborted: boolean;
   // When true, runOneOp routes the unprefixed opcode through ops2's
   // hand-written giant switch instead of the table-driven dispatcher.
-  // The two paths are equivalent — same flag rules, same WZ updates —
-  // but the switch path is roughly 2-3x faster on simple opcodes by
-  // avoiding the indirect call through `inst.execute` and the closure
-  // wrappers around each MCycle. Off by default so the behaviour we
-  // ship matches what's been tested through SingleStepTests via the
-  // table; flip on per-Z80-instance once you trust ops2.
+  // The two paths agree on SingleStepTests, but ops2 is the path that
+  // passes Frank Cringle's zexdoc *and* zexall cleanly while the table
+  // path fails four CRC families (cpd<r>, <inc,dec> (hl), <inc,dec>
+  // (<ix,iy>+1), <rrd,rld>). ops2 is also ~4.5× faster on a full
+  // zexdoc workload (~36 Mops/s vs ~8 Mops/s on Windows V8). Default
+  // is on; flip to false to A/B against the legacy path.
   useDispatchBase: boolean;
   prefix: Prefix | undefined;
   // Q is a latch of "the F value last written by an instruction." It's read
@@ -93,7 +93,7 @@ export class Z80 {
     this.iff2 = false;
     this.im = 0;
     this.aborted = false;
-    this.useDispatchBase = false;
+    this.useDispatchBase = true;
     this.q = 0;
     this.qWritten = false;
     this.regs = makeRegs();
