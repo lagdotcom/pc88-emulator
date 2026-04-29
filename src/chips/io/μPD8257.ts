@@ -59,6 +59,6 @@ export class μPD8257 {
   private writeMode(v: u8): void {
     this.mode = v;
     this.toggle = false;
-    log.debug(`mode 0x${v.toString(16)}`);
+    log.info(`mode 0x${v.toString(16)}`);
   }
 }

@@ -1,4 +1,8 @@
+import { createWriteStream } from "node:fs";
+
+import ansiRegex from "ansi-regex";
 import { config as loadDotEnv } from "dotenv";
+import emitter from "log/lib/emitter";
 import startNodeLogging from "log-node";
 
 import {
@@ -11,7 +15,7 @@ import type { LoadedRoms } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
 
-const DEFAULT_MAX_OPS = 5_000_000;
+const DEFAULT_MAX_OPS = 150_000;
 
 function hex(n: number, w: number): string {
   return n.toString(16).padStart(w, "0");
@@ -65,7 +69,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   lines.push(`dmac status    : 0x${hex(dmac.status, 2)}`);
   lines.push(`beeper toggles : ${beeper.toggles}`);
   lines.push(
-    `misc ports     : 0x09 reads=${misc.in09Reads} 0xE7 last=${misc.lastE7 ?? "-"} 0xF8 last=${misc.lastF8 ?? "-"}`,
+    `misc ports     : 0xE7 last=${misc.lastE7 ?? "-"} 0xF8 last=${misc.lastF8 ?? "-"}`,
   );
 
   // TVRAM activity: if any byte is non-zero, the BIOS got far enough to
@@ -110,9 +114,18 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   return lines.join("\n");
 }
 
+function addFileLogger() {
+  const ws = createWriteStream("main.log", { encoding: "utf-8" });
+  emitter.on("log", (event) => {
+    const msg = event.message.replace(ansiRegex(), "");
+    ws.write(msg + "\n");
+  });
+}
+
 async function main(): Promise<void> {
   loadDotEnv({ quiet: true });
   startNodeLogging();
+  if (process.env.LOG_TO_FILE) addFileLogger();
 
   const dir = process.env.PC88_ROM_DIR ?? "roms";
   const loaded = await loadRoms(MKI, { dir });

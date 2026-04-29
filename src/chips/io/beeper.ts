@@ -14,7 +14,7 @@ export class Beeper {
     if (bit !== this.lastBit) {
       this.lastBit = bit;
       this.toggles++;
-      if (this.toggles === 1) log.debug("first beep toggle");
+      if (this.toggles === 1) log.info("first beep toggle");
     }
   }
 }

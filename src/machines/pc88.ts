@@ -1,3 +1,5 @@
+import logLib from "log";
+
 import { Beeper } from "../chips/io/beeper.js";
 import { Calendar } from "../chips/io/calendar.js";
 import { i8255 } from "../chips/io/i8255.js";
@@ -9,12 +11,15 @@ import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
+import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import {
   type LoadedRoms as MemoryLoadedRoms,
   PC88MemoryMap,
 } from "./pc88-memory.js";
+
+const log = logLib.get("pc88");
 
 // VBL pump runs at 60 Hz (V1 mode default; CRTC reprogramming
 // switches between 24 kHz and 15 kHz horizontal rates which gives
@@ -190,6 +195,13 @@ export function runMachine(
       stopReason = "halted-no-irq";
       break;
     }
+
+    if (process.env.LOG_CPU) {
+      log.debug(
+        `pc=${word(cpu.regs.PC)} op=${byte(cpu.mem.read(cpu.regs.PC))}`,
+      );
+    }
+
     cpu.runOneOp();
     ops++;
     if (opts.onProgress && opts.onProgress(ops)) {

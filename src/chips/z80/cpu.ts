@@ -178,8 +178,7 @@ export class Z80 {
       this.mem.write((sp + 1) & 0xffff, (pc >> 8) & 0xff);
 
       if (this.im === 2) {
-        const ptr =
-          ((this.regs.I << 8) | (this.irqVector & 0xfe)) & 0xffff;
+        const ptr = ((this.regs.I << 8) | (this.irqVector & 0xfe)) & 0xffff;
         const lo = this.mem.read(ptr);
         const hi = this.mem.read((ptr + 1) & 0xffff);
         this.regs.PC = (hi << 8) | lo;

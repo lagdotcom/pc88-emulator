@@ -64,18 +64,18 @@ export class μPD3301 {
     this.command = v;
     this.paramsLeft = PARAM_COUNT[v] ?? 5;
     this.params = [];
-    log.debug(`cmd 0x${v.toString(16)}, expects ${this.paramsLeft} params`);
+    log.info(`cmd 0x${v.toString(16)}, expects ${this.paramsLeft} params`);
   }
 
   private writeParam(v: u8): void {
     if (this.paramsLeft <= 0 || this.command === null) {
-      log.debug(`stray data 0x${v.toString(16)}`);
+      log.info(`stray data 0x${v.toString(16)}`);
       return;
     }
     this.params.push(v);
     this.paramsLeft--;
     if (this.paramsLeft === 0) {
-      log.debug(
+      log.info(
         `cmd 0x${this.command.toString(16)} params [${this.params
           .map((b) => "0x" + b.toString(16))
           .join(",")}]`,

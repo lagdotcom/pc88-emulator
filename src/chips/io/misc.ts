@@ -9,7 +9,6 @@ const log = logLib.get("misc-io");
 // these are functionally important for first-light: returning idle /
 // 0xff and discarding writes is enough to keep the BIOS advancing.
 //
-//   0x09  read   — hardware/expansion presence probe; mkI always 0xff
 //   0xE7  write  — alternate IRQ mask on later models; mkI no-op
 //   0xF8  write  — boot-mode / FDD-IF select on later models; mkI no-op
 //
@@ -22,28 +21,20 @@ export class MiscPorts {
   // diagnostics ("did the BIOS write to F8, and with what?").
   lastE7: number | null = null;
   lastF8: number | null = null;
-  in09Reads = 0;
 
   register(bus: IOBus): void {
-    bus.register(0x09, {
-      name: "misc/0x09",
-      read: () => {
-        this.in09Reads++;
-        return 0xff;
-      },
-    });
     bus.register(0xe7, {
       name: "misc/0xe7",
       write: (_p, v) => {
         this.lastE7 = v;
-        log.debug(`0xe7 := 0x${v.toString(16)}`);
+        log.info(`0xe7 := 0x${v.toString(16)}`);
       },
     });
     bus.register(0xf8, {
       name: "misc/0xf8",
       write: (_p, v) => {
         this.lastF8 = v;
-        log.debug(`0xf8 := 0x${v.toString(16)}`);
+        log.info(`0xf8 := 0x${v.toString(16)}`);
       },
     });
   }

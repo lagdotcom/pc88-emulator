@@ -1,7 +1,7 @@
 import logLib from "log";
 
-import type { u8 } from "../../flavours.js";
 import type { IOBus } from "../../core/IOBus.js";
+import type { u8 } from "../../flavours.js";
 
 const log = logLib.get("irq");
 
@@ -41,7 +41,7 @@ export class IrqController {
       read: () => this.priority,
       write: (_p, v) => {
         this.priority = v;
-        log.debug(`priority := 0x${v.toString(16)}`);
+        log.info(`priority := 0x${v.toString(16)}`);
       },
     });
     bus.register(0xe6, {
@@ -50,7 +50,7 @@ export class IrqController {
       write: (_p, v) => {
         this.mask = v;
         this.programmed = true;
-        log.debug(`mask := 0x${v.toString(16)}`);
+        log.info(`mask := 0x${v.toString(16)}`);
       },
     });
   }

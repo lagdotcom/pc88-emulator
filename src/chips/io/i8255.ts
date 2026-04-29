@@ -1,6 +1,7 @@
 import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
+import { byte } from "../../tools.js";
 
 const log = logLib.get("ppi");
 
@@ -14,10 +15,13 @@ export class i8255 {
   private warned = new Set<number>();
 
   register(bus: IOBus): void {
-    for (let p = 0x00; p <= 0x03; p++) {
+    for (let p = 0x00; p <= 0x0e; p++) {
       bus.register(p, {
         name: `ppi-key/${p.toString(16)}`,
-        read: () => 0xff,
+        read: () => {
+          log.info(`0x${byte(p)} read`);
+          return 0xff;
+        },
         write: (port, v) => this.warn(port, v),
       });
     }
@@ -26,7 +30,7 @@ export class i8255 {
   private warn(port: number, value: number): void {
     if (this.warned.has(port)) return;
     this.warned.add(port);
-    log.debug(
+    log.info(
       `first PPI write 0x${port.toString(16)} = 0x${value.toString(16)}`,
     );
   }
