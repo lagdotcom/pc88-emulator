@@ -38,8 +38,8 @@ export interface PC88Display {
 // bytes of attribute information that doesn't quite map cell-by-cell.
 // For first-light we just read the character half; attributes come
 // across as zeroes until a renderer needs them.
-const ROW_STRIDE = 120;
-const CHARS_PER_ROW = 80;
+const ROW_STRIDE = 40;
+const CHARS_PER_ROW = 40;
 
 export class PC88TextDisplay implements PC88Display {
   constructor(private readonly memory: PC88MemoryMap) {}
