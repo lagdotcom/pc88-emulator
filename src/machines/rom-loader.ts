@@ -5,15 +5,7 @@ import { join } from "node:path";
 
 import type { Bytes, FilesystemPath } from "../flavours.js";
 import type { PC88Config, ROMDescriptor, ROMManifest } from "./config.js";
-
-// ROMs found on disk, keyed by their slot in `ROMManifest`. Required
-// slots are guaranteed Uint8Array; optional slots are present only if
-// the file existed (and validated cleanly). Stripping `readonly` from
-// the manifest mapping so the loader can assemble the result
-// incrementally; consumers can re-add it on their own end.
-export type LoadedRoms = {
-  -readonly [K in keyof ROMManifest]: Uint8Array;
-};
+import type { LoadedROMs } from "./pc88-memory.js";
 
 export interface RomLoadOptions {
   // Directory to search. Defaults to the `roms/` folder at repo root,
@@ -40,12 +32,16 @@ export class RomLoadError extends Error {
 // slots throw if missing or if the contents fail size / md5
 // validation. Optional slots resolve to undefined if the file is
 // absent, but still throw if it's present-but-invalid.
+//
+// Returns `LoadedROMs` directly — required slots (`n80`, `n88`) are
+// guaranteed populated because the loader throws on missing required
+// files, so callers don't need a runtime null-check on those slots.
 export async function loadRoms(
   config: PC88Config,
   opts: RomLoadOptions = {},
-): Promise<Partial<LoadedRoms>> {
+): Promise<LoadedROMs> {
   const dir = opts.dir ?? "roms";
-  const result: Partial<LoadedRoms> = {};
+  const result: { -readonly [K in keyof LoadedROMs]?: Uint8Array } = {};
 
   for (const [slot, descriptor] of Object.entries(config.roms) as [
     keyof ROMManifest,
@@ -82,7 +78,14 @@ export async function loadRoms(
         );
       }
     }
-    result[slot] = bytes;
+    if (slot === "n80" || slot === "n88" || slot === "e0" || slot === "e1" ||
+        slot === "e2" || slot === "e3") {
+      result[slot] = bytes;
+    }
+    // Other slots (font, kanji1, etc.) aren't part of LoadedROMs yet —
+    // they'll be added when the chips that consume them land.
   }
-  return result;
+  // Required slots have been validated by the loop above (throws on
+  // missing-required), so the cast is safe.
+  return result as LoadedROMs;
 }

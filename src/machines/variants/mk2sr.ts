@@ -17,6 +17,7 @@ export const MKII_SR: PC88Config = {
   memory: {
     mainRam: 64,
     textVram: 4,
+    tvramSeparate: true,
     graphicsVramPlanes: 3,
     graphicsVramPerPlane: 16,
     hasExtendedRam: false,

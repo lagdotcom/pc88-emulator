@@ -27,6 +27,7 @@ describe("PC88Machine.snapshot", () => {
         "cpu",
         "crtc",
         "dmac",
+        "graphics",
         "irq",
         "memoryMap",
         "misc",

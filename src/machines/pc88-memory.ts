@@ -15,6 +15,11 @@ const PAGE_COUNT = 0x10000 >> PAGE_SHIFT;
 // font / kanji ROMs are optional and per-variant. The map falls
 // back to the BASIC ROM continuation at 0x6000-0x7FFF when the
 // active extension slot has no image loaded.
+//
+// Optional/required-ness mirrors ROMManifest in machines/config.ts.
+// Required slots are non-optional here so PC88Machine consumers
+// don't need a runtime "is this ROM loaded?" check — the loader
+// has already thrown if a required slot was missing or invalid.
 export interface LoadedROMs {
   readonly n80: Uint8Array; // 32 KB
   readonly n88: Uint8Array; // 32 KB
@@ -48,8 +53,14 @@ export class PC88MemoryMap implements MemoryProvider {
   // always backed by it. Pages 0–7 and 12–15 may shadow it.
   readonly mainRam = new Uint8Array(0x10000);
 
-  // Text VRAM (4 KB at 0xF000–0xFFFF when VRAM window is enabled).
-  readonly tvram = new Uint8Array(0x1000);
+  // Text VRAM (4 KB at 0xF000–0xFFFF). On mkI/mkII this is just the
+  // upper 4 KB of main RAM — there is no separate physical chip; the
+  // CRTC reads the same RAM the CPU writes to. SR onwards has a
+  // dedicated 4 KB chip; in that case we allocate a separate buffer.
+  // Either way `.tvram` is a Uint8Array view of the right backing
+  // store, so callers (display, tests, snapshot) don't care which
+  // model is in use.
+  readonly tvram: Uint8Array;
 
   // 3 graphics planes, 16 KB each (0xC000–0xFFFF when VRAM window is
   // enabled and the plane is selected). Only one plane is mapped at a
@@ -77,14 +88,16 @@ export class PC88MemoryMap implements MemoryProvider {
   private _vramEnabled = false;
   private _gvramPlane: 0 | 1 | 2 = 0;
 
-  // 4 KB scratch that catches writes that target ROM. Anything written
-  // here is silently lost; reads from it return zero.
-  private readonly discard = new Uint8Array(PAGE_SIZE);
-
   readonly readPages: Uint8Array[] = new Array(PAGE_COUNT);
   readonly writePages: Uint8Array[] = new Array(PAGE_COUNT);
 
-  constructor(private readonly roms: LoadedROMs) {
+  constructor(
+    private readonly roms: LoadedROMs,
+    opts: { tvramSeparate?: boolean } = {},
+  ) {
+    this.tvram = opts.tvramSeparate
+      ? new Uint8Array(0x1000)
+      : this.mainRam.subarray(0xf000, 0x10000);
     this.refreshPages();
   }
 
@@ -153,18 +166,23 @@ export class PC88MemoryMap implements MemoryProvider {
   refreshPages(): void {
     const ram = this.mainRam;
 
-    // TODO writing into pages 0..7 always goes to Main RAM.
-    //      Need to split read/write pages.
-
     // 0x0000-0x5FFF: BASIC ROM (n80 or n88) when enabled, else RAM.
     // 0x6000-0x7FFF: extension ROM whose slot is selected at port
     //                0x32 bits 0-1, OR the BASIC ROM continuation
     //                if no image is loaded for that slot.
+    //
+    // Reads come from the ROM image when mapped; writes to those
+    // pages go through to main RAM at the same offset (write-through
+    // shadowing). Real silicon: the ROM /OE is gated by the bank
+    // register but the RAM /WE always tracks the bus, so a Z80 write
+    // at 0x1234 lands in RAM[0x1234] regardless of ROM mapping. Once
+    // the BIOS unmaps the BASIC ROM at runtime, those previously
+    // hidden RAM writes become visible — without write-through the
+    // RAM behind the ROM would stay zero forever.
     const basicRom = this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
     if (this._basicROMEnabled) {
       this.mapROMPages(0, 6, basicRom, 0);
 
-      // TODO Check: EROM requires RMODE=0 MMODE=0 [port 0x31], IEROM=0 [port 0x71]
       const erom = this.activeEROMImage();
       if (erom) this.mapROMPages(6, 8, erom, 0);
       else this.mapROMPages(6, 8, basicRom, 6 * PAGE_SIZE);
@@ -235,7 +253,13 @@ export class PC88MemoryMap implements MemoryProvider {
       } else {
         this.readPages[p] = rom.subarray(off, off + PAGE_SIZE);
       }
-      this.writePages[p] = this.discard;
+      // Writes to ROM-mapped pages still hit main RAM at the same
+      // CPU-side offset — the RAM is "shadowed" by the ROM but
+      // physically present and writable. Once the BIOS disables the
+      // ROM, the RAM contents (potentially populated by writes that
+      // happened while ROM was mapped) become readable.
+      const ramOff = p * PAGE_SIZE;
+      this.writePages[p] = this.mainRam.subarray(ramOff, ramOff + PAGE_SIZE);
     }
   }
 

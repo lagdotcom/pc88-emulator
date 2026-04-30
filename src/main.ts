@@ -273,16 +273,11 @@ async function main(): Promise<void> {
   startNodeLogging();
   if (flags.logFile) addFileLogger(flags.logFile);
 
-  // TODO change signature to { loaded: bool, missing: [] } so this check isn't hard coded here
+  // loadRoms throws RomLoadError if a required ROM (per the manifest's
+  // `required: true` flag) is missing or fails md5/size validation, so
+  // the returned LoadedROMs has its required slots (n80, n88) typed
+  // as definitely-present. No runtime null-check needed here.
   const loaded = await loadRoms(flags.config, { dir: flags.romDir });
-  // n80 and n88 are required for any PC-88 boot. E-ROM slots E0..E3
-  // are optional — the memory map falls back to BASIC ROM
-  // continuation when the active slot has no image.
-  if (!loaded.n80 || !loaded.n88) {
-    throw new Error(
-      `${flags.config.model} requires n80 and n88 ROMs in ${flags.romDir}/ (got ${Object.keys(loaded).join(", ")})`,
-    );
-  }
 
   // Apply the --basic override (if any) to the variant's DIP byte
   // before constructing the machine. Bit 2 of port31 is the rmode
@@ -301,7 +296,7 @@ async function main(): Promise<void> {
       }
     : flags.config;
 
-  const machine = new PC88Machine(config, loaded as LoadedROMs);
+  const machine = new PC88Machine(config, loaded);
   machine.reset();
 
   if (flags.traceIo !== "off") {
@@ -335,7 +330,7 @@ async function main(): Promise<void> {
     // anyway.
     await runDebug(machine, {
       initialBreakpoints: flags.initialBreakpoints,
-      loadedRoms: loaded as LoadedROMs,
+      loadedRoms: loaded,
     });
     return;
   }

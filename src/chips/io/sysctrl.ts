@@ -32,6 +32,8 @@ export interface SystemControllerSnapshot {
   dipSwitch1: u8;
   dipSwitch2: u8;
   systemStatus: u8;
+  eromSelection: u8;
+  textWindow: u8;
 }
 
 export class SystemController {
@@ -50,6 +52,26 @@ export class SystemController {
   // Expansion ROM selection; set one bit off to select that EROM
   eromSelection: u8 = 0xff;
 
+  // Latched port 0x31 bits we care about for EROM gating. Port 0x31
+  // writes don't propagate to BASIC-ROM swapping (see handle31), but
+  // bit 1 (MMODE: 0=ROM, 1=RAM at 0x0000-0x7FFF) and bit 2 (RMODE:
+  // 0=N88, 1=N80) gate whether EROM is allowed to map at all.
+  // Default both 0 to match the reset state where ROM is enabled and
+  // N88 is selected; that keeps the EROM mapping logic permissive
+  // until the BIOS has actually programmed mmode/rmode.
+  private mmode: 0 | 1 = 0;
+  private rmode: 0 | 1 = 0;
+
+  // Latched port 0x70 ("Text Window"). High byte of a 1 KB ROM
+  // window the BIOS can map into 0x8000-0x83FF when MMODE=0,
+  // RMODE=0. Source-ROM details aren't yet confirmed (likely a
+  // window into BASIC-ROM continuation past 0x7FFF), so we latch
+  // the value for snapshots/diagnostics but don't yet wire the
+  // mapping to PC88MemoryMap. Neither N-BASIC nor N88-BASIC's
+  // boot-to-banner path writes here, so leaving it un-mapped
+  // doesn't block first-light.
+  textWindow: u8 = 0;
+
   // Visible to the runner so the VBL pulse can flip the bit too.
   setVBlank(active: boolean): void {
     if (active) this.systemStatus |= 0x20;
@@ -61,6 +83,8 @@ export class SystemController {
       dipSwitch1: this.dipSwitch1,
       dipSwitch2: this.dipSwitch2,
       systemStatus: this.systemStatus,
+      eromSelection: this.eromSelection,
+      textWindow: this.textWindow,
     };
   }
 
@@ -68,6 +92,8 @@ export class SystemController {
     this.dipSwitch1 = s.dipSwitch1;
     this.dipSwitch2 = s.dipSwitch2;
     this.systemStatus = s.systemStatus;
+    this.eromSelection = s.eromSelection;
+    this.textWindow = s.textWindow;
   }
 
   constructor(
@@ -104,6 +130,11 @@ export class SystemController {
       name: "sysctrl/0x5c",
       write: (_p, v) => this.memoryMap.setGVRAMPlane((v & 0x03) as 0 | 1 | 2),
     });
+    bus.register(0x70, {
+      name: "sysctrl/0x70",
+      read: () => this.textWindow,
+      write: (_p, v) => this.handle70(v),
+    });
     bus.register(0x71, {
       name: "sysctrl/0x71",
       read: () => this.eromSelection,
@@ -132,28 +163,32 @@ export class SystemController {
 
   private handle31(v: u8): void {
     const lines = v & 0x01 ? 200 : 400;
-    const mmode = v & 0x02 ? "ram" : "rom";
-    const rmode = v & 0x04 ? "n80" : "n88";
+    const mmode = ((v >> 1) & 0x01) as 0 | 1;
+    const rmode = ((v >> 2) & 0x01) as 0 | 1;
     const graph = v & 0x08 ? "graphics" : "none";
     const hcolor = v & 0x10 ? "color" : "mono";
     const highres = (v & 0x20) !== 0;
 
     log.info(
-      `0x31 write: lines=${lines} mmode=${mmode} rmode=${rmode} graph=${graph} hcolor=${hcolor} highres=${highres}`,
+      `0x31 write: lines=${lines} mmode=${mmode === 0 ? "rom" : "ram"} rmode=${rmode === 0 ? "n88" : "n80"} graph=${graph} hcolor=${hcolor} highres=${highres}`,
     );
 
     // Earlier code propagated `mmode` to setBasicRomEnabled() and
     // `rmode` to setBasicMode() on every port-0x31 write, on the
     // theory that the BIOS would use those bits to flip BASIC modes
-    // at runtime. That was wrong — port 0x31 writes have *different*
-    // bit semantics from reads (reads return DIP state; writes are a
-    // multi-purpose system register where bit 1 is meaningful only
-    // in conjunction with other bits we don't model yet). Doing the
-    // propagation tripped the BIOS into "ROM mapped out" mid-init
-    // and stuck it before CRTC programming. Cold-boot DIP selection
-    // is handled in PC88Machine.reset() instead. Until we model the
-    // full system-register semantics, treat port 0x31 writes as
-    // configuration-only.
+    // at runtime. That tripped the BIOS into "ROM mapped out"
+    // mid-init and stuck it before CRTC programming. Cold-boot DIP
+    // selection is handled in PC88Machine.reset() instead.
+    //
+    // We DO latch mmode + rmode here for one purpose: gating EROM
+    // enablement. Per the maroon.dk port table and the PC-8801 mkII
+    // hardware manual, EROM only maps in when mmode=0 (ROM mode) AND
+    // rmode=0 (N88-BASIC). When either bit flips, EROM must drop
+    // immediately — otherwise N88-BASIC's runtime ROM-bank swap
+    // would leave a stale EROM image at 0x6000 across a mode change.
+    this.mmode = mmode;
+    this.rmode = rmode;
+    this.applyEROMEnable();
   }
 
   private handle32(v: u8): void {
@@ -175,17 +210,28 @@ export class SystemController {
       `0x32 write: eromsl=${eromsl} avc=${avc} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
     );
 
-    // bits 0-1 select which extension-ROM slot is "current"; the
-    // mapping is only applied when E-ROMs are also enabled. The
-    // historical mkI N-BASIC behaviour we matched empirically was
-    // "eromsl == 0 maps E0 in, anything else falls back to BASIC
-    // continuation" — so we mirror that as: select the slot, and
-    // enable iff eromsl == 0. TODO: this is almost certainly wrong
-    // for N88-BASIC which uses E1/E2/E3; the real enable bit is
-    // probably elsewhere on this port (or another) and we'll only
-    // know when the N88 trace surfaces it.
+    // bits 0-1 select the active extension-ROM slot, but they don't
+    // gate enablement. The enable signal lives on port 0x71 (one-hot
+    // slot bits) and is further gated on RMODE=MMODE=0. Earlier code
+    // collapsed select+enable here as `setEROMEnabled(eromsl === 0)`,
+    // matching N-BASIC's empirical boot but breaking N88's E1/E2/E3
+    // path. Now port 0x32 only updates the slot index; whether the
+    // selected slot maps in is decided by applyEROMEnable() the next
+    // time port 0x71 or port 0x31 changes (or right now, since the
+    // slot index is part of "what enable means").
     this.memoryMap.setEROMSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
-    this.memoryMap.setEROMEnabled(eromsl === 0);
+    this.applyEROMEnable();
+  }
+
+  private handle70(v: u8): void {
+    // Latch the value; surface a warning so we notice the first time
+    // a real boot path uses the Text Window. Once we have evidence of
+    // which source ROM this maps from, hook up PC88MemoryMap to
+    // expose the 1 KB at 0x8000-0x83FF when MMODE=0 && RMODE=0.
+    this.textWindow = v;
+    log.warn(
+      `0x70 write: textWindow=${byte(v)} (1 KB at ${byte(v)}00-${byte(v)}3FF) — mapping not yet implemented`,
+    );
   }
 
   private handle40(v: u8): void {
@@ -206,32 +252,54 @@ export class SystemController {
   }
 
   private handle71(v: u8): void {
-    const s0 = (v & 0x01) === 0;
-    const s1 = (v & 0x02) === 0;
-    const s2 = (v & 0x04) === 0;
-    const s3 = (v & 0x08) === 0;
+    // One-hot, active-low slot selection: the lowest clear bit in
+    // bits 0..3 picks the active EROM slot. Bits 4..7 are described
+    // in some references as additional ROM banks beyond the four
+    // extension slots, but the hardware they correspond to is
+    // documented inconsistently — neither the PC-8801 nor mkII
+    // wire all eight, and which models do is unclear. Log a warning
+    // when the BIOS clears any of them so we notice if a real boot
+    // depends on them.
+    const slotBits = v & 0x0f;
+    const upperBits = v & 0xf0;
+    if (upperBits !== 0xf0) {
+      log.warn(
+        `0x71 write: high bits ${byte(upperBits)} clear — ROMs 4-7 not modelled`,
+      );
+    }
 
-    // const s4 = (v & 0x10) === 0;
-    // const s5 = (v & 0x20) === 0;
-    // const s6 = (v & 0x40) === 0;
-    // const s7 = (v & 0x80) === 0;
-    // TODO how do roms 4-7 work???
-
-    if (s0 || s1 || s2 || s3) {
-      if (s0) this.memoryMap.setEROMSlot(0);
-      else if (s1) this.memoryMap.setEROMSlot(1);
-      else if (s2) this.memoryMap.setEROMSlot(2);
-      else if (s3) this.memoryMap.setEROMSlot(3);
-
-      this.memoryMap.setEROMEnabled(true);
-    } else {
-      this.memoryMap.setEROMEnabled(false);
+    if (slotBits !== 0x0f) {
+      // At least one slot bit clear → that slot is "selected" for
+      // enablement. If multiple are clear (unusual), the lowest
+      // wins. Real silicon's behaviour with multiple bits clear is
+      // model-specific; this matches the convention older emulators use.
+      let slot: 0 | 1 | 2 | 3 = 0;
+      if ((v & 0x01) === 0) slot = 0;
+      else if ((v & 0x02) === 0) slot = 1;
+      else if ((v & 0x04) === 0) slot = 2;
+      else if ((v & 0x08) === 0) slot = 3;
+      this.memoryMap.setEROMSlot(slot);
     }
 
     this.eromSelection = v;
+    this.applyEROMEnable();
 
     log.info(
       `0x71 write: eromsl=${this.memoryMap.eromSlot}/${this.memoryMap.eromEnabled} raw=${byte(v)}`,
     );
+  }
+
+  // EROM is mapped in when ALL of the following hold:
+  //   - mmode = 0 (port 0x31 bit 1 → ROM at 0x0000-0x7FFF, not RAM)
+  //   - rmode = 0 (port 0x31 bit 2 → N88-BASIC selected)
+  //   - at least one of port 0x71 bits 0..3 is clear (slot enabled)
+  // Per maroon.dk's PC-88 port reference + the mkII hardware manual.
+  // Earlier the enable was driven solely by `eromsl == 0` on port
+  // 0x32, which let EROM map even when the BIOS had banked-out the
+  // ROM range or switched to N80; both broke real boot paths.
+  private applyEROMEnable(): void {
+    const slotEnabled = (this.eromSelection & 0x0f) !== 0x0f;
+    const gateOpen = this.mmode === 0 && this.rmode === 0;
+    this.memoryMap.setEROMEnabled(slotEnabled && gateOpen);
   }
 }

@@ -40,20 +40,61 @@ describe("SystemController DIP wiring", () => {
   });
 });
 
-describe("SystemController ROM banking via port 0x32", () => {
-  it("port 0x32 bits 0-1 select the active extension-ROM slot", () => {
-    // The setup() fixture only loads E0; selecting slot 1/2/3 with
-    // no image must fall back to BASIC ROM continuation (0x80).
+describe("SystemController EROM banking", () => {
+  // EROM mapping requires three things on real hardware:
+  //   - port 0x32 bits 0-1   select which slot is "current"
+  //   - port 0x71 bits 0-3   one-hot active-low; the selected bit
+  //                          enables that slot for mapping
+  //   - port 0x31 RMODE=0 + MMODE=0 (bits 2 and 1)
+  //                          gate enable; if either is non-zero,
+  //                          EROM stays unmapped regardless of
+  //                          ports 0x32 / 0x71 state
+  // The setup() fixture loads only E0, so slot 1/2/3 falls back to
+  // BASIC ROM continuation (0x80) even when "enabled".
+
+  it("port 0x71 alone enables EROM with port 0x32 selecting the slot", () => {
     const { bus, memoryMap } = setup();
-    bus.write(0x32, 0x00); // eromsl = 0 → E0 mapped (loaded)
+    // Default (port 0x71 not yet written, eromSelection=0xff) →
+    // EROM disabled even with eromsl=0.
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    // Enable slot 0 via port 0x71.
+    bus.write(0x71, 0xfe);
     expect(memoryMap.read(0x6000)).toBe(0xe0);
-    bus.write(0x32, 0x01); // eromsl = 1 → E1 missing → BASIC continuation
+    // Switch slot via port 0x32 — slot 1 missing → BASIC continuation.
+    bus.write(0x32, 0x01);
     expect(memoryMap.read(0x6000)).toBe(0x80);
-    bus.write(0x32, 0x02); // eromsl = 2 → E2 missing → BASIC continuation
+    bus.write(0x32, 0x02);
     expect(memoryMap.read(0x6000)).toBe(0x80);
-    bus.write(0x32, 0x03); // eromsl = 3 → E3 missing → BASIC continuation
+    bus.write(0x32, 0x03);
     expect(memoryMap.read(0x6000)).toBe(0x80);
-    bus.write(0x32, 0x00); // back to slot 0
+    // Back to slot 0.
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    // Disable all slots via port 0x71 → EROM unmapped.
+    bus.write(0x71, 0xff);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+  });
+
+  it("port 0x31 RMODE=1 (N80 selected) disables EROM mapping", () => {
+    const { bus, memoryMap } = setup();
+    bus.write(0x71, 0xfe); // enable slot 0
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    bus.write(0x31, 0x04); // RMODE = 1
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x31, 0x00); // RMODE = 0
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+  });
+
+  it("port 0x31 MMODE=1 (RAM at 0x0000-0x7FFF) disables EROM mapping", () => {
+    const { bus, memoryMap } = setup();
+    bus.write(0x71, 0xfe);
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    bus.write(0x31, 0x02); // MMODE = 1
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x31, 0x00); // MMODE = 0
     expect(memoryMap.read(0x6000)).toBe(0xe0);
   });
 });

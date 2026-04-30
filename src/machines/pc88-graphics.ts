@@ -1,18 +1,47 @@
 import logLib from "log";
 
 import type { IOBus } from "../core/IOBus.js";
+import type { u8 } from "../flavours.js";
 import { byte } from "../tools.js";
 
 const log = logLib.get("gfx");
 
-// TODO add this to Snapshotting
+export interface PC88GraphicsSnapshot {
+  bgColor: u8;
+  showText: boolean;
+  showGVRAM0: boolean;
+  showGVRAM1: boolean;
+  showGVRAM2: boolean;
+  showGVRAM3: boolean;
+}
+
 export class PC88Graphics {
-  bgColor = 0;
+  bgColor: u8 = 0;
   showText = false;
   showGVRAM0 = false;
   showGVRAM1 = false;
   showGVRAM2 = false;
   showGVRAM3 = false;
+
+  snapshot(): PC88GraphicsSnapshot {
+    return {
+      bgColor: this.bgColor,
+      showText: this.showText,
+      showGVRAM0: this.showGVRAM0,
+      showGVRAM1: this.showGVRAM1,
+      showGVRAM2: this.showGVRAM2,
+      showGVRAM3: this.showGVRAM3,
+    };
+  }
+
+  fromSnapshot(s: PC88GraphicsSnapshot): void {
+    this.bgColor = s.bgColor;
+    this.showText = s.showText;
+    this.showGVRAM0 = s.showGVRAM0;
+    this.showGVRAM1 = s.showGVRAM1;
+    this.showGVRAM2 = s.showGVRAM2;
+    this.showGVRAM3 = s.showGVRAM3;
+  }
 
   register(bus: IOBus): void {
     bus.register(0x52, {

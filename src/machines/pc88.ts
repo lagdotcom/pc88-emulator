@@ -75,7 +75,9 @@ export class PC88Machine {
     public config: PC88Config,
     roms: MemoryLoadedRoms,
   ) {
-    this.memoryMap = new PC88MemoryMap(roms);
+    this.memoryMap = new PC88MemoryMap(roms, {
+      tvramSeparate: config.memory.tvramSeparate,
+    });
     this.memBus = new MemoryBus([this.memoryMap]);
     this.ioBus = new IOBus();
 
@@ -181,6 +183,7 @@ export class PC88Machine {
       irq: this.irq.snapshot(),
       misc: this.misc.snapshot(),
       beeper: this.beeper.snapshot(),
+      graphics: this.graphics.snapshot(),
     };
   }
 }

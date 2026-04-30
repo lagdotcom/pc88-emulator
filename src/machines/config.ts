@@ -70,6 +70,13 @@ export interface CPUConfig {
 export interface MemoryConfig {
   readonly mainRam: Kilobytes;
   readonly textVram: Kilobytes;
+  // True iff TVRAM is a physically separate 4 KB chip (SR onwards).
+  // On mkI/mkII the "text VRAM" region at 0xF000-0xFFFF is just the
+  // upper 4 KB of main RAM — the CRTC reads it via DMAC but the
+  // CPU side has no separate buffer, so writes to 0xF000+ also
+  // appear in mainRam. SR introduces a separate text VRAM chip so
+  // that the CRTC reads it without contending for main-RAM access.
+  readonly tvramSeparate: boolean;
   readonly graphicsVramPlanes: number;
   readonly graphicsVramPerPlane: Kilobytes;
   readonly hasExtendedRam: boolean;
