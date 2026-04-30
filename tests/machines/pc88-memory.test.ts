@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type LoadedRoms,
+  type LoadedROMs,
   PC88MemoryMap,
 } from "../../src/machines/pc88-memory.js";
-import { filledROM } from "../tools.testHelpers.js";
+import { filledROM } from "../tools.js";
 
-function fixture(): LoadedRoms {
+function fixture(): LoadedROMs {
   return {
     n80: filledROM(0x8000, 0x80),
     n88: filledROM(0x8000, 0x88),
@@ -45,7 +45,7 @@ describe("PC88MemoryMap", () => {
   });
 
   it("maps the active extension-ROM slot only when enabled", () => {
-    const fixtureWithAllE = (): LoadedRoms => ({
+    const fixtureWithAllE = (): LoadedROMs => ({
       n80: filledROM(0x8000, 0x80),
       n88: filledROM(0x8000, 0x88),
       e0: filledROM(0x2000, 0xe0),

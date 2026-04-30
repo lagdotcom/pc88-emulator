@@ -1,7 +1,7 @@
 import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
-import type { u8 } from "../../flavours.js";
+import type { Chars, u8 } from "../../flavours.js";
 
 const log = logLib.get("crtc");
 
@@ -32,10 +32,10 @@ function paramCount(cmd: u8) {
   }
 }
 
-export interface CrtcSnapshot {
+export interface CRTCSnapshot {
   status: u8;
-  charsPerRow: number;
-  rowsPerScreen: number;
+  charsPerRow: Chars;
+  rowsPerScreen: Chars;
   attrPairsPerRow: number;
   charHeightLines: number;
   displayOn: boolean;
@@ -56,8 +56,8 @@ export class μPD3301 {
   // what region of TVRAM the CRTC actually visualises. Initialised
   // to "not yet programmed" so PC88TextDisplay can fall back to the
   // raw dump until BASIC issues a SET MODE.
-  charsPerRow = 0;
-  rowsPerScreen = 0;
+  charsPerRow: Chars = 0;
+  rowsPerScreen: Chars = 0;
   attrPairsPerRow = 0;
   charHeightLines = 0;
   // True after START DISPLAY (cmd 0x20-0x3F); cleared by RESET. A
@@ -77,7 +77,7 @@ export class μPD3301 {
     else this.status &= ~0x10;
   }
 
-  snapshot(): CrtcSnapshot {
+  snapshot(): CRTCSnapshot {
     return {
       status: this.status,
       charsPerRow: this.charsPerRow,
@@ -91,7 +91,7 @@ export class μPD3301 {
     };
   }
 
-  fromSnapshot(s: CrtcSnapshot): void {
+  fromSnapshot(s: CRTCSnapshot): void {
     this.status = s.status;
     this.charsPerRow = s.charsPerRow;
     this.rowsPerScreen = s.rowsPerScreen;

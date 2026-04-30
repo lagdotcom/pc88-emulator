@@ -1,5 +1,5 @@
 import type { MemoryProvider } from "../src/core/MemoryBus.js";
-import type { u8, u16 } from "../src/flavours.js";
+import type { Hours, Minutes, Seconds, u8, u16 } from "../src/flavours.js";
 
 export function filledROM(size: number, fill: u8) {
   return new Uint8Array(size).fill(fill);
@@ -43,4 +43,14 @@ export class TestIO {
   write = (port: u16, value: u8): void => {
     this.writes.push([port, value]);
   };
+}
+
+export function formatHMS(time: Seconds): string {
+  if (!isFinite(time) || time < 0) return "?";
+  const h: Hours = Math.floor(time / 3600);
+  const m: Minutes = Math.floor((time % 3600) / 60);
+  const s: Seconds = Math.floor(time % 60);
+  if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m`;
+  if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`;
+  return `${s}s`;
 }

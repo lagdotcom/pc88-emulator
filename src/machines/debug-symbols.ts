@@ -10,8 +10,8 @@
 // to dispatch lookups + mutations to the right per-ROM file.
 
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { ResolveLabel } from "../chips/z80/disasm.js";
 import {
@@ -22,20 +22,21 @@ import {
   setSymbol,
   type SymbolFile,
 } from "../chips/z80/symbols.js";
+import type { FilesystemPath, ROMID } from "../flavours.js";
 import type { ROMDescriptor } from "./config.js";
 import type { PC88Machine } from "./pc88.js";
-import type { LoadedRoms } from "./pc88-memory.js";
+import type { LoadedROMs } from "./pc88-memory.js";
 
-const SYMS_DIR = "syms";
+const SYMS_DIR: FilesystemPath = "syms";
 
 interface DebugSymbolEntry {
-  romId: string;
+  romId: ROMID;
   romBytes: Uint8Array; // for md5 computation when seeding a new file
   file: SymbolFile;
 }
 
 export interface DebugSymbols {
-  byRomId: Map<string, DebugSymbolEntry>;
+  byRomId: Map<ROMID, DebugSymbolEntry>;
   // The resolver to pass to disassemble() — captures `this` so
   // memory-map state at lookup time picks the right ROM.
   resolver: ResolveLabel;
@@ -92,7 +93,7 @@ type u16 = number;
 // its header.
 function bytesForRomAt(
   machine: PC88Machine,
-  loaded: LoadedRoms,
+  loaded: LoadedROMs,
   addr: u16,
 ): Uint8Array | null {
   const id = romIdAt(machine, addr);
@@ -109,11 +110,11 @@ function bytesForRomAt(
 // Walk the ROM manifest for IDs we have loaded byte arrays for. The
 // debugger only cares about ROMs whose contents are actually in
 // memory; absent optional slots are skipped.
-function collectLoadedRomIds(
+function collectLoadedROMIDs(
   config: PC88Machine["config"],
-  loaded: LoadedRoms,
-): { id: string; bytes: Uint8Array }[] {
-  const out: { id: string; bytes: Uint8Array }[] = [];
+  loaded: LoadedROMs,
+): { id: ROMID; bytes: Uint8Array }[] {
+  const out: { id: ROMID; bytes: Uint8Array }[] = [];
   out.push({ id: config.roms.n80.id, bytes: loaded.n80 });
   out.push({ id: config.roms.n88.id, bytes: loaded.n88 });
   if (config.roms.e0 && loaded.e0)
@@ -133,10 +134,10 @@ function collectLoadedRomIds(
 // can write a fresh file on first use.
 export async function loadDebugSymbols(
   machine: PC88Machine,
-  loaded: LoadedRoms,
+  loaded: LoadedROMs,
 ): Promise<DebugSymbols> {
   const byRomId = new Map<string, DebugSymbolEntry>();
-  for (const { id, bytes } of collectLoadedRomIds(machine.config, loaded)) {
+  for (const { id, bytes } of collectLoadedROMIDs(machine.config, loaded)) {
     const path = join(SYMS_DIR, `${id}.sym`);
     const file = (await loadSymbolFile(path)) ?? emptySymbolFile(path);
     if (file.md5) {
@@ -166,12 +167,12 @@ export async function loadDebugSymbols(
 // can detect ROM-revision drift.
 export async function addLabel(
   machine: PC88Machine,
-  loaded: LoadedRoms,
+  loaded: LoadedROMs,
   syms: DebugSymbols,
   addr: u16,
   name: string,
   comment?: string,
-): Promise<{ romId: string; path: string }> {
+): Promise<{ romId: ROMID; path: FilesystemPath }> {
   const id = romIdAt(machine, addr);
   if (!id) {
     throw new Error(
@@ -180,7 +181,9 @@ export async function addLabel(
   }
   const entry = syms.byRomId.get(id);
   if (!entry) {
-    throw new Error(`no symbol-file entry for ROM ${id} (this shouldn't happen)`);
+    throw new Error(
+      `no symbol-file entry for ROM ${id} (this shouldn't happen)`,
+    );
   }
 
   // First-mutation seeding: stamp the md5 header so a future load
@@ -215,7 +218,7 @@ export async function deleteLabel(
   machine: PC88Machine,
   syms: DebugSymbols,
   addrOrName: u16 | string,
-): Promise<{ romId: string; path: string } | null> {
+): Promise<{ romId: ROMID; path: FilesystemPath } | null> {
   if (typeof addrOrName === "number") {
     const id = romIdAt(machine, addrOrName);
     if (!id) return null;

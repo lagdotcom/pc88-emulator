@@ -16,6 +16,7 @@ import {
   fdOpCodes,
   opCodes,
 } from "../../src/chips/z80/ops.js";
+import type { FilesystemPath } from "../../src/flavours.js";
 import { byte } from "../../src/tools.js";
 import { loadTests } from "./fetch.js";
 import {
@@ -31,7 +32,7 @@ const PREFIX_BYTES = new Set([0xcb, 0xdd, 0xed, 0xfd]);
 
 interface OpGroup {
   prefix: string;
-  filename: string;
+  filename: FilesystemPath;
   description: string;
 }
 

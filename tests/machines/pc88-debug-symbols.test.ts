@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  mkdirSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,13 +19,13 @@ import {
   romIdAt,
 } from "../../src/machines/debug-symbols.js";
 import { PC88Machine } from "../../src/machines/pc88.js";
-import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM } from "../tools.testHelpers.js";
+import { filledROM } from "../tools.js";
 
 // Synthetic-ROM fixture so we don't need real BIOS images. Each
 // ROM is filled with a recognisable byte pattern.
-function syntheticRoms(): LoadedRoms {
+function syntheticRoms(): LoadedROMs {
   const n80 = filledROM(0x8000, 0x76);
   const n88 = filledROM(0x8000, 0x77);
   const e0 = filledROM(0x2000, 0xe0);
@@ -76,7 +82,7 @@ describe("romIdAt", () => {
 });
 
 describe("addLabel + deleteLabel + renderLabelList", () => {
-  function makeMachine(): { machine: PC88Machine; roms: LoadedRoms } {
+  function makeMachine(): { machine: PC88Machine; roms: LoadedROMs } {
     const roms = syntheticRoms();
     const machine = new PC88Machine(MKI, roms);
     machine.reset();
@@ -218,8 +224,9 @@ describe("md5 mismatch warning", () => {
     };
     try {
       const syms = await loadDebugSymbols(machine, roms);
-      expect(syms.byRomId.get(MKI.roms.n80.id)?.file.byAddr.get(0x4000)?.name)
-        .toBe("known");
+      expect(
+        syms.byRomId.get(MKI.roms.n80.id)?.file.byAddr.get(0x4000)?.name,
+      ).toBe("known");
     } finally {
       process.stderr.write = origWrite;
     }

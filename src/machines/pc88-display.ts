@@ -1,18 +1,19 @@
 import type { μPD3301 } from "../chips/io/μPD3301.js";
 import type { μPD8257 } from "../chips/io/μPD8257.js";
+import type { Chars, Pixels, u16 } from "../flavours.js";
 import type { PC88MemoryMap } from "./pc88-memory.js";
 
 export interface TextFrame {
   readonly chars: Uint8Array; // length cols * rows
   readonly attrs: Uint8Array; // same shape; attribute bytes from TVRAM
-  readonly cursor: { row: number; col: number } | null;
-  readonly cols: number;
-  readonly rows: number;
+  readonly cursor: { row: Chars; col: Chars } | null;
+  readonly cols: Chars;
+  readonly rows: Chars;
 }
 
 export interface PixelFrame {
-  readonly width: number;
-  readonly height: number;
+  readonly width: Pixels;
+  readonly height: Pixels;
   readonly rgba: Uint8ClampedArray;
 }
 
@@ -25,13 +26,13 @@ export interface PC88Display {
   getPixelFrame(): PixelFrame | null;
   // Convenience: text frame projected to a printable string with row
   // breaks. Used by the CLI runner and the synthetic-ROM tests.
-  toAsciiDump(): string;
+  toASCIIDump(): string;
   // Raw whole-TVRAM dump for debugging — ignores CRTC + DMAC config
   // and emits a classic hex+ASCII dump (16 bytes per line, 256
   // lines for the full 4 KB region) addressed in absolute CPU
   // memory (so 0xF000 is row 0). Useful for spotting what the BIOS
   // is using TVRAM for outside the visible area.
-  rawTvramDump(): string;
+  rawTVRAMDump(): string;
 }
 
 // PC-8801 mkI TVRAM layout per row, confirmed empirically against
@@ -123,7 +124,7 @@ export class PC88TextDisplay implements PC88Display {
     return null;
   }
 
-  toAsciiDump(): string {
+  toASCIIDump(): string {
     const frame = this.getTextFrame();
     if (frame.cols === 0 || frame.rows === 0) {
       return "(CRTC not yet programmed; use rawTvramDump for diagnostic view)";
@@ -131,7 +132,7 @@ export class PC88TextDisplay implements PC88Display {
     return formatGrid(frame.chars, frame.cols, frame.rows);
   }
 
-  rawTvramDump(): string {
+  rawTVRAMDump(): string {
     return hexDump(this.memory.tvram, TVRAM_BASE);
   }
 }
@@ -141,7 +142,7 @@ export class PC88TextDisplay implements PC88Display {
 // where AAAA is the absolute address (CPU-side, with `base` added),
 // 16 bytes are shown in two 8-byte groups, and the ASCII column
 // renders printable bytes as-is and non-printables as ".".
-function hexDump(bytes: Uint8Array, base: number): string {
+function hexDump(bytes: Uint8Array, base: u16): string {
   const lines: string[] = [];
   for (let off = 0; off < bytes.length; off += HEX_DUMP_WIDTH) {
     const addr = (base + off).toString(16).padStart(4, "0");
@@ -158,7 +159,7 @@ function hexDump(bytes: Uint8Array, base: number): string {
   return lines.join("\n");
 }
 
-function formatGrid(chars: Uint8Array, cols: number, rows: number): string {
+function formatGrid(chars: Uint8Array, cols: Chars, rows: Chars): string {
   const lines: string[] = [];
   for (let row = 0; row < rows; row++) {
     let line = "";

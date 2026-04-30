@@ -1,8 +1,9 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus } from "../../src/core/MemoryBus.js";
-import type { u16 } from "../../src/flavours.js";
-import { RAM64k, TestIO } from "../tools.testHelpers.js";
+import { mOps } from "../../src/flavour.makers.js";
+import type { Cycles, Operations, u8, u16 } from "../../src/flavours.js";
+import { formatHMS, RAM64k, TestIO } from "../tools.js";
 
 export interface ProgramHarness {
   cpu: Z80;
@@ -29,30 +30,20 @@ export interface RunOptions {
   // Hard cap on instructions executed (catches infinite loops in broken
   // tests). Defaults to ten million, which is enough for most small
   // programs but won't accidentally hang vitest forever.
-  maxOps?: number;
+  maxOps?: Operations;
   // Print a progress message to console.error every N instructions
   // (helps when running long programs like zexdoc). 0 disables.
-  progressEvery?: number;
+  progressEvery?: Operations;
   // Approximate total instructions for the loaded program; if set, the
   // progress message includes a percentage and ETA. Only used to make
   // the log nicer to look at — the actual run still terminates on its
   // own (BDOS function 0, HALT, or maxOps).
-  approxTotalOps?: number;
-}
-
-function formatHms(seconds: number): string {
-  if (!isFinite(seconds) || seconds < 0) return "?";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.floor(seconds % 60);
-  if (h > 0) return `${h}h${m.toString().padStart(2, "0")}m`;
-  if (m > 0) return `${m}m${s.toString().padStart(2, "0")}s`;
-  return `${s}s`;
+  approxTotalOps?: Operations;
 }
 
 export interface RunResult {
-  ops: number;
-  cycles: number;
+  ops: Operations;
+  cycles: Cycles;
 }
 
 // Loads `bytes` and runs until the CPU executes HALT. Returns the number
@@ -65,7 +56,7 @@ export function runUntilHalt(
   const loadAddr = opts.loadAddr ?? 0x0000;
   const startPc = opts.startPc ?? loadAddr;
   const sp = opts.sp ?? 0xffff;
-  const max = opts.maxOps ?? 10_000_000;
+  const max = opts.maxOps ?? mOps(10);
 
   const { cpu, ram } = h;
   for (let i = 0; i < bytes.length; i++) {
@@ -98,20 +89,20 @@ export function runUntilHalt(
 // simulates a RET, so the loaded program runs as if BDOS were resident.
 export interface CpmResult {
   output: string;
-  ops: number;
-  cycles: number;
+  ops: Operations;
+  cycles: Cycles;
   exitReason: "bdos-terminate" | "warm-boot" | "halt" | "max-ops";
 }
 
 export function runCpm(
   h: ProgramHarness,
-  bytes: ArrayLike<number>,
+  bytes: ArrayLike<u8>,
   opts: RunOptions = {},
 ): CpmResult {
   const loadAddr = opts.loadAddr ?? 0x0100;
   const startPc = opts.startPc ?? loadAddr;
   const sp = opts.sp ?? 0xff00;
-  const max = opts.maxOps ?? 200_000_000;
+  const max = opts.maxOps ?? mOps(200);
 
   const { cpu, ram } = h;
   ram.bytes.fill(0);
@@ -183,7 +174,7 @@ export function runCpm(
       const total = opts.approxTotalOps;
       if (total !== undefined && ops < total) {
         const pct = ((ops / total) * 100).toFixed(1);
-        eta = `, ${pct}% done, ETA ~${formatHms((total - ops) / rate)}`;
+        eta = `, ${pct}% done, ETA ~${formatHMS((total - ops) / rate)}`;
       }
       console.error(
         `[cpm] ${ops.toLocaleString()} ops, ${sec.toFixed(1)}s, ` +

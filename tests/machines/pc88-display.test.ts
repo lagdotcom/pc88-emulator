@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import type { u8 } from "../../src/flavours.js";
+import type { u8, u16 } from "../../src/flavours.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
-import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM } from "../tools.testHelpers.js";
+import { filledROM } from "../tools.js";
 
-function syntheticRoms(program: u8[]): LoadedRoms {
+function syntheticRoms(program: u8[]): LoadedROMs {
   const n80 = filledROM(0x8000, 0x76);
   for (let i = 0; i < program.length; i++) n80[i] = program[i]!;
   const n88 = filledROM(0x8000, 0x76);
@@ -16,7 +16,7 @@ function syntheticRoms(program: u8[]): LoadedRoms {
 
 // Helper: drop a string into TVRAM at the given absolute address as
 // 2-byte cells (char + 0x00 attribute).
-function fillTextCells(machine: PC88Machine, addr: number, s: string): void {
+function fillTextCells(machine: PC88Machine, addr: u16, s: string): void {
   const tvramOffset = addr - 0xf000;
   for (let i = 0; i < s.length; i++) {
     machine.memoryMap.tvram[tvramOffset + i * 2] = s.charCodeAt(i);
@@ -29,7 +29,7 @@ describe("PC88TextDisplay visible region", () => {
     const machine = new PC88Machine(MKI, syntheticRoms([0x76])); // HALT
     machine.reset();
     runMachine(machine, { maxOps: 10 });
-    const dump = machine.display.toAsciiDump();
+    const dump = machine.display.toASCIIDump();
     expect(dump).toMatch(/CRTC not yet programmed/);
   });
 
@@ -54,7 +54,7 @@ describe("PC88TextDisplay visible region", () => {
 
     fillTextCells(machine, 0xf300, "HELLO");
 
-    const dump = machine.display.toAsciiDump();
+    const dump = machine.display.toASCIIDump();
     const lines = dump.split("\n");
     expect(lines[0]).toBe("HELLO");
     expect(lines).toHaveLength(20);
@@ -78,7 +78,7 @@ describe("PC88TextDisplay visible region", () => {
     fillTextCells(machine, 0xf000, "OFFSCREEN");
     fillTextCells(machine, 0xf300, "VISIBLE");
 
-    const dump = machine.display.toAsciiDump();
+    const dump = machine.display.toASCIIDump();
     expect(dump).not.toMatch(/OFFSCREEN/);
     expect(dump).toMatch(/^VISIBLE/);
   });
@@ -87,7 +87,7 @@ describe("PC88TextDisplay visible region", () => {
     const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
     machine.reset();
     fillTextCells(machine, 0xf000, "OFFSCREEN");
-    const dump = machine.display.rawTvramDump();
+    const dump = machine.display.rawTVRAMDump();
     // 4 KB / 16 bytes per line = 256 lines.
     expect(dump.split("\n")).toHaveLength(256);
     // First line should contain the 'O' 'F' 'F' bytes interleaved

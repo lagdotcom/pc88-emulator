@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Bytes } from "../flavours.js";
+import type { Bytes, FilesystemPath } from "../flavours.js";
 import type { PC88Config, ROMDescriptor, ROMManifest } from "./config.js";
 
 // ROMs found on disk, keyed by their slot in `ROMManifest`. Required
@@ -19,7 +19,7 @@ export interface RomLoadOptions {
   // Directory to search. Defaults to the `roms/` folder at repo root,
   // overridable via env var (the caller is expected to pass through
   // `process.env.PC88_ROM_DIR`).
-  dir?: string;
+  dir?: FilesystemPath;
   // Disable md5 verification. Used by the synthetic-ROM tests, which
   // build images on the fly.
   skipMd5?: boolean;

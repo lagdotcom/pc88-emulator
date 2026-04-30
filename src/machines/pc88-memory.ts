@@ -15,7 +15,7 @@ const PAGE_COUNT = 0x10000 >> PAGE_SHIFT;
 // font / kanji ROMs are optional and per-variant. The map falls
 // back to the BASIC ROM continuation at 0x6000-0x7FFF when the
 // active extension slot has no image loaded.
-export interface LoadedRoms {
+export interface LoadedROMs {
   readonly n80: Uint8Array; // 32 KB
   readonly n88: Uint8Array; // 32 KB
   readonly e0?: Uint8Array; //  8 KB
@@ -25,7 +25,7 @@ export interface LoadedRoms {
 }
 
 export type BasicMode = "n80" | "n88";
-export type EromSlot = 0 | 1 | 2 | 3;
+export type EROMSlot = 0 | 1 | 2 | 3;
 
 // PC-88 memory layout, paged at 4 KB granularity. Reads dispatch
 // through `readPages[addr >> 12][addr & 0xfff]` — one indirection,
@@ -72,7 +72,7 @@ export class PC88MemoryMap implements MemoryProvider {
   // the enable when it wants an E-ROM in. Earlier code modelled
   // "slot 0 = always-enabled E0" which broke first-light because
   // E0 was mapped at 0x6000 before the BIOS asked for it.
-  private _eromSlot: EromSlot = 0;
+  private _eromSlot: EROMSlot = 0;
   private _eromEnabled = false;
   private _vramEnabled = false;
   private _gvramPlane: 0 | 1 | 2 = 0;
@@ -84,7 +84,7 @@ export class PC88MemoryMap implements MemoryProvider {
   readonly readPages: Uint8Array[] = new Array(PAGE_COUNT);
   readonly writePages: Uint8Array[] = new Array(PAGE_COUNT);
 
-  constructor(private readonly roms: LoadedRoms) {
+  constructor(private readonly roms: LoadedROMs) {
     this.refreshPages();
   }
 
@@ -108,7 +108,7 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
-  setEromSlot(slot: EromSlot): void {
+  setEromSlot(slot: EROMSlot): void {
     if (this._eromSlot === slot) return;
     this._eromSlot = slot;
     this.refreshPages();
@@ -138,7 +138,7 @@ export class PC88MemoryMap implements MemoryProvider {
   get basicMode(): BasicMode {
     return this._basicMode;
   }
-  get eromSlot(): EromSlot {
+  get eromSlot(): EROMSlot {
     return this._eromSlot;
   }
   get eromEnabled(): boolean {

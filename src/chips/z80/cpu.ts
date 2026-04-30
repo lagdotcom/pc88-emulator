@@ -2,7 +2,7 @@ import logLib from "log";
 
 import { IOBus } from "../../core/IOBus.js";
 import { MemoryBus } from "../../core/MemoryBus.js";
-import type { u8 } from "../../flavours.js";
+import type { Cycles, s8, u8 } from "../../flavours.js";
 import { byte, isDefined, word } from "../../tools.js";
 import {
   cbOpCodes,
@@ -42,8 +42,8 @@ export type Prefix =
   | { type: "ED" }
   | { type: "DD" }
   | { type: "FD" }
-  | { type: "DDCB"; displacement: number }
-  | { type: "FDCB"; displacement: number };
+  | { type: "DDCB"; displacement: s8 }
+  | { type: "FDCB"; displacement: s8 };
 
 const opTables = {
   CB: cbOpCodes,
@@ -55,7 +55,7 @@ const opTables = {
 };
 
 export class Z80 {
-  cycles: number;
+  cycles: Cycles;
   eiDelay: boolean;
   halted: boolean;
   iff1: boolean;

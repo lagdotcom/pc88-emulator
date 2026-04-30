@@ -38,16 +38,17 @@ describe("symbol-file parser", () => {
   });
 
   it("preserves comments and blank lines through round-trip", () => {
-    const text = [
-      "# Header comment",
-      "# md5: aabbccdd00112233aabbccdd00112233",
-      "",
-      "# Section: print path",
-      "0x5550 print_string         ; with inline comment",
-      "",
-      "# Section: data",
-      "0x79BE str_banner",
-    ].join("\n") + "\n";
+    const text =
+      [
+        "# Header comment",
+        "# md5: aabbccdd00112233aabbccdd00112233",
+        "",
+        "# Section: print path",
+        "0x5550 print_string         ; with inline comment",
+        "",
+        "# Section: data",
+        "0x79BE str_banner",
+      ].join("\n") + "\n";
 
     const f = parseSymbolFile(text, "test.sym");
     const out = serialiseSymbolFile(f);

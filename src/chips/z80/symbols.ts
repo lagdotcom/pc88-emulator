@@ -28,13 +28,15 @@
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
+import type { FilesystemPath, MD5Sum, u16 } from "../../flavours.js";
+
 const MD5_HEADER_RE = /^\s*#\s*md5:\s*([0-9a-fA-F]{32})\s*$/;
 const SYMBOL_LINE_RE =
   /^\s*0x([0-9A-Fa-f]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:;(.*))?\s*$/;
 const COMMENT_LINE_RE = /^\s*(#.*)?$/;
 
 export interface SymbolEntry {
-  addr: number;
+  addr: u16;
   name: string;
   // Inline `; ...` comment; preserved across rewrites.
   comment?: string;
@@ -53,15 +55,15 @@ type FileEntry =
 
 export interface SymbolFile {
   // Quick lookup; same SymbolEntry instances as in `entries`.
-  byAddr: Map<number, SymbolEntry>;
+  byAddr: Map<u16, SymbolEntry>;
   byName: Map<string, SymbolEntry>;
   // Optional md5 from the `# md5: <hash>` header line.
-  md5?: string;
+  md5?: MD5Sum;
   // Ordered list of every line in the file. Used to rewrite the
   // file with comments + blank lines preserved.
   entries: FileEntry[];
   // Path the file was loaded from; saved-to on rewrites.
-  path: string;
+  path: FilesystemPath;
 }
 
 // Read-only view used by callers that just want to look symbols up
@@ -69,7 +71,7 @@ export interface SymbolFile {
 // but composeable: in phase 2 we'll merge per-ROM + RAM + port
 // tables behind this same interface.
 export interface SymbolTable {
-  lookup(addr: number): string | undefined;
+  lookup(addr: u16): string | undefined;
 }
 
 export function symbolTable(file: SymbolFile): SymbolTable {
@@ -96,7 +98,7 @@ export function parseSymbolFile(text: string, path: string): SymbolFile {
   const entries: FileEntry[] = [];
   const byAddr = new Map<number, SymbolEntry>();
   const byName = new Map<string, SymbolEntry>();
-  let md5: string | undefined;
+  let md5: MD5Sum | undefined;
 
   // Drop the empty trailing element split produces when the file
   // ends with a newline (which it almost always should). Otherwise
@@ -181,7 +183,7 @@ export function serialiseSymbolFile(file: SymbolFile): string {
 // caller doesn't supply a new one.
 export function setSymbol(
   file: SymbolFile,
-  addr: number,
+  addr: u16,
   name: string,
   comment?: string,
 ): void {
@@ -216,7 +218,7 @@ export function setSymbol(
 // only the symbol's line vanishes.
 export function removeSymbol(
   file: SymbolFile,
-  addrOrName: number | string,
+  addrOrName: u16 | string,
 ): boolean {
   let target: SymbolEntry | undefined;
   if (typeof addrOrName === "number") {
@@ -237,7 +239,7 @@ export function removeSymbol(
 // Empty file used when no symbol file exists yet but the caller
 // wants a writable handle (debugger creating labels for the first
 // time).
-export function emptySymbolFile(path: string): SymbolFile {
+export function emptySymbolFile(path: FilesystemPath): SymbolFile {
   return {
     byAddr: new Map(),
     byName: new Map(),
@@ -246,7 +248,9 @@ export function emptySymbolFile(path: string): SymbolFile {
   };
 }
 
-export async function loadSymbolFile(path: string): Promise<SymbolFile | null> {
+export async function loadSymbolFile(
+  path: FilesystemPath,
+): Promise<SymbolFile | null> {
   if (!existsSync(path)) return null;
   const text = await readFile(path, "utf-8");
   return parseSymbolFile(text, path);

@@ -3,42 +3,49 @@ import { createInterface } from "node:readline/promises";
 import logLib from "log";
 
 import { disassemble } from "../chips/z80/disasm.js";
+import { mOps } from "../flavour.makers.js";
+import type { Bytes, Cycles, Operations, u8, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import {
   addLabel,
+  type DebugSymbols,
   deleteLabel,
   loadDebugSymbols,
   renderLabelList,
-  type DebugSymbols,
 } from "./debug-symbols.js";
-import { PC88Machine, makeVblState, pumpVbl, stepOneInstruction } from "./pc88.js";
-import type { LoadedRoms } from "./pc88-memory.js";
+import {
+  makeVblState,
+  PC88Machine,
+  pumpVbl,
+  stepOneInstruction,
+} from "./pc88.js";
+import type { LoadedROMs } from "./pc88-memory.js";
 
 const log = logLib.get("debug");
 
 // Cap on instructions executed by `continue` / step-over to keep a
 // runaway BIOS from locking up the REPL. ~5M is comfortably more
 // than a full N-BASIC banner takes.
-const CONTINUE_MAX_OPS = 5_000_000;
+const CONTINUE_MAX_OPS = mOps(5);
 
 export interface DebugOptions {
   // Optional initial breakpoint addresses. CLI passes the parsed
   // `--break=ADDR` here.
-  initialBreakpoints?: number[];
+  initialBreakpoints?: u16[];
   // Loaded ROM bytes — needed by the symbol layer to compute md5
   // headers for newly-created files. Optional so synthetic-ROM
   // tests can pass `undefined` and skip symbol loading entirely.
-  loadedRoms?: LoadedRoms;
+  loadedRoms?: LoadedROMs;
 }
 
 interface DebugState {
   breakpoints: Set<number>;
-  ops: number;
+  ops: Operations;
   vbl: ReturnType<typeof makeVblState>;
   // Set during step-over: target PC where execution should pause if
   // it returns from the called subroutine. null means "no pending
   // step-over".
-  stepOverTarget: number | null;
+  stepOverTarget: u16 | null;
 }
 
 const HELP = `\
@@ -87,7 +94,7 @@ function parseCycleArg(raw: string): number | null {
 }
 
 // Hex parser that accepts "0xff", "ff", or decimal "255".
-function parseAddr(raw: string | undefined): number | null {
+function parseAddr(raw: string | undefined): u16 | null {
   if (!raw) return null;
   const s = raw.trim().toLowerCase();
   if (s.length === 0) return null;
@@ -108,7 +115,7 @@ function parseAddr(raw: string | undefined): number | null {
 // CALL family — return (1) bytes consumed, or null if not a CALL.
 // Conditional CALL Cc, RST p both included. CALL inside DD/FD/CB
 // prefix isn't a thing; we check the unprefixed byte at PC.
-function callOpLength(opcode: number): number | null {
+function callOpLength(opcode: u8): Bytes | null {
   // Unconditional CALL: 0xCD, 3 bytes
   if (opcode === 0xcd) return 3;
   // Conditional CALL Cc: 0xC4 / CC / D4 / DC / E4 / EC / F4 / FC, 3 bytes
@@ -173,7 +180,10 @@ function printPromptSummary(
   const pc = machine.cpu.regs.PC;
   const opts = syms ? { resolveLabel: syms.resolver } : {};
   const d = disassemble((a) => machine.memBus.read(a), pc, opts);
-  const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+  const bytesStr = d.bytes
+    .map((b) => byte(b))
+    .join(" ")
+    .padEnd(11);
   // If this PC has its own label, print it as a header line so
   // function entry points stand out — same convention `yarn dis`
   // uses.
@@ -188,7 +198,7 @@ function printPromptSummary(
 function printDisassembly(
   machine: PC88Machine,
   syms: DebugSymbols | null,
-  count: number,
+  count: Bytes,
 ): void {
   let pc = machine.cpu.regs.PC;
   const opts = syms ? { resolveLabel: syms.resolver } : {};
@@ -196,13 +206,16 @@ function printDisassembly(
     const labelHere = syms?.resolver(pc);
     if (labelHere) process.stdout.write(`${labelHere}:\n`);
     const d = disassemble((a) => machine.memBus.read(a), pc, opts);
-    const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+    const bytesStr = d.bytes
+      .map((b) => byte(b))
+      .join(" ")
+      .padEnd(11);
     process.stdout.write(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
     pc = (pc + d.length) & 0xffff;
   }
 }
 
-function doPeek(machine: PC88Machine, addr: number, count: number): void {
+function doPeek(machine: PC88Machine, addr: u16, count: Bytes): void {
   let line = `  ${word(addr)}:`;
   for (let i = 0; i < count; i++) {
     if (i > 0 && i % 16 === 0) {
@@ -214,7 +227,7 @@ function doPeek(machine: PC88Machine, addr: number, count: number): void {
   process.stdout.write(line + "\n");
 }
 
-function doPeekWord(machine: PC88Machine, addr: number): void {
+function doPeekWord(machine: PC88Machine, addr: u16): void {
   const lo = machine.memBus.read(addr & 0xffff);
   const hi = machine.memBus.read((addr + 1) & 0xffff);
   const w = ((hi << 8) | lo) & 0xffff;
@@ -244,7 +257,7 @@ function runUntilStop(
   machine: PC88Machine,
   state: DebugState,
   reasonHint: string,
-  maxCycles?: number,
+  maxCycles?: Cycles,
 ): void {
   const startOps = state.ops;
   const startCycles = machine.cpu.cycles;
@@ -364,7 +377,7 @@ export async function runDebug(
           // forward by ~one frame's worth" without setting a PC
           // breakpoint. Hex (0x... or trailing hex chars) and
           // decimal both work.
-          let cycleBudget: number | undefined;
+          let cycleBudget: Cycles | undefined;
           if (args[0] !== undefined) {
             const n = parseCycleArg(args[0]);
             if (n === null) {
@@ -420,7 +433,7 @@ export async function runDebug(
           // ---" block. Renders the CRTC+DMAC region; falls back to a
           // placeholder string before SET MODE has run so the user
           // doesn't have to remember which init step gates it.
-          process.stdout.write(machine.display.toAsciiDump() + "\n");
+          process.stdout.write(machine.display.toASCIIDump() + "\n");
           break;
 
         case "dis":
@@ -487,8 +500,9 @@ export async function runDebug(
             process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
             break;
           }
-          const target =
-            /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
+          const target = /^[A-Za-z_]/.test(arg)
+            ? arg
+            : (parseAddr(arg) ?? null);
           if (target === null) {
             process.stdout.write(`  bad address or name: ${arg}\n`);
             break;

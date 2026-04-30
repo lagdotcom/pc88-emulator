@@ -7,13 +7,19 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus } from "../../src/core/MemoryBus.js";
-import type { u8 } from "../../src/flavours.js";
-import { RAM64k } from "../tools.testHelpers.js";
+import { mOps } from "../../src/flavour.makers.js";
+import type {
+  Bytes,
+  Milliseconds,
+  Operations,
+  u8,
+} from "../../src/flavours.js";
+import { RAM64k } from "../tools.js";
 
 interface Bench {
   name: string;
   program: u8[];
-  iterations: number; // how many ops per program completion
+  iterations: Operations; // how many ops per program completion
 }
 
 // Tight loop: NOP NOP NOP ... HALT, with the loop counter set up via DJNZ.
@@ -25,7 +31,7 @@ function nopLoop(loops: number): Bench {
   //       DJNZ loop
   // HALT
   const innerNops = 16;
-  const program: number[] = [];
+  const program: u8[] = [];
   program.push(0x06, loops & 0xff); // LD B,N
   const loopStart = program.length;
   for (let i = 0; i < innerNops; i++) program.push(0x00); // NOP
@@ -70,7 +76,7 @@ function addLoop(loops: number): Bench {
 }
 
 // LDIR — exercises memory R-M-W and the looping ED prefix.
-function ldirLoop(bytes: number): Bench {
+function ldirLoop(bytes: Bytes): Bench {
   // LD HL,0x0200
   // LD DE,0x0400
   // LD BC,N
@@ -91,7 +97,9 @@ function ldirLoop(bytes: number): Bench {
   };
 }
 
-function run(bench: Bench, repeats: number): { mops: number; ms: number } {
+const MAX_OPS = mOps(50);
+
+function run(bench: Bench, repeats: number) {
   const ram = new RAM64k();
   for (let i = 0; i < bench.program.length; i++)
     ram.bytes[0x0100 + i] = bench.program[i]!;
@@ -111,13 +119,13 @@ function run(bench: Bench, repeats: number): { mops: number; ms: number } {
     while (!cpu.halted) {
       cpu.runOneOp();
       ops++;
-      if (ops > 50_000_000) throw new Error(`runaway in ${bench.name}`);
+      if (ops > MAX_OPS) throw new Error(`runaway in ${bench.name}`);
     }
   }
 
   // Measured run
-  const start = Date.now();
-  let ops = 0;
+  const start: Milliseconds = Date.now();
+  let ops: Operations = 0;
   for (let r = 0; r < repeats; r++) {
     cpu.regs.PC = 0x0100;
     cpu.regs.SP = 0xff00;
@@ -128,9 +136,9 @@ function run(bench: Bench, repeats: number): { mops: number; ms: number } {
       ops++;
     }
   }
-  const ms = Date.now() - start;
-  const mops = ops / 1_000_000 / (ms / 1000);
-  return { mops, ms };
+
+  const ms: Milliseconds = Date.now() - start;
+  return { ms, ops };
 }
 
 function main() {
@@ -145,9 +153,10 @@ function main() {
   );
   console.log("-".repeat(60));
   for (const { bench, repeats } of benches) {
-    const { mops, ms } = run(bench, repeats);
+    const { ms, ops } = run(bench, repeats);
+    const rate = ops / 1_000_000 / (ms / 1000);
     console.log(
-      `${bench.name.padEnd(40)} ${ms.toString().padStart(8)} ${mops.toFixed(2).padStart(10)}`,
+      `${bench.name.padEnd(40)} ${ms.toString().padStart(8)} ${rate.toFixed(2).padStart(10)}`,
     );
   }
 }

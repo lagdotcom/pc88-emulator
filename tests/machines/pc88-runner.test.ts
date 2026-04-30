@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 
+import { mCycles } from "../../src/flavour.makers.js";
 import type { u8 } from "../../src/flavours.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
-import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM } from "../tools.testHelpers.js";
+import { filledROM } from "../tools.js";
 
-function syntheticRoms(program: u8[]): LoadedRoms {
+function syntheticRoms(program: u8[]): LoadedROMs {
   const n80 = filledROM(0x8000, 0x76);
   for (let i = 0; i < program.length; i++) n80[i] = program[i]!;
 
@@ -15,6 +16,8 @@ function syntheticRoms(program: u8[]): LoadedRoms {
 
   return { n80, n88, e0 };
 }
+
+const MAX_CYCLES = mCycles(5);
 
 describe("runMachine VBL gating via IRQ mask register", () => {
   // Program that arms IFF1 and HALTs at 0x0002. With IFF1=true the
@@ -35,7 +38,7 @@ describe("runMachine VBL gating via IRQ mask register", () => {
     // load reads 0x5EED; the test only cares that IRQs DO get
     // delivered, so we don't follow the post-jump path — running
     // 5M cycles is enough to see ~75 VBL pulses' worth of activity.
-    const result = runMachine(machine, { maxCycles: 5_000_000 });
+    const result = runMachine(machine, { maxCycles: MAX_CYCLES });
     expect(result.vblIrqsRaised).toBeGreaterThan(0);
     expect(result.vblIrqsMasked).toBe(0);
   });
@@ -47,7 +50,7 @@ describe("runMachine VBL gating via IRQ mask register", () => {
     machine.ioBus.write(0xe6, 0x00);
     expect(machine.irq.vblMasked()).toBe(true);
 
-    const result = runMachine(machine, { maxCycles: 5_000_000 });
+    const result = runMachine(machine, { maxCycles: MAX_CYCLES });
     expect(result.vblIrqsRaised).toBe(0);
     expect(result.vblIrqsMasked).toBeGreaterThan(0);
     // Stays in HALT the whole time because no IRQ ever wakes it.

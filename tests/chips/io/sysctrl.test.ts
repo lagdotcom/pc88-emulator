@@ -5,7 +5,7 @@ import { SystemController } from "../../../src/chips/io/sysctrl.js";
 import { IOBus } from "../../../src/core/IOBus.js";
 import type { u8 } from "../../../src/flavours.js";
 import { PC88MemoryMap } from "../../../src/machines/pc88-memory.js";
-import { filledROM } from "../../tools.testHelpers.js";
+import { filledROM } from "../../tools.js";
 
 function setup(dipPort30: u8 = 0xab, dipPort31: u8 = 0xcd) {
   const memoryMap = new PC88MemoryMap({

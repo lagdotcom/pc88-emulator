@@ -2,7 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
-import type { DipSwitchState } from "../../machines/config.js";
+import type { DIPSwitchState } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
 import type { Beeper } from "./beeper.js";
 
@@ -69,7 +69,7 @@ export class SystemController {
   constructor(
     private readonly memoryMap: PC88MemoryMap,
     private readonly beeper: Beeper,
-    dips: DipSwitchState,
+    dips: DIPSwitchState,
   ) {
     this.dipSwitch1 = dips.port30;
     this.dipSwitch2 = dips.port31;

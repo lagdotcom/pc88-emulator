@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { disassemble } from "../../src/chips/z80/disasm.js";
+import type { u8, u16 } from "../../src/flavours.js";
 
 // Build a reader that returns the bytes from `program` starting at
 // `base` and 0xFF elsewhere — saves boilerplate in each test case.
-function readerFor(program: number[], base = 0): (addr: number) => number {
+function readerFor(program: u8[], base = 0): (addr: u16) => u8 {
   return (addr) => {
     const i = (addr & 0xffff) - base;
     if (i < 0 || i >= program.length) return 0xff;

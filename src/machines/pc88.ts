@@ -11,12 +11,13 @@ import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
-import type { u16 } from "../flavours.js";
+import { mHz, mOps } from "../flavour.makers.js";
+import type { Cycles, Operations, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import {
-  type LoadedRoms as MemoryLoadedRoms,
+  type LoadedROMs as MemoryLoadedRoms,
   PC88MemoryMap,
 } from "./pc88-memory.js";
 
@@ -26,7 +27,7 @@ const log = logLib.get("pc88");
 // switches between 24 kHz and 15 kHz horizontal rates which gives
 // either 60 Hz / 56 Hz / 24 kHz progressive — all tagged "60 Hz" for
 // frontend purposes here). Z80 main clock is 4 MHz on mkI.
-const Z80_HZ = 4_000_000;
+const Z80_HZ = mHz(4);
 export const VBL_HZ = 60;
 const VBL_PERIOD_CYCLES = Math.round(Z80_HZ / VBL_HZ);
 const VBL_PULSE_CYCLES = Math.round(Z80_HZ * 0.0008); // ~0.8 ms VBL pulse
@@ -178,19 +179,19 @@ export type MachineSnapshot = ReturnType<PC88Machine["snapshot"]>;
 
 export interface RunOptions {
   // Hard cap on instructions executed.
-  maxOps?: number;
+  maxOps?: Operations;
   // Run until this many CPU cycles have elapsed (instruction-level
   // granularity; the runner stops as soon as the cycle count
   // exceeds the limit). Set this OR maxOps.
-  maxCycles?: number;
+  maxCycles?: Cycles;
   // Periodic callback after every N instructions; useful for
   // diagnostics in the CLI runner. Return true to stop early.
-  onProgress?: (ops: number) => boolean | void;
+  onProgress?: (ops: Operations) => boolean | void;
 }
 
 export interface RunResult {
-  ops: number;
-  cycles: number;
+  ops: Operations;
+  cycles: Cycles;
   reason: "max-ops" | "max-cycles" | "halted-no-irq" | "stopped";
   // Snapshot of CPU state at stop. Useful for tracking down "BIOS got
   // stuck somewhere"-class failures without re-running.
@@ -282,7 +283,7 @@ export function runMachine(
   opts: RunOptions = {},
 ): RunResult {
   const { cpu } = machine;
-  const maxOps = opts.maxOps ?? 50_000_000;
+  const maxOps = opts.maxOps ?? mOps(50);
   const maxCycles = opts.maxCycles ?? Number.POSITIVE_INFINITY;
 
   let ops = 0;

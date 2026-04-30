@@ -12,8 +12,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { runMachine, PC88Machine } from "../../src/machines/pc88.js";
-import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import { kOps } from "../../src/flavour.makers.js";
+import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { loadRoms } from "../../src/machines/rom-loader.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
 
@@ -28,9 +29,9 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
         `mkI requires n80 and n88 ROMs in ${ROM_DIR}/ (got ${Object.keys(loaded).join(", ")})`,
       );
     }
-    const machine = new PC88Machine(MKI, loaded as LoadedRoms);
+    const machine = new PC88Machine(MKI, loaded as LoadedROMs);
     machine.reset();
-    runMachine(machine, { maxOps: 150_000 });
+    runMachine(machine, { maxOps: kOps(150) });
 
     // CRTC programmed, DMAC ch2 pointed at the screen, display on.
     expect(machine.crtc.charsPerRow).toBe(80);
@@ -42,7 +43,7 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     // The banner the ROM lays into TVRAM. toAsciiDump renders just
     // the visible region, so each of these strings must appear in
     // the rendered grid.
-    const dump = machine.display.toAsciiDump();
+    const dump = machine.display.toASCIIDump();
     expect(dump).toContain("NEC PC-8001 BASIC Ver 1.2");
     expect(dump).toContain("Copyright 1979 (C) by Microsoft");
     expect(dump).toContain("Ok");
@@ -57,11 +58,14 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     if (!loaded.n80 || !loaded.n88) return;
     const config = {
       ...MKI,
-      dipSwitches: { ...MKI.dipSwitches, port31: MKI.dipSwitches.port31 & ~0x04 },
+      dipSwitches: {
+        ...MKI.dipSwitches,
+        port31: MKI.dipSwitches.port31 & ~0x04,
+      },
     };
-    const machine = new PC88Machine(config, loaded as LoadedRoms);
+    const machine = new PC88Machine(config, loaded as LoadedROMs);
     machine.reset();
-    runMachine(machine, { maxOps: 150_000 });
+    runMachine(machine, { maxOps: kOps(150) });
 
     expect(machine.memoryMap.basicMode).toBe("n88");
     expect(machine.crtc.charsPerRow).toBe(80);

@@ -2,7 +2,7 @@ import { Z80 } from "../../src/chips/z80/cpu.js";
 import { IOBus } from "../../src/core/IOBus.js";
 import { MemoryBus } from "../../src/core/MemoryBus.js";
 import type { u8, u16 } from "../../src/flavours.js";
-import { RAM64k, TestIO } from "../tools.testHelpers.js";
+import { RAM64k, TestIO } from "../tools.js";
 import type { State, TestCase } from "./types.js";
 
 export interface Harness {

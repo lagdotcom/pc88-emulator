@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { u8 } from "../../src/flavours.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
-import type { LoadedRoms } from "../../src/machines/pc88-memory.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM } from "../tools.testHelpers.js";
+import { filledROM } from "../tools.js";
 
-function syntheticRoms(program: u8[]): LoadedRoms {
+function syntheticRoms(program: u8[]): LoadedROMs {
   // Drop the program at the start of the n80 image so reset's PC=0
   // jumps straight into it. The other ROMs are filled with HALT so a
   // misrouted fetch is obvious.
@@ -38,7 +38,7 @@ describe("PC88Machine boot path", () => {
     // rawTvramDump is now a hex+ASCII dump addressed at 0xF000; the
     // first line shows the bytes we wrote, with attribute bytes
     // (which we left as 0x00) rendering as "." in the ASCII column.
-    const dump = machine.display.rawTvramDump();
+    const dump = machine.display.rawTVRAMDump();
     const firstLine = dump.split("\n")[0];
     expect(firstLine).toContain("48 00 49 00");
     expect(firstLine).toContain("H.I.");

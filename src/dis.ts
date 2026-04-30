@@ -37,6 +37,7 @@ import {
   type SymbolTable,
   symbolTable,
 } from "./chips/z80/symbols.js";
+import type { FilesystemPath, u8, u16 } from "./flavours.js";
 import { byte, hex, word } from "./tools.js";
 
 const HELP = `\
@@ -63,7 +64,7 @@ Examples:
   yarn dis --syms=off roms/mkI-n88.rom 0x5550 8
 `;
 
-function parseAddrFlag(raw: string): number | null {
+function parseAddrFlag(raw: string): u16 | null {
   const s = raw.trim().toLowerCase();
   if (s.startsWith("0x")) {
     const n = parseInt(s.slice(2), 16);
@@ -79,15 +80,15 @@ function parseAddrFlag(raw: string): number | null {
 // Map a ROM-file path to its default symbol-file path:
 //   roms/mkI-n88.rom  →  syms/mkI-n88.sym
 // Used when --syms isn't given.
-function defaultSymsPath(romPath: string): string {
+function defaultSymsPath(romPath: FilesystemPath): FilesystemPath {
   const ext = extname(romPath);
   const stem = basename(romPath, ext);
   return join("syms", `${stem}.sym`);
 }
 
 async function loadSymbols(
-  symsArg: string | undefined,
-  romPath: string,
+  symsArg: FilesystemPath | undefined,
+  romPath: FilesystemPath,
   romBytes: Uint8Array,
 ): Promise<SymbolTable | undefined> {
   if (symsArg === "off") return undefined;
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
   // Build a reader that maps CPU-side addresses to file offsets via
   // (addr - base). Out-of-range reads return 0xFF — same convention
   // the Z80 sees when nothing is mapped at an address.
-  const read = (addr: number): number => {
+  const read = (addr: u16): u8 => {
     const off = (addr & 0xffff) - base;
     if (off < 0 || off >= bytes.length) return 0xff;
     return bytes[off]!;
@@ -165,7 +166,7 @@ async function main(): Promise<void> {
       `disassembling ${count} instr from 0x${hex(startAddr, 4)}\n`,
   );
 
-  let pc = startAddr & 0xffff;
+  let pc: u16 = startAddr & 0xffff;
   for (let i = 0; i < count; i++) {
     if (pc >= bytesEnd) break;
 

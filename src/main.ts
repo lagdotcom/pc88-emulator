@@ -6,6 +6,8 @@ import { config as loadDotEnv } from "dotenv";
 import emitter from "log/lib/emitter";
 import startNodeLogging from "log-node";
 
+import { kOps } from "./flavour.makers.js";
+import type { FilesystemPath, Operations, u16 } from "./flavours.js";
 import type { PC88Config } from "./machines/config.js";
 import { runDebug } from "./machines/debug.js";
 import {
@@ -14,7 +16,7 @@ import {
   type RunOptions,
   type RunResult,
 } from "./machines/pc88.js";
-import type { LoadedRoms } from "./machines/pc88-memory.js";
+import type { LoadedROMs } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
 import { MKII } from "./machines/variants/mk2.js";
@@ -22,7 +24,7 @@ import { MKII_FR } from "./machines/variants/mk2fr.js";
 import { MKII_SR } from "./machines/variants/mk2sr.js";
 import { hex } from "./tools.js";
 
-const DEFAULT_MAX_OPS = 150_000;
+const DEFAULT_MAX_OPS = kOps(15);
 
 const variants = [MKI, MKII, MKII_SR, MKII_FR];
 const variantNames = Object.fromEntries(
@@ -31,11 +33,11 @@ const variantNames = Object.fromEntries(
 
 interface CliFlags {
   config: PC88Config;
-  romDir: string;
-  maxOps: number;
+  romDir: FilesystemPath;
+  maxOps: Operations;
   traceIo: "off" | "deduped" | "raw";
   rawTvram: boolean;
-  logFile: string | null;
+  logFile: FilesystemPath | null;
   // Optional BASIC override: if set, flips bit 2 of the variant's
   // DIP port31 before machine construction. null leaves the
   // variant's factory default in place.
@@ -45,7 +47,7 @@ interface CliFlags {
   // user drives execution via step/continue/break/etc.
   debug: boolean;
   // Initial breakpoints to install when --debug is set.
-  initialBreakpoints: number[];
+  initialBreakpoints: u16[];
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -113,7 +115,7 @@ function parseCliFlags(argv: string[]): CliFlags {
   // Parse --break=ADDR (repeatable) into a list of u16 addresses.
   // Accepts "0xff", "ff", or decimal. Fails fast on bad input so
   // the user notices typos instead of silently dropping a breakpoint.
-  const initialBreakpoints: number[] = [];
+  const initialBreakpoints: u16[] = [];
   const breakArgs = (values["break"] as string[] | undefined) ?? [];
   for (const arg of breakArgs) {
     const a = parseAddrFlag(arg);
@@ -135,7 +137,7 @@ function parseCliFlags(argv: string[]): CliFlags {
   };
 }
 
-function parseAddrFlag(raw: string): number | null {
+function parseAddrFlag(raw: string): u16 | null {
   const s = raw.trim().toLowerCase();
   if (s.startsWith("0x")) {
     const n = parseInt(s.slice(2), 16);
@@ -251,7 +253,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   return lines.join("\n");
 }
 
-function addFileLogger(path: string) {
+function addFileLogger(path: FilesystemPath) {
   const ws = createWriteStream(path, { encoding: "utf-8" });
   emitter.on("log", (event) => {
     const msg = event.message.replace(ansiRegex(), "");
@@ -299,7 +301,7 @@ async function main(): Promise<void> {
       }
     : flags.config;
 
-  const machine = new PC88Machine(config, loaded as LoadedRoms);
+  const machine = new PC88Machine(config, loaded as LoadedROMs);
   machine.reset();
 
   if (flags.traceIo !== "off") {
@@ -333,7 +335,7 @@ async function main(): Promise<void> {
     // anyway.
     await runDebug(machine, {
       initialBreakpoints: flags.initialBreakpoints,
-      loadedRoms: loaded as LoadedRoms,
+      loadedRoms: loaded as LoadedROMs,
     });
     return;
   }
@@ -346,7 +348,7 @@ async function main(): Promise<void> {
   // The visible dump renders only the CRTC+DMAC-fetched region — what
   // a real screen would actually show. Falls back to a placeholder if
   // the BIOS hasn't programmed SET MODE yet.
-  const visible = machine.display.toAsciiDump();
+  const visible = machine.display.toASCIIDump();
   process.stdout.write("\n\n--- Visible screen ---\n");
   process.stdout.write(visible);
   // The raw 4 KB hex+ASCII dump is noisy in the normal "boot
@@ -356,7 +358,7 @@ async function main(): Promise<void> {
   const visibleEmpty = visible.startsWith("(CRTC not yet programmed");
   if (flags.rawTvram || visibleEmpty) {
     process.stdout.write("\n\n--- Raw TVRAM (4 KB hex) ---\n");
-    process.stdout.write(machine.display.rawTvramDump());
+    process.stdout.write(machine.display.rawTVRAMDump());
   }
   process.stdout.write("\n------------------\n");
 }

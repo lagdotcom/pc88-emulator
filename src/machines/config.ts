@@ -1,4 +1,4 @@
-import type { Kilobytes, u8 } from "../flavours.js";
+import type { Kilobytes, MD5Sum, ROMID, u8 } from "../flavours.js";
 
 export interface PC88Config {
   readonly model: PC88Model;
@@ -9,7 +9,7 @@ export interface PC88Config {
   readonly sound: SoundConfig;
   readonly disk: DiskConfig;
   readonly roms: ROMManifest;
-  readonly dipSwitches: DipSwitchState;
+  readonly dipSwitches: DIPSwitchState;
 }
 
 // Raw bytes returned by the BIOS reads of ports 0x30 and 0x31 — the
@@ -37,7 +37,7 @@ export interface PC88Config {
 // SystemController consumes them via `register()` and surfaces them to
 // the CPU via port reads — it does not re-encode them from named
 // fields, so adding a new bit is a one-line change here.
-export interface DipSwitchState {
+export interface DIPSwitchState {
   readonly port30: u8;
   readonly port31: u8;
 }
@@ -109,15 +109,15 @@ export interface ROMManifest {
 }
 
 export interface ROMDescriptor {
-  readonly id: string;
+  readonly id: ROMID;
   readonly size: Kilobytes;
-  readonly md5: string;
+  readonly md5: MD5Sum;
   readonly required: boolean;
 }
 
 export const makeROM = (
-  id: string,
+  id: ROMID,
   size: Kilobytes,
-  md5: string,
+  md5: MD5Sum,
   required = true,
 ): ROMDescriptor => ({ id, size, md5, required });
