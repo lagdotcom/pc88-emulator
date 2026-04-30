@@ -3,6 +3,11 @@ import type { Kilobytes, MD5Sum, ROMID, u8 } from "../flavours.js";
 export interface PC88Config {
   readonly model: PC88Model;
   readonly nicknames: string[];
+  // Year of NEC's official release. Sourced from MAME's pc8801.cpp
+  // game-table comments where available. Used for diagnostics
+  // ("PC-8801 mkII SR — 1985, Z80 4 MHz") and any future
+  // "compatibility year" filtering of software.
+  readonly releaseYear: number;
   readonly cpu: CPUConfig;
   readonly memory: MemoryConfig;
   readonly video: VideoConfig;

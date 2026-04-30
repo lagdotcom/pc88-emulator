@@ -16,17 +16,23 @@ export const FR_E3 = makeROM("fr-e3", 8, "3ba670725fb95b3675fcbc75b8b0f49f");
 export const MKII_FR: PC88Config = {
   model: "PC-8801 mkII FR",
   nicknames: ["fr", "mkiifr", "mkii_fr", "mkii-fr"],
+  releaseYear: 1985,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
     textVram: 4,
-    tvramSeparate: false,
+    // FR shares the SR architecture; SR onwards has the dedicated
+    // 4 KB TVRAM chip rather than upper-RAM aliasing.
+    tvramSeparate: true,
     graphicsVramPlanes: 3,
     graphicsVramPerPlane: 16,
     hasExtendedRam: false,
   },
   video: {
-    modes: ["V1", "V2"],
+    // FR ships the n80 ROM and the BIOS still honours the RMODE DIP
+    // bit, so N-BASIC is bootable even though NEC's marketing
+    // dropped it from the front-of-box features list.
+    modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
     hasKanjiRom: true,
   },

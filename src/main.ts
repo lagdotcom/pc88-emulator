@@ -18,15 +18,50 @@ import {
 } from "./machines/pc88.js";
 import type { LoadedROMs } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
+import { FA } from "./machines/variants/fa.js";
+import { FE } from "./machines/variants/fe.js";
+import { FE2 } from "./machines/variants/fe2.js";
+import { FH } from "./machines/variants/fh.js";
+import { MA } from "./machines/variants/ma.js";
+import { MA2 } from "./machines/variants/ma2.js";
+import { MC } from "./machines/variants/mc.js";
+import { MH } from "./machines/variants/mh.js";
 import { MKI } from "./machines/variants/mk1.js";
 import { MKII } from "./machines/variants/mk2.js";
 import { MKII_FR } from "./machines/variants/mk2fr.js";
+import { MKII_MR } from "./machines/variants/mk2mr.js";
 import { MKII_SR } from "./machines/variants/mk2sr.js";
+import { MKII_TR } from "./machines/variants/mk2tr.js";
+import { VA } from "./machines/variants/va.js";
+import { VA2 } from "./machines/variants/va2.js";
+import { VA3 } from "./machines/variants/va3.js";
 import { hex } from "./tools.js";
 
 const DEFAULT_MAX_OPS = kOps(15);
 
-const variants = [MKI, MKII, MKII_SR, MKII_FR];
+// Listed in roughly-chronological order so `--help` output mirrors
+// NEC's release timeline. Only mkI is verified to boot end-to-end;
+// mkII / mkII SR get exercised by tests; everything else has its
+// PC88Config laid out but not exercised against real ROMs yet.
+const variants = [
+  MKI,
+  MKII,
+  MKII_SR,
+  MKII_FR,
+  MKII_MR,
+  MKII_TR,
+  FH,
+  MH,
+  VA,
+  FA,
+  MA,
+  VA2,
+  FE,
+  MA2,
+  VA3,
+  FE2,
+  MC,
+];
 const variantNames = Object.fromEntries(
   variants.flatMap((mach) => mach.nicknames.map((nick) => [nick, mach])),
 );

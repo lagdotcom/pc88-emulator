@@ -1,5 +1,5 @@
 import { makeROM, type PC88Config } from "../config.js";
-import { MKI_DISC } from "./mk1.js";
+import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
 
 export const SR_N80 = makeROM("sr-n80", 32, "2ff07b8769367321128e03924af668a0");
 const SR_N88 = makeROM("sr-n88", 32, "4f984e04a99d56c4cfe36115415d6eb8");
@@ -8,11 +8,20 @@ const SR_E1 = makeROM("sr-e1", 8, "e844534dfe5744b381444dbe61ef1b66");
 const SR_E2 = makeROM("sr-e2", 8, "6548fa45061274dee1ea8ae1e9e93910");
 const SR_E3 = makeROM("sr-e3", 8, "fc4b76a402ba501e6ba6de4b3e8b4273");
 const SR_FONT = makeROM("sr-font", 6, "14bc9e267cf0cb56d22d5c470f582d53");
-const SR_KANJI2 = makeROM("sr-kanji2", 128, "41d2e2c0c0edfccf76fa1c3e38bc1cf2");
+// kanji2 was an optional add-on on stock mkII SR; MAME notes "not on
+// stock mkIISR" but loads it anyway. Mark as not-required so an
+// SR ROM dump without kanji2 still validates.
+export const SR_KANJI2 = makeROM(
+  "sr-kanji2",
+  128,
+  "41d2e2c0c0edfccf76fa1c3e38bc1cf2",
+  false,
+);
 
 export const MKII_SR: PC88Config = {
   model: "PC-8801 mkII SR",
   nicknames: ["sr", "mkiisr", "mkii_sr", "mkii-sr"],
+  releaseYear: 1985,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
@@ -23,7 +32,11 @@ export const MKII_SR: PC88Config = {
     hasExtendedRam: false,
   },
   video: {
+    // SR introduces V2 mode (640×200 8-colour analogue) alongside
+    // V1 and the legacy N-BASIC mode.
     modes: ["N", "V1", "V2"],
+    // First model with the analogue palette + the YM2203 sound
+    // chip — pre-SR is digital + beeper.
     hasAnaloguePalette: true,
     hasKanjiRom: true,
   },
@@ -45,7 +58,10 @@ export const MKII_SR: PC88Config = {
     e1: SR_E1,
     e2: SR_E2,
     e3: SR_E3,
+    // kanji1 is the same physical ROM across the entire mkI..MA
+    // lineup (CRC=6178bd43 in every MAME ROM_START); reuse the mkI
+    // descriptor.
+    kanji1: MKI_KANJI1,
     kanji2: SR_KANJI2,
-    // TODO I have SR_KANJI2 but not _KANJI1
   },
 };

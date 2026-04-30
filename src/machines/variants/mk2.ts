@@ -7,6 +7,7 @@ const MKII_E0 = makeROM("mkII-e0", 8, "f198cae1050af141dd3c09f0b2c6facf");
 export const MKII: PC88Config = {
   model: "PC-8801 mkII",
   nicknames: ["ii", "mkii", "2"],
+  releaseYear: 1983,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
@@ -18,10 +19,12 @@ export const MKII: PC88Config = {
   },
   video: {
     modes: ["N", "V1"],
-    hasAnaloguePalette: true,
+    // YM2203 + analogue palette arrive on mkII SR (1985).
+    hasAnaloguePalette: false,
     hasKanjiRom: true,
   },
-  sound: { psg: "beeper" }, // TODO is it?
+  // mkII shipped with the same beeper as mkI; YM2203 added on SR.
+  sound: { psg: "beeper" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
   // mkII factory defaults: same DIP layout as mkI, with disk-boot
   // mode as the typical out-of-the-box configuration. Verify against

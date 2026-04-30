@@ -18,6 +18,7 @@ export const MKI_KANJI1 = makeROM(
 export const MKI: PC88Config = {
   model: "PC-8801",
   nicknames: ["88", "pc88", "mki", "original"],
+  releaseYear: 1981,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
@@ -29,7 +30,9 @@ export const MKI: PC88Config = {
   },
   video: {
     modes: ["N", "V1"],
-    hasAnaloguePalette: true,
+    // Analogue palette was introduced on mkII SR (1985); pre-SR
+    // machines hardwire the 8-colour digital palette.
+    hasAnaloguePalette: false,
     hasKanjiRom: true,
   },
   sound: { psg: "beeper" },
