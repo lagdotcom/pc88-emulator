@@ -47,28 +47,32 @@ export interface DIPSwitchState {
   readonly port31: u8;
 }
 
+// Variant lineup we plan to support. Excludes:
+//   - mkII TR (no public ROM dump)
+//   - PC-88 VA / VA2 / VA3 (μPD9002 hybrid CPU; needs MAME's
+//     pc88va.cpp driver as a reference, not in scope)
+//   - PC-8801 MC (CD-ROM interface; out of scope for first-light)
 export type PC88Model =
   | "PC-8801"
   | "PC-8801 mkII"
   | "PC-8801 mkII SR"
-  | "PC-8801 mkII TR"
   | "PC-8801 mkII FR"
   | "PC-8801 mkII MR"
   | "PC-8801 FH"
   | "PC-8801 MH"
-  | "PC-88 VA"
   | "PC-8801 FA"
   | "PC-8801 MA"
-  | "PC-88 VA2"
-  | "PC-88 VA3"
   | "PC-8801 FE"
   | "PC-8801 MA2"
-  | "PC-8801 FE2"
-  | "PC-8801 MC";
+  | "PC-8801 FE2";
 
 export interface CPUConfig {
-  readonly main: "μPD780C-1" | "μPD70008AC-8" | "μPD9002";
-  readonly sub: "μPD780C-1" | "μPD70008AC-8" | "μPD9002";
+  // μPD780C-1: 4 MHz Z80 (mkI through mkII MR)
+  // μPD70008AC-8: 4/8 MHz selectable Z80 (FH/MH onwards)
+  // The μPD9002 hybrid (Z80/8086) used on the VA family isn't
+  // listed here — VA support is out of scope.
+  readonly main: "μPD780C-1" | "μPD70008AC-8";
+  readonly sub: "μPD780C-1" | "μPD70008AC-8";
   readonly highSpeedMode: boolean;
 }
 

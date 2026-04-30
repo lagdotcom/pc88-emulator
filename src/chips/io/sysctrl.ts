@@ -25,6 +25,82 @@ const log = logLib.get("sysctrl");
 // Anything outside this set falls through to the IOBus default
 // (noisy-once 0xff / no-op).
 
+// Bit fields per port. Names follow MAME's pc8801.cpp internal
+// labels so the two codebases grep against each other cleanly. Keep
+// these as `const` objects rather than TS `enum`s so they compose
+// with the bitwise operators the chip handlers use.
+
+// Port 0x30 (DIP-switch 1 read; system control 1 write).
+// Active-high in this convention: a 1 bit means the named state.
+const PORT30 = {
+  COLS_80: 1 << 0, // 1 = 80 col, 0 = 40 col
+  MONO: 1 << 1, // 1 = monochrome, 0 = colour
+  CARRIER_MARK: 1 << 2, // 1 = mark, 0 = space
+  CASSETTE_MOTOR: 1 << 3, // 1 = on, 0 = off
+  USART_MASK: 0b0011_0000, // bits 4-5 — USART rate selector
+  USART_CMT600: 0x00,
+  USART_CMT1200: 0x10,
+  USART_RS232: 0x20, // bits 4-5 = 10 or 11
+} as const;
+
+// Port 0x31 (DIP-switch 2 read; system control 2 write).
+const PORT31 = {
+  LINES_200: 1 << 0, // 1 = 200 lines, 0 = 400 lines (V1/V2)
+  MMODE_RAM: 1 << 1, // 1 = RAM at 0x0000-0x7FFF, 0 = ROM
+  RMODE_N80: 1 << 2, // 1 = N-BASIC, 0 = N88-BASIC
+  GRPH: 1 << 3, // 1 = graphics enabled
+  HCOLOR: 1 << 4, // 1 = high-res colour
+  HIGHRES: 1 << 5, // 1 = high-res mode
+} as const;
+
+// Port 0x32 (misc_ctrl: only on mkII onwards). Per MAME's
+// `misc_ctrl_w` comment block.
+const PORT32 = {
+  EROMSL_MASK: 0b0000_0011, // bits 0-1 — internal EROM slot
+  SCROUT_MASK: 0b0000_1100, // bits 2-3 — screen output mode
+  SCROUT_TV_VIDEO: 0x00,
+  SCROUT_DISABLED: 0x04,
+  SCROUT_ANALOG_RGB: 0x08,
+  SCROUT_OPTIONAL: 0x0c,
+  TMODE_MAIN_RAM: 1 << 4, // 1 = main RAM bank, 0 = dedicated TVRAM (SR+)
+  PMODE_ANALOG: 1 << 5, // 1 = analogue palette, 0 = digital
+  GVAM_ALU: 1 << 6, // 1 = ALU mode, 0 = independent
+  SINTM_MASK: 1 << 7, // 1 = sound IRQ masked, 0 = enabled
+} as const;
+
+// Port 0x40 read ("Strobe Port" status — VBL, RTC, printer, etc.).
+const PORT40_R = {
+  PRINTER_BUSY: 1 << 0,
+  SHG_NORMAL_RES: 1 << 1, // 0 = high res, 1 = normal res
+  RS232_DCD: 1 << 2, // 1 = data carrier detected
+  EXTON: 1 << 3, // active-low: minidisc unit connected
+  RTC_DATA_OUT: 1 << 4, // μPD1990A data-out bit
+  VBL_ACTIVE: 1 << 5, // 1 = currently in VBL
+  UOP1_SW1_7: 1 << 6, // SW1-7 readback
+  UOP2_SW1_8: 1 << 7, // SW1-8 readback
+} as const;
+
+// Port 0x40 write ("Strobe Port" output — beep, calendar pulses,
+// printer strobe, mouse latch).
+const PORT40_W = {
+  PSTB_NOT: 1 << 0, // active-low printer strobe
+  CSTB: 1 << 1, // calendar strobe
+  CCK: 1 << 2, // calendar clock
+  CLDS_NOT: 1 << 3, // active-low CRT-IF sync init
+  GHSM: 1 << 4, // flash mode
+  BEEP: 1 << 5, // beeper enable
+  UOP1_JOP1: 1 << 6, // mouse latch / general-purpose out 1
+  UOP2_SING: 1 << 7, // SING (buzzer mask)
+} as const;
+
+// Port 0x71 (EROM bank select). Active-low one-hot in bits 0-3;
+// bits 4-7 are described as further ROM banks on some models.
+const PORT71 = {
+  SLOT_MASK: 0b0000_1111, // bits 0-3 — extension ROM slots E0..E3
+  EXT_BANK_MASK: 0b1111_0000, // bits 4-7 — extra ROM banks (model-specific)
+  ALL_DISABLED: 0xff,
+} as const;
+
 // Persistent state surfaced via snapshot() — JSON-friendly so
 // future savestate code can serialise the chip without touching
 // implementation details. Restore via fromSnapshot().
@@ -74,8 +150,8 @@ export class SystemController {
 
   // Visible to the runner so the VBL pulse can flip the bit too.
   setVBlank(active: boolean): void {
-    if (active) this.systemStatus |= 0x20;
-    else this.systemStatus &= ~0x20;
+    if (active) this.systemStatus |= PORT40_R.VBL_ACTIVE;
+    else this.systemStatus &= ~PORT40_R.VBL_ACTIVE;
   }
 
   snapshot(): SystemControllerSnapshot {
@@ -139,18 +215,17 @@ export class SystemController {
   }
 
   private handle30(v: u8): void {
-    const cols = v & 0x01 ? 80 : 40;
-    const color = v & 0x02 ? "mono" : "color";
-    const carrier = v & 0x04 ? "mark" : "space";
-    const motor = (v & 0x08) !== 0;
-    const usart = (
-      {
-        0: "cmt600",
-        0x10: "cmt1200",
-        0x20: "rs232c",
-        0x30: "rs232c",
-      } as const
-    )[v & 0x30];
+    const cols = v & PORT30.COLS_80 ? 80 : 40;
+    const color = v & PORT30.MONO ? "mono" : "color";
+    const carrier = v & PORT30.CARRIER_MARK ? "mark" : "space";
+    const motor = (v & PORT30.CASSETTE_MOTOR) !== 0;
+    const usartLabels: Record<number, string> = {
+      [PORT30.USART_CMT600]: "cmt600",
+      [PORT30.USART_CMT1200]: "cmt1200",
+      [PORT30.USART_RS232]: "rs232c",
+      0x30: "rs232c", // bits 4-5 = 11 — also RS-232C per the manual
+    };
+    const usart = usartLabels[v & PORT30.USART_MASK];
 
     log.info(
       `0x30 write: cols=${cols} color=${color} carrier=${carrier} motor=${motor} usart=${usart}`,
@@ -158,12 +233,12 @@ export class SystemController {
   }
 
   private handle31(v: u8): void {
-    const lines = v & 0x01 ? 200 : 400;
-    const mmode = ((v >> 1) & 0x01) as 0 | 1;
-    const rmode = ((v >> 2) & 0x01) as 0 | 1;
-    const graph = v & 0x08 ? "graphics" : "none";
-    const hcolor = v & 0x10 ? "color" : "mono";
-    const highres = (v & 0x20) !== 0;
+    const lines = v & PORT31.LINES_200 ? 200 : 400;
+    const mmode = (v & PORT31.MMODE_RAM ? 1 : 0) as 0 | 1;
+    const rmode = (v & PORT31.RMODE_N80 ? 1 : 0) as 0 | 1;
+    const graph = v & PORT31.GRPH ? "graphics" : "none";
+    const hcolor = v & PORT31.HCOLOR ? "color" : "mono";
+    const highres = (v & PORT31.HIGHRES) !== 0;
 
     log.info(
       `0x31 write: lines=${lines} mmode=${mmode === 0 ? "rom" : "ram"} rmode=${rmode === 0 ? "n88" : "n80"} graph=${graph} hcolor=${hcolor} highres=${highres}`,
@@ -208,19 +283,18 @@ export class SystemController {
    * we'll wire that to PC88MemoryMap when SR boot work starts.
    */
   private handle32(v: u8): void {
-    const eromsl = v & 0x03;
-    const scrout = (
-      {
-        0x00: "tv-video",
-        0x04: "disabled",
-        0x08: "analog-rgb",
-        0x0c: "optional",
-      } as const
-    )[v & 0x0c];
-    const tmode = v & 0x10 ? "main-ram" : "dedicated-tvram";
-    const pmode = v & 0x20 ? "analog" : "digital";
-    const gvam = v & 0x40 ? "alu" : "independent";
-    const sintm = v & 0x80 ? "masked" : "enabled";
+    const eromsl = v & PORT32.EROMSL_MASK;
+    const scroutLabels: Record<number, string> = {
+      [PORT32.SCROUT_TV_VIDEO]: "tv-video",
+      [PORT32.SCROUT_DISABLED]: "disabled",
+      [PORT32.SCROUT_ANALOG_RGB]: "analog-rgb",
+      [PORT32.SCROUT_OPTIONAL]: "optional",
+    };
+    const scrout = scroutLabels[v & PORT32.SCROUT_MASK];
+    const tmode = v & PORT32.TMODE_MAIN_RAM ? "main-ram" : "dedicated-tvram";
+    const pmode = v & PORT32.PMODE_ANALOG ? "analog" : "digital";
+    const gvam = v & PORT32.GVAM_ALU ? "alu" : "independent";
+    const sintm = v & PORT32.SINTM_MASK ? "masked" : "enabled";
 
     log.info(
       `0x32 write: eromsl=${eromsl} scrout=${scrout} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
@@ -235,7 +309,9 @@ export class SystemController {
     // selected slot maps in is decided by applyEROMEnable() the next
     // time port 0x71 or port 0x31 changes (or right now, since the
     // slot index is part of "what enable means").
-    this.memoryMap.setEROMSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
+    this.memoryMap.setEROMSlot(
+      (eromsl & PORT32.EROMSL_MASK) as 0 | 1 | 2 | 3,
+    );
     this.applyEROMEnable();
   }
 
@@ -251,14 +327,14 @@ export class SystemController {
   }
 
   private handle40(v: u8): void {
-    const pstb = !(v & 0x01);
-    const cstb = (v & 0x02) !== 0;
-    const cck = (v & 0x04) !== 0;
-    const clds = !(v & 0x08);
-    const ghsm = (v & 0x10) !== 0;
-    const beep = (v & 0x20) !== 0;
-    const jop1 = (v & 0x40) !== 0;
-    const fbeep = (v & 0x80) !== 0;
+    const pstb = !(v & PORT40_W.PSTB_NOT);
+    const cstb = (v & PORT40_W.CSTB) !== 0;
+    const cck = (v & PORT40_W.CCK) !== 0;
+    const clds = !(v & PORT40_W.CLDS_NOT);
+    const ghsm = (v & PORT40_W.GHSM) !== 0;
+    const beep = (v & PORT40_W.BEEP) !== 0;
+    const jop1 = (v & PORT40_W.UOP1_JOP1) !== 0;
+    const fbeep = (v & PORT40_W.UOP2_SING) !== 0;
 
     log.info(
       `0x40 write: pstb=${pstb} cstb=${cstb} cck=${cck} clds=${clds} ghsm=${ghsm} beep=${beep} jop1=${jop1} fbeep=${fbeep}`,
@@ -276,15 +352,15 @@ export class SystemController {
     // wire all eight, and which models do is unclear. Log a warning
     // when the BIOS clears any of them so we notice if a real boot
     // depends on them.
-    const slotBits = v & 0x0f;
-    const upperBits = v & 0xf0;
-    if (upperBits !== 0xf0) {
+    const slotBits = v & PORT71.SLOT_MASK;
+    const upperBits = v & PORT71.EXT_BANK_MASK;
+    if (upperBits !== PORT71.EXT_BANK_MASK) {
       log.warn(
         `0x71 write: high bits ${byte(upperBits)} clear — ROMs 4-7 not modelled`,
       );
     }
 
-    if (slotBits !== 0x0f) {
+    if (slotBits !== PORT71.SLOT_MASK) {
       // At least one slot bit clear → that slot is "selected" for
       // enablement. If multiple are clear (unusual), the lowest
       // wins. Real silicon's behaviour with multiple bits clear is
@@ -314,7 +390,8 @@ export class SystemController {
   // 0x32, which let EROM map even when the BIOS had banked-out the
   // ROM range or switched to N80; both broke real boot paths.
   private applyEROMEnable(): void {
-    const slotEnabled = (this.eromSelection & 0x0f) !== 0x0f;
+    const slotEnabled =
+      (this.eromSelection & PORT71.SLOT_MASK) !== PORT71.SLOT_MASK;
     const gateOpen = this.mmode === 0 && this.rmode === 0;
     this.memoryMap.setEROMEnabled(slotEnabled && gateOpen);
   }

@@ -34,6 +34,39 @@ const log = logLib.get("display-regs");
 // and a flat `0xf8` for sel 3 — that's the diagnostic for "main RAM"
 // mode (no plane bit set). We mirror the readback on every port in
 // the group so misaligned reads still return something sensible.
+
+// Port 0x52 (border + background colour). Bits 4-6 are the BG pen,
+// bits 0-2 the border. Per MAME `bgpal_w`.
+const PORT52 = {
+  BG_MASK: 0b0111_0000,
+  BG_SHIFT: 4,
+  BORDER_MASK: 0b0000_0111,
+} as const;
+
+// Port 0x53 (layer mask). Active-low: a 0 bit means "this layer
+// visible", a 1 bit hides it. Per MAME `layer_masking_w`.
+const PORT53 = {
+  HIDE_TEXT: 1 << 0,
+  HIDE_GVRAM0: 1 << 1,
+  HIDE_GVRAM1: 1 << 2,
+  HIDE_GVRAM2: 1 << 3,
+  HIDE_GVRAM3: 1 << 4,
+} as const;
+
+// Port 0x5C-0x5F (GVRAM plane select). The selector is the port's
+// low 2 bits (the data byte is ignored). 0..2 pick GVRAM planes;
+// 3 hides GVRAM and exposes main RAM at 0xC000-0xEFFF.
+const VRAM_SEL = {
+  PLANE_0: 0,
+  PLANE_1: 1,
+  PLANE_2: 2,
+  MAIN_RAM: 3,
+  // Readback shape: `READBACK_BASE | (1 << sel)` for plane modes;
+  // `READBACK_BASE` (no plane bit) for main-RAM mode. Per MAME
+  // `vram_select_r`.
+  READBACK_BASE: 0xf8,
+} as const;
+
 export interface DisplayRegistersSnapshot {
   bgColor: u8;
   showText: boolean;
@@ -82,7 +115,7 @@ export class DisplayRegisters {
     bus.register(0x52, {
       name: "display/bgpal",
       write: (_p, v) => {
-        this.bgColor = (v & 0x70) >> 4;
+        this.bgColor = (v & PORT52.BG_MASK) >> PORT52.BG_SHIFT;
         log.info(`0x52 write: bgColor=${byte(v)}`);
       },
     });
@@ -90,11 +123,11 @@ export class DisplayRegisters {
     bus.register(0x53, {
       name: "display/layer-mask",
       write: (_p, v) => {
-        this.showText = (v & 0x01) === 0;
-        this.showGVRAM0 = (v & 0x02) === 0;
-        this.showGVRAM1 = (v & 0x04) === 0;
-        this.showGVRAM2 = (v & 0x08) === 0;
-        this.showGVRAM3 = (v & 0x10) === 0;
+        this.showText = (v & PORT53.HIDE_TEXT) === 0;
+        this.showGVRAM0 = (v & PORT53.HIDE_GVRAM0) === 0;
+        this.showGVRAM1 = (v & PORT53.HIDE_GVRAM1) === 0;
+        this.showGVRAM2 = (v & PORT53.HIDE_GVRAM2) === 0;
+        this.showGVRAM3 = (v & PORT53.HIDE_GVRAM3) === 0;
         log.info(
           `0x53 write: text=${this.showText} g0=${this.showGVRAM0} g1=${this.showGVRAM1} g2=${this.showGVRAM2} g3=${this.showGVRAM3}`,
         );
@@ -129,7 +162,10 @@ export class DisplayRegisters {
         name: `display/vram-sel${i}`,
         // MAME's vram_select_r is registered only on 0x5C, but
         // mirroring the readback on each port is harmless.
-        read: () => (this.vramSel === 3 ? 0xf8 : 0xf8 | (1 << this.vramSel)),
+        read: () =>
+          this.vramSel === VRAM_SEL.MAIN_RAM
+            ? VRAM_SEL.READBACK_BASE
+            : VRAM_SEL.READBACK_BASE | (1 << this.vramSel),
         write: (_p, _v) => this.selectVRAM(sel),
       });
     }
@@ -137,7 +173,7 @@ export class DisplayRegisters {
 
   private selectVRAM(sel: 0 | 1 | 2 | 3): void {
     this.vramSel = sel;
-    if (sel === 3) {
+    if (sel === VRAM_SEL.MAIN_RAM) {
       // 0x5F: hide GVRAM, expose main RAM at 0xC000-0xEFFF. Plane
       // index is meaningless in this mode but we leave the latched
       // _gvramPlane alone so a follow-up 0x5C/D/E restores the same

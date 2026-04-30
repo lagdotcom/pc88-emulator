@@ -23,6 +23,17 @@ const log = logLib.get("irq");
 // default to "all enabled" because that matches what the existing
 // pc88-irq test expects, and the BIOS overwrites the mask with its
 // own value within the first few hundred ops anyway.
+
+// Per-bit enables for the mask register at 0xE6. A bit set to 1
+// means that source can fire; cleared means masked.
+export const IRQ_MASK = {
+  VBL: 1 << 0, // vertical blank
+  RXRDY: 1 << 1, // USART RxRdy
+  RTC: 1 << 2, // real-time-clock tick
+  TXRDY: 1 << 3, // USART TxRdy
+  DISK: 1 << 4, // disk / sub-CPU
+} as const;
+
 export interface IrqSnapshot {
   mask: u8;
   priority: u8;
@@ -52,7 +63,7 @@ export class IrqController {
   }
 
   vblMasked(): boolean {
-    return (this.mask & 0x01) === 0;
+    return (this.mask & IRQ_MASK.VBL) === 0;
   }
 
   register(bus: IOBus): void {

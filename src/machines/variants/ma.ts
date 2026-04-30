@@ -22,12 +22,14 @@ export const MA: PC88Config = {
   releaseYear: 1987,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: true },
   memory: {
-    mainRam: 64,
+    mainRam: 192,
+    // MR/MH/MA/MA2 ship with 64 KB main + 128 KB extended
+    // RAM (port 0xE2/0xE3 bank-switch). Total addressable 192 KB.
+    hasExtendedRam: true,
     textVram: 4,
     tvramSeparate: true,
     graphicsVramPlanes: 3,
     graphicsVramPerPlane: 16,
-    hasExtendedRam: false,
   },
   video: {
     modes: ["N", "V1", "V2"],
