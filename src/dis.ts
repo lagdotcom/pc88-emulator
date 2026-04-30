@@ -34,8 +34,8 @@ import { parseArgs } from "node:util";
 import { disassemble } from "./chips/z80/disasm.js";
 import {
   loadSymbolFile,
-  symbolTable,
   type SymbolTable,
+  symbolTable,
 } from "./chips/z80/symbols.js";
 import { byte, hex, word } from "./tools.js";
 
@@ -111,9 +111,7 @@ async function loadSymbols(
       );
     }
   }
-  process.stderr.write(
-    `; loaded ${file.byAddr.size} symbols from ${path}\n`,
-  );
+  process.stderr.write(`; loaded ${file.byAddr.size} symbols from ${path}\n`);
   return symbolTable(file);
 }
 
@@ -141,11 +139,15 @@ async function main(): Promise<void> {
   if (startAddr === null) {
     throw new Error(`bad address: ${positionals[1]}`);
   }
-  const count = positionals[2]
-    ? Math.min(1024, Math.max(1, parseInt(positionals[2], 10) || 16))
-    : 16;
+  const count =
+    positionals[2] === "all"
+      ? Infinity
+      : positionals[2]
+        ? Math.min(1024, Math.max(1, parseInt(positionals[2], 10) || 16))
+        : 16;
 
   const bytes = new Uint8Array(await readFile(filePath));
+  const bytesEnd = base + bytes.length;
 
   // Build a reader that maps CPU-side addresses to file offsets via
   // (addr - base). Out-of-range reads return 0xFF — same convention
@@ -165,6 +167,8 @@ async function main(): Promise<void> {
 
   let pc = startAddr & 0xffff;
   for (let i = 0; i < count; i++) {
+    if (pc >= bytesEnd) break;
+
     // Print a label header line when this address has its own name.
     // Mirrors typical assembler output and makes function entry
     // points obvious in a long listing.
@@ -173,7 +177,10 @@ async function main(): Promise<void> {
 
     const opts = symbols ? { resolveLabel: symbols.lookup } : {};
     const d = disassemble(read, pc, opts);
-    const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+    const bytesStr = d.bytes
+      .map((b) => byte(b))
+      .join(" ")
+      .padEnd(11);
     process.stdout.write(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
     pc = (pc + d.length) & 0xffff;
   }
