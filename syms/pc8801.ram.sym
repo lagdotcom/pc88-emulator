@@ -40,11 +40,18 @@
 0xec88 ram_print_redir_flag ; non-zero -> print_handler takes alt path at 0x4B52
 0xec8f boot_msg_buffer      ; 9-byte buffer filled with spaces at 0x77c7
 
-# --- RAM hook table (3-byte slots at 0xed00; default 'c9 00 00') ---
-# Populated by 0x69bc; each slot is a CALL target (RET-by-default until BASIC
+# --- Hook handler state ---
+0xeca3 hook_state_a3        ; state byte used by hook_input_handler
+0xeca4 hook_state_a4        ; state byte used by hook_input_handler
+0xec27 hook_state_27        ; state byte used by hook_input_handler
+0xe653 hook_state_53        ; state byte used by hook_input_handler
+
+# --- RAM hook table (3-byte slots at 0xecbb; default 'c9 00 00' or JP 0x4dc1) ---
+# Populated by 0x69b2; each slot is a CALL target (RET-by-default until BASIC
 # overrides). Indexed CALLs land here from various BIOS code paths. Many
 # slot purposes still unknown.
-0xed00 ram_hook_table       ; start of 3-byte RAM-hook slots
+0xecbb ram_hook_start       ; start of 3-byte RAM-hook slots (RET hooks)
+0xee0e ram_hook_jp_start    ; start of JP 0x4dc1 hooks
 0xed42 ram_print_hook       ; RAM print hook — JP target from RST 18 path
 0xed72 ram_hook_for_4fb4    ; CALL'd from 0x4fb4 — must return valid SP in HL
 0xedc9 ram_hook_for_3c4     ; CALL'd from 0x03c4 in BASIC init

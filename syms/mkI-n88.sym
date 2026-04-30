@@ -29,7 +29,14 @@
 
 # --- BASIC workspace init ---
 0x7999 clear_basic_workspace ; memset 843 bytes at 0xef0a, then LD (0xef7f),HL
-0x69bc init_ram_hook_table  ; fills 0xed00..0xedfd with 'c9 00 00' triplets (RET hooks)
+0x69b2 init_ram_hook_table  ; fills 0xecbb..0xee0b with 'c9 00 00' triplets (RET hooks), then 0xee0e.. with JP 0x4dc1
+0x4dc1 hook_input_handler   ; main handler for RAM hooks, processes input/commands
+
+# --- Hook handler subroutines ---
+0x03b3 erom_bank_switch_ff  ; switches E-ROM bank to 0xff, part of hook processing
+0x46f1 input_char_reader    ; reads next input character
+0x4da0 input_dispatch_a     ; input dispatch branch A
+0x4e53 input_dispatch_table ; input dispatch table
 
 # --- Sysctrl init / VBL / row helpers ---
 0x72cd sysctrl_init_from_ram ; DI;OUT 0xe6,0; restore 0x30/0x40/0x31/0xeb from RAM shadows

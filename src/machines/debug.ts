@@ -184,7 +184,9 @@ function printPromptSummary(
   syms: DebugSymbols | null,
 ): void {
   const pc = machine.cpu.regs.PC;
-  const opts = syms ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver } : {};
+  const opts = syms
+    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
+    : {};
   const d = disassemble((a) => machine.memBus.read(a), pc, opts);
   const bytesStr = d.bytes
     .map((b) => byte(b))
@@ -209,7 +211,9 @@ function printDisassembly(
   count: Bytes,
 ): void {
   let pc = machine.cpu.regs.PC;
-  const opts = syms ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver } : {};
+  const opts = syms
+    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
+    : {};
   for (let i = 0; i < count; i++) {
     const labelHere = syms?.exactResolver(pc);
     if (labelHere) process.stdout.write(`${labelHere}:\n`);
@@ -548,9 +552,7 @@ export async function runDebug(
           }
           const comment = args.slice(2).join(" ").trim() || undefined;
           const r = await addPortLabel(machine, syms, p, name, comment);
-          process.stdout.write(
-            `  port ${byte(p)} = ${name} → ${r.path}\n`,
-          );
+          process.stdout.write(`  port ${byte(p)} = ${name} → ${r.path}\n`);
           break;
         }
 
