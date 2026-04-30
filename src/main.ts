@@ -194,7 +194,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     `IRQ mask (E6)  : 0x${hex(irq.mask, 2)} (programmed=${irq.programmed})`,
   );
   lines.push(
-    `bank state     : basic=${memoryMap.basicMode} romEnabled=${memoryMap.basicRomEnabled} vram=${memoryMap.vramEnabled} (tvram is permanent at 0xF000)`,
+    `bank state     : basic=${memoryMap.basicMode} basic=${memoryMap.basicROMEnabled} erom=${memoryMap.eromSlot}/${memoryMap.eromEnabled} vram=${memoryMap.vramEnabled} (tvram is permanent at 0xF000)`,
   );
   lines.push(`sys status     : 0x${hex(sysctrl.systemStatus, 2)}`);
   lines.push(

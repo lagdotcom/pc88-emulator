@@ -2,6 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { Chars, u8 } from "../../flavours.js";
+import { byte } from "../../tools.js";
 
 const log = logLib.get("crtc");
 
@@ -31,6 +32,17 @@ function paramCount(cmd: u8) {
       return 0;
   }
 }
+
+const commandNames = [
+  "RESET / SET MODE",
+  "START DISPLAY",
+  "SET INTERRUPT MASK",
+  "READ LIGHT PEN",
+  "LOAD CURSOR POSITION",
+  "RESET INTERRUPT",
+  "RESET COUNTERS",
+  "READ STATUS",
+];
 
 export interface CRTCSnapshot {
   status: u8;
@@ -140,7 +152,7 @@ export class μPD3301 {
     this.paramsLeft = paramCount(v);
     this.params = [];
     log.info(
-      `cmd 0x${v.toString(16)} (op 0x${op.toString(16)}), expects ${this.paramsLeft} params`,
+      `cmd 0x${byte(v)} (${commandNames[Math.floor(v / 0x20)]}), expects ${this.paramsLeft} params`,
     );
     // Zero-param commands complete immediately.
     if (this.paramsLeft === 0) this.command = null;
@@ -148,7 +160,7 @@ export class μPD3301 {
 
   private writeParam(v: u8): void {
     if (this.paramsLeft <= 0 || this.command === null) {
-      log.info(`stray data 0x${v.toString(16)}`);
+      log.info(`stray data 0x${byte(v)}`);
       return;
     }
     this.params.push(v);
@@ -157,7 +169,7 @@ export class μPD3301 {
       const cmd = this.command;
       log.info(
         `cmd 0x${cmd.toString(16)} params [${this.params
-          .map((b) => "0x" + b.toString(16))
+          .map((b) => "0x" + byte(b))
           .join(",")}]`,
       );
       // RESET / SET MODE (0x00-0x1F): 5-byte parameter block per the

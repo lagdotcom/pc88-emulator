@@ -54,16 +54,16 @@ describe("PC88MemoryMap", () => {
       e3: filledROM(0x2000, 0xe3),
     });
     const m = new PC88MemoryMap(fixtureWithAllE());
-    m.setEromEnabled(true);
+    m.setEROMEnabled(true);
     expect(m.read(0x6000)).toBe(0xe0); // slot 0 = E0
-    m.setEromSlot(1);
+    m.setEROMSlot(1);
     expect(m.read(0x6000)).toBe(0xe1);
-    m.setEromSlot(2);
+    m.setEROMSlot(2);
     expect(m.read(0x6000)).toBe(0xe2);
-    m.setEromSlot(3);
+    m.setEROMSlot(3);
     expect(m.read(0x6000)).toBe(0xe3);
     expect(m.read(0x5fff)).toBe(0x80); // outside the slot window
-    m.setEromEnabled(false);
+    m.setEROMEnabled(false);
     expect(m.read(0x6000)).toBe(0x80); // back to BASIC continuation
   });
 
@@ -72,10 +72,10 @@ describe("PC88MemoryMap", () => {
     // must still return readable bytes (the BASIC ROM continuation),
     // not throw or return garbage.
     const m = new PC88MemoryMap(fixture());
-    m.setEromEnabled(true);
-    m.setEromSlot(1);
+    m.setEROMEnabled(true);
+    m.setEROMSlot(1);
     expect(m.read(0x6000)).toBe(0x80);
-    m.setEromSlot(0);
+    m.setEROMSlot(0);
     expect(m.read(0x6000)).toBe(0xe0);
   });
 

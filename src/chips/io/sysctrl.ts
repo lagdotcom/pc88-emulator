@@ -4,6 +4,7 @@ import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
 import type { DIPSwitchState } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
+import { byte } from "../../tools.js";
 import type { Beeper } from "./beeper.js";
 
 const log = logLib.get("sysctrl");
@@ -45,6 +46,9 @@ export class SystemController {
   // sub-CPU not busy" idle state. Bit 5 toggles VBL state per the
   // CRTC pump.
   systemStatus: u8 = 0xff;
+
+  // Expansion ROM selection; set one bit off to select that EROM
+  eromSelection: u8 = 0xff;
 
   // Visible to the runner so the VBL pulse can flip the bit too.
   setVBlank(active: boolean): void {
@@ -98,14 +102,12 @@ export class SystemController {
     });
     bus.register(0x5c, {
       name: "sysctrl/0x5c",
-      write: (_p, v) => this.memoryMap.setGvramPlane((v & 0x03) as 0 | 1 | 2),
+      write: (_p, v) => this.memoryMap.setGVRAMPlane((v & 0x03) as 0 | 1 | 2),
     });
-    // 0x71 is the secondary ROM bank select on later models. mkI
-    // ignores it; we capture it for diagnostics.
     bus.register(0x71, {
       name: "sysctrl/0x71",
-      read: () => 0xff,
-      write: (_p, v) => log.info(`0x71 write ${v.toString(16)}`),
+      read: () => this.eromSelection,
+      write: (_p, v) => this.handle71(v),
     });
   }
 
@@ -182,8 +184,8 @@ export class SystemController {
     // for N88-BASIC which uses E1/E2/E3; the real enable bit is
     // probably elsewhere on this port (or another) and we'll only
     // know when the N88 trace surfaces it.
-    this.memoryMap.setEromSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
-    this.memoryMap.setEromEnabled(eromsl === 0);
+    this.memoryMap.setEROMSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
+    this.memoryMap.setEROMEnabled(eromsl === 0);
   }
 
   private handle40(v: u8): void {
@@ -201,5 +203,35 @@ export class SystemController {
     );
 
     this.beeper.toggle(beep);
+  }
+
+  private handle71(v: u8): void {
+    const s0 = (v & 0x01) === 0;
+    const s1 = (v & 0x02) === 0;
+    const s2 = (v & 0x04) === 0;
+    const s3 = (v & 0x08) === 0;
+
+    // const s4 = (v & 0x10) === 0;
+    // const s5 = (v & 0x20) === 0;
+    // const s6 = (v & 0x40) === 0;
+    // const s7 = (v & 0x80) === 0;
+    // TODO how do roms 4-7 work???
+
+    if (s0 || s1 || s2 || s3) {
+      if (s0) this.memoryMap.setEROMSlot(0);
+      else if (s1) this.memoryMap.setEROMSlot(1);
+      else if (s2) this.memoryMap.setEROMSlot(2);
+      else if (s3) this.memoryMap.setEROMSlot(3);
+
+      this.memoryMap.setEROMEnabled(true);
+    } else {
+      this.memoryMap.setEROMEnabled(false);
+    }
+
+    this.eromSelection = v;
+
+    log.info(
+      `0x71 write: eromsl=${this.memoryMap.eromSlot}/${this.memoryMap.eromEnabled} raw=${byte(v)}`,
+    );
   }
 }

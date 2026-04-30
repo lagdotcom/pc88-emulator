@@ -63,7 +63,7 @@ function variantSlug(machine: PC88Machine): string {
 // phase 3).
 export function romIdAt(machine: PC88Machine, addr: u16): string | null {
   const mm = machine.memoryMap;
-  if (!mm.basicRomEnabled) return null;
+  if (!mm.basicROMEnabled) return null;
   const page = (addr >> 12) & 0xf;
   if (page <= 5) {
     return mm.basicMode === "n80"
@@ -355,7 +355,8 @@ export function renderLabelList(syms: DebugSymbols): string {
       out.push(`  ${a}  ${sym.name}${c}`);
     }
   };
-  for (const entry of syms.byRomId.values()) renderFile(entry.romId, entry.file, 4);
+  for (const entry of syms.byRomId.values())
+    renderFile(entry.romId, entry.file, 4);
   renderFile("ram", syms.ramFile, 4);
   renderFile("port", syms.portFile, 2);
   if (out.length === 0) return "(no labels loaded)";

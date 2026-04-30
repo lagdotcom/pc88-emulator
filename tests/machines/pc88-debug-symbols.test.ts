@@ -70,7 +70,7 @@ describe("romIdAt", () => {
   it("returns the active E-ROM id when one is enabled", () => {
     const machine = new PC88Machine(MKI, syntheticRoms());
     machine.reset();
-    machine.memoryMap.setEromEnabled(true);
+    machine.memoryMap.setEROMEnabled(true);
     expect(romIdAt(machine, 0x6000)).toBe(MKI.roms.e0!.id);
   });
 
@@ -258,7 +258,13 @@ describe("RAM + port + fuzzy resolution", () => {
   it("addPortLabel writes to variant.port.sym", async () => {
     const { machine, roms } = makeMachine();
     const syms = await loadDebugSymbols(machine, roms);
-    const r = await addPortLabel(machine, syms, 0x71, "io_rom_bank", "secondary ROM bank");
+    const r = await addPortLabel(
+      machine,
+      syms,
+      0x71,
+      "io_rom_bank",
+      "secondary ROM bank",
+    );
     expect(r.scope).toBe("port");
     expect(r.path).toContain(".port.sym");
     expect(syms.portFile.byAddr.get(0x71)?.name).toBe("io_rom_bank");

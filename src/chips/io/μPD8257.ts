@@ -2,7 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8, u16 } from "../../flavours.js";
-import { word } from "../../tools.js";
+import { byte, word } from "../../tools.js";
 
 const log = logLib.get("dmac");
 
@@ -76,10 +76,18 @@ export class μPD8257 {
       const countPort = 0x60 + ch * 2 + 1;
       bus.register(addrPort, {
         name: `dmac/addr${ch}`,
+        read: () => {
+          log.info(`0x${byte(addrPort)} read`);
+          return 0xff;
+        },
         write: (_p, v) => this.writeAddress(ch, v),
       });
       bus.register(countPort, {
         name: `dmac/count${ch}`,
+        read: () => {
+          log.info(`0x${byte(countPort)} read`);
+          return 0xff;
+        },
         write: (_p, v) => this.writeCount(ch, v),
       });
     }

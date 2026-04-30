@@ -3,6 +3,8 @@
     "CRTC",
     "DJNZ",
     "DMAC",
+    "EROM",
+    "GVRAM",
     "RLCA",
     "RRCA",
     "TVRAM",

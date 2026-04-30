@@ -62,7 +62,7 @@ export class PC88MemoryMap implements MemoryProvider {
 
   // Bank state. Mutate via the public setters below; each setter calls
   // refreshPages() so that read/write pick up the new mapping.
-  private _basicRomEnabled = true;
+  private _basicROMEnabled = true;
   private _basicMode: BasicMode = "n80";
   // Active extension-ROM slot (port 0x32, bits 0-1). The selected
   // slot's image is mapped at 0x6000-0x7FFF only when the chip has
@@ -97,8 +97,8 @@ export class PC88MemoryMap implements MemoryProvider {
   }
 
   setBasicRomEnabled(enabled: boolean): void {
-    if (this._basicRomEnabled === enabled) return;
-    this._basicRomEnabled = enabled;
+    if (this._basicROMEnabled === enabled) return;
+    this._basicROMEnabled = enabled;
     this.refreshPages();
   }
 
@@ -108,32 +108,32 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
-  setEromSlot(slot: EROMSlot): void {
+  setEROMSlot(slot: EROMSlot): void {
     if (this._eromSlot === slot) return;
     this._eromSlot = slot;
     this.refreshPages();
   }
 
-  setEromEnabled(enabled: boolean): void {
+  setEROMEnabled(enabled: boolean): void {
     if (this._eromEnabled === enabled) return;
     this._eromEnabled = enabled;
     this.refreshPages();
   }
 
-  setVramEnabled(enabled: boolean): void {
+  setVRAMEnabled(enabled: boolean): void {
     if (this._vramEnabled === enabled) return;
     this._vramEnabled = enabled;
     this.refreshPages();
   }
 
-  setGvramPlane(plane: 0 | 1 | 2): void {
+  setGVRAMPlane(plane: 0 | 1 | 2): void {
     if (this._gvramPlane === plane) return;
     this._gvramPlane = plane;
     this.refreshPages();
   }
 
-  get basicRomEnabled(): boolean {
-    return this._basicRomEnabled;
+  get basicROMEnabled(): boolean {
+    return this._basicROMEnabled;
   }
   get basicMode(): BasicMode {
     return this._basicMode;
@@ -153,36 +153,39 @@ export class PC88MemoryMap implements MemoryProvider {
   refreshPages(): void {
     const ram = this.mainRam;
 
+    // TODO writing into pages 0..7 always goes to Main RAM.
+    //      Need to split read/write pages.
+
     // 0x0000-0x5FFF: BASIC ROM (n80 or n88) when enabled, else RAM.
     // 0x6000-0x7FFF: extension ROM whose slot is selected at port
     //                0x32 bits 0-1, OR the BASIC ROM continuation
     //                if no image is loaded for that slot.
     const basicRom = this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
-    if (this._basicRomEnabled) {
-      this.mapRomPages(0, 6, basicRom, 0);
-      const erom = this._eromEnabled ? this.activeEromImage() : undefined;
-      if (erom) {
-        this.mapRomPages(6, 8, erom, 0);
-      } else {
-        this.mapRomPages(6, 8, basicRom, 6 * PAGE_SIZE);
-      }
+    if (this._basicROMEnabled) {
+      this.mapROMPages(0, 6, basicRom, 0);
+
+      // TODO Check: EROM requires RMODE=0 MMODE=0 [port 0x31], IEROM=0 [port 0x71]
+      const erom = this.activeEROMImage();
+      if (erom) this.mapROMPages(6, 8, erom, 0);
+      else this.mapROMPages(6, 8, basicRom, 6 * PAGE_SIZE);
     } else {
-      for (let p = 0; p < 8; p++) this.mapRamPage(p, ram, p * PAGE_SIZE);
+      for (let p = 0; p < 8; p++) this.mapRAMPage(p, ram, p * PAGE_SIZE);
     }
 
     // 0x8000-0xBFFF: always main RAM.
-    for (let p = 8; p < 12; p++) this.mapRamPage(p, ram, p * PAGE_SIZE);
+    for (let p = 8; p < 12; p++) this.mapRAMPage(p, ram, p * PAGE_SIZE);
 
     // 0xC000-0xEFFF: GVRAM plane when VRAM window enabled, else RAM.
     if (this._vramEnabled) {
       const gv = this.gvram[this._gvramPlane];
       for (let p = 12; p < 15; p++) {
-        this.mapRamPage(p, gv, (p - 12) * PAGE_SIZE);
+        this.mapRAMPage(p, gv, (p - 12) * PAGE_SIZE);
       }
     } else {
-      for (let p = 12; p < 15; p++) this.mapRamPage(p, ram, p * PAGE_SIZE);
+      for (let p = 12; p < 15; p++) this.mapRAMPage(p, ram, p * PAGE_SIZE);
     }
 
+    // TODO TVRAM is only separate on SR onwards.
     // 0xF000-0xFFFF: TVRAM is permanently mapped here on PC-8801 mkI.
     // The CRTC decides whether the contents are displayed, but CPU
     // memory access always sees TVRAM at 0xF000 — there is no banking
@@ -190,13 +193,19 @@ export class PC88MemoryMap implements MemoryProvider {
     // flag and mapped main RAM here as a fallback; that was wrong and
     // caused BIOS writes to vanish into shadow RAM until a guess at
     // a port write happened to flip the flag. Always map TVRAM.
-    this.mapRamPage(15, this.tvram, 0);
+    this.mapRAMPage(15, this.tvram, 0);
+
+    // TODO my memory map doc mentions the 'Text Window'
+    //      this is a 1K block whose upper byte is written to [port 0x70]
+    //      it maps itself to 0x8000-0x83FF when RMODE=0, MMODE=0
   }
 
   // Return the loaded ROM image for the currently-selected slot, or
   // undefined if no image is loaded for that slot. Callers fall back
   // to the BASIC ROM continuation when this returns undefined.
-  private activeEromImage(): Uint8Array | undefined {
+  private activeEROMImage() {
+    if (!this._eromEnabled) return;
+
     switch (this._eromSlot) {
       case 0:
         return this.roms.e0;
@@ -209,7 +218,7 @@ export class PC88MemoryMap implements MemoryProvider {
     }
   }
 
-  private mapRomPages(
+  private mapROMPages(
     fromPage: number,
     toPage: number,
     rom: Uint8Array,
@@ -230,7 +239,7 @@ export class PC88MemoryMap implements MemoryProvider {
     }
   }
 
-  private mapRamPage(page: number, backing: Uint8Array, offset: u16): void {
+  private mapRAMPage(page: number, backing: Uint8Array, offset: u16): void {
     const slice = backing.subarray(offset, offset + PAGE_SIZE);
     this.readPages[page] = slice;
     this.writePages[page] = slice;

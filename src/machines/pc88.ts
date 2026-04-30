@@ -16,6 +16,7 @@ import type { Cycles, Operations, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
+import { PC88Graphics } from "./pc88-graphics.js";
 import {
   type LoadedROMs as MemoryLoadedRoms,
   PC88MemoryMap,
@@ -51,6 +52,7 @@ export interface PC88MachineParts {
   irq: IrqController;
   misc: MiscPorts;
   display: PC88Display;
+  graphics: PC88Graphics;
 }
 
 export class PC88Machine {
@@ -67,6 +69,7 @@ export class PC88Machine {
   readonly irq: IrqController;
   readonly misc: MiscPorts;
   readonly display: PC88Display;
+  readonly graphics: PC88Graphics;
 
   constructor(
     public config: PC88Config,
@@ -88,6 +91,7 @@ export class PC88Machine {
     this.calendar = new Calendar();
     this.irq = new IrqController();
     this.misc = new MiscPorts();
+    this.graphics = new PC88Graphics();
 
     this.sysctrl.register(this.ioBus);
     this.ppi.register(this.ioBus);
@@ -96,9 +100,15 @@ export class PC88Machine {
     this.calendar.register(this.ioBus);
     this.irq.register(this.ioBus);
     this.misc.register(this.ioBus);
+    this.graphics.register(this.ioBus);
 
     this.cpu = new Z80(this.memBus, this.ioBus);
-    this.display = new PC88TextDisplay(this.memoryMap, this.crtc, this.dmac);
+    this.display = new PC88TextDisplay(
+      this.memoryMap,
+      this.crtc,
+      this.dmac,
+      this.graphics,
+    );
   }
 
   // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.
@@ -120,12 +130,12 @@ export class PC88Machine {
     this.memoryMap.setBasicMode(
       this.config.dipSwitches.port31 & 0x04 ? "n80" : "n88",
     );
-    this.memoryMap.setEromSlot(0);
+    this.memoryMap.setEROMSlot(0);
     // E-ROM disabled at reset; the BIOS init path expects BASIC ROM
     // continuation at 0x6000-0x7FFF and explicitly enables an E-ROM
     // via port 0x32 when it wants one mapped in.
-    this.memoryMap.setEromEnabled(false);
-    this.memoryMap.setVramEnabled(false);
+    this.memoryMap.setEROMEnabled(false);
+    this.memoryMap.setVRAMEnabled(false);
   }
 
   // Aggregate every chip's persistent state into a single
@@ -161,7 +171,7 @@ export class PC88Machine {
       },
       memoryMap: {
         basicMode: this.memoryMap.basicMode,
-        basicRomEnabled: this.memoryMap.basicRomEnabled,
+        basicRomEnabled: this.memoryMap.basicROMEnabled,
         eromSlot: this.memoryMap.eromSlot,
         vramEnabled: this.memoryMap.vramEnabled,
       },
