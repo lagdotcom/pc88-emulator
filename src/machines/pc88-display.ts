@@ -1,7 +1,7 @@
 import type { μPD3301 } from "../chips/io/μPD3301.js";
 import type { μPD8257 } from "../chips/io/μPD8257.js";
 import type { Chars, Pixels, u16 } from "../flavours.js";
-import type { PC88Graphics } from "./pc88-graphics.js";
+import type { DisplayRegisters } from "./display-regs.js";
 import type { PC88MemoryMap } from "./pc88-memory.js";
 
 export interface TextFrame {
@@ -72,7 +72,7 @@ export class PC88TextDisplay implements PC88Display {
     private readonly memory: PC88MemoryMap,
     private readonly crtc: μPD3301,
     private readonly dmac: μPD8257,
-    private readonly gfx: PC88Graphics,
+    private readonly displayRegs: DisplayRegisters,
   ) {}
 
   // Build a TextFrame from the CRTC + DMAC live config: rows / cols

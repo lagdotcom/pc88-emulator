@@ -19,7 +19,7 @@ import type { Cycles, Operations, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
-import { PC88Graphics } from "./pc88-graphics.js";
+import { DisplayRegisters } from "./display-regs.js";
 import {
   type LoadedROMs as MemoryLoadedRoms,
   PC88MemoryMap,
@@ -61,7 +61,7 @@ export interface PC88MachineParts {
   irq: IrqController;
   misc: MiscPorts;
   display: PC88Display;
-  graphics: PC88Graphics;
+  displayRegs: DisplayRegisters;
 }
 
 export class PC88Machine {
@@ -81,7 +81,7 @@ export class PC88Machine {
   readonly irq: IrqController;
   readonly misc: MiscPorts;
   readonly display: PC88Display;
-  readonly graphics: PC88Graphics;
+  readonly displayRegs: DisplayRegisters;
 
   constructor(
     public config: PC88Config,
@@ -115,7 +115,7 @@ export class PC88Machine {
     this.calendar = new Calendar();
     this.irq = new IrqController();
     this.misc = new MiscPorts();
-    this.graphics = new PC88Graphics();
+    this.displayRegs = new DisplayRegisters(this.memoryMap);
 
     this.sysctrl.register(this.ioBus);
     this.keyboard.register(this.ioBus);
@@ -130,14 +130,14 @@ export class PC88Machine {
     this.calendar.register(this.ioBus);
     this.irq.register(this.ioBus);
     this.misc.register(this.ioBus);
-    this.graphics.register(this.ioBus);
+    this.displayRegs.register(this.ioBus);
 
     this.cpu = new Z80(this.memBus, this.ioBus);
     this.display = new PC88TextDisplay(
       this.memoryMap,
       this.crtc,
       this.dmac,
-      this.graphics,
+      this.displayRegs,
     );
   }
 
@@ -215,7 +215,7 @@ export class PC88Machine {
       irq: this.irq.snapshot(),
       misc: this.misc.snapshot(),
       beeper: this.beeper.snapshot(),
-      graphics: this.graphics.snapshot(),
+      displayRegs: this.displayRegs.snapshot(),
     };
   }
 }

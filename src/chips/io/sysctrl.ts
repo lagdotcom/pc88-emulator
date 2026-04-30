@@ -126,10 +126,6 @@ export class SystemController {
       read: () => this.systemStatus,
       write: (_p, v) => this.handle40(v),
     });
-    bus.register(0x5c, {
-      name: "sysctrl/0x5c",
-      write: (_p, v) => this.memoryMap.setGVRAMPlane((v & 0x03) as 0 | 1 | 2),
-    });
     bus.register(0x70, {
       name: "sysctrl/0x70",
       read: () => this.textWindow,
