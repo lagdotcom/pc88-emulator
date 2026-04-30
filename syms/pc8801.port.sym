@@ -1,0 +1,39 @@
+# Port symbols for PC-8801 mkI (variant slug `pc8801`).
+# Surfaces in IN A,(n) / OUT (n),A operands during disassembly.
+# RAM-namespaced because port assignments are per-variant, not per-ROM.
+
+# --- DIP / sysctrl ---
+0x09 softboot_status        ; bit 0 = 1 → BIOS re-runs full boot init at 0x7820
+0x10 calendar               ; calendar / cassette
+0x30 sysctrl_dip1            ; system DIP switch 1 (cols/colour/USART)
+0x31 sysctrl_dip2_basic      ; DIP 2 + BASIC mode select; bit 2: 1=N80 0=N88
+0x32 vram_window             ; VRAM/TVRAM window selector
+0x40 sysctrl_status          ; bit 5 = VBL active; bit 3 = beeper; sub-CPU strobes
+0x5C gvram_plane_select     ; GVRAM plane select
+
+# --- CRTC (μPD3301) ---
+0x50 crtc_data              ; SET MODE param bytes / status read
+0x51 crtc_command           ; command byte; status read
+
+# --- DMAC (μPD8257) ---
+0x60 dmac_ch0_addr
+0x62 dmac_ch1_addr
+0x64 dmac_ch2_addr          ; CRTC source address (TVRAM origin)
+0x66 dmac_ch3_addr
+0x68 dmac_status_mode
+
+# --- E-ROM bank select ---
+# Stateful latch: the BIOS writes a bank index then reads it back in
+# the dispatch helper at 0x4551 (ROM); a fixed-0xff stub causes the
+# helper to push 0xff:F as a fake return address, corrupting flow at
+# the matching 0x4581 restore. Real silicon retains the last write.
+0x71 erom_bank_select
+
+# --- IRQ controller ---
+0xE4 irq_priority           ; IRQ priority/level
+0xE6 irq_mask               ; per-bit IRQ enable; bit 0 = VBL
+
+# --- Misc (writes seen during boot, behaviour TBD) ---
+0xE7 misc_e7                ; alt IRQ mask on later models
+0xEB calendar_strobe        ; OUT'd as part of sysctrl init at 0x72e0
+0xF8 boot_fdd_select        ; boot-mode / FDD-IF select on later models
