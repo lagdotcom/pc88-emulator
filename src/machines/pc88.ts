@@ -2,11 +2,14 @@ import logLib from "log";
 
 import { Beeper } from "../chips/io/beeper.js";
 import { Calendar } from "../chips/io/calendar.js";
-import { i8255 } from "../chips/io/i8255.js";
 import { IrqController } from "../chips/io/irq.js";
+import { KanjiROM } from "../chips/io/kanji.js";
+import { Keyboard } from "../chips/io/keyboard.js";
 import { MiscPorts } from "../chips/io/misc.js";
 import { SystemController } from "../chips/io/sysctrl.js";
+import { YM2203 } from "../chips/io/YM2203.js";
 import { μPD3301 } from "../chips/io/μPD3301.js";
+import { μPD8251 } from "../chips/io/μPD8251.js";
 import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
@@ -44,9 +47,15 @@ export interface PC88MachineParts {
   ioBus: IOBus;
   memoryMap: PC88MemoryMap;
   sysctrl: SystemController;
-  ppi: i8255;
+  keyboard: Keyboard;
   crtc: μPD3301;
   dmac: μPD8257;
+  usart: μPD8251;
+  kanji: KanjiROM;
+  // OPN sound chip only present from mkII SR onwards. `null` on
+  // pre-SR variants where ports 0x44/0x45 are unwired (idle 0xFF
+  // from the bus default).
+  opn: YM2203 | null;
   calendar: Calendar;
   beeper: Beeper;
   irq: IrqController;
@@ -61,9 +70,12 @@ export class PC88Machine {
   readonly ioBus: IOBus;
   readonly memoryMap: PC88MemoryMap;
   readonly sysctrl: SystemController;
-  readonly ppi: i8255;
+  readonly keyboard: Keyboard;
   readonly crtc: μPD3301;
   readonly dmac: μPD8257;
+  readonly usart: μPD8251;
+  readonly kanji: KanjiROM;
+  readonly opn: YM2203 | null;
   readonly calendar: Calendar;
   readonly beeper: Beeper;
   readonly irq: IrqController;
@@ -87,18 +99,34 @@ export class PC88Machine {
       this.beeper,
       config.dipSwitches,
     );
-    this.ppi = new i8255();
+    this.keyboard = new Keyboard();
     this.crtc = new μPD3301();
     this.dmac = new μPD8257();
+    // Three USART channels: ch 0 at 0x20/0x21 (CMT + RS-232 front
+    // panel, mkI+), ch 1 at 0xC0/0xC1 and ch 2 at 0xC2/0xC3 (mkII+
+    // expansion). N88-BASIC pokes the channel-1/channel-2 pair
+    // unconditionally during boot.
+    this.usart = new μPD8251(3);
+    this.kanji = new KanjiROM();
+    this.opn =
+      config.sound.psg === "YM2203" || config.sound.psg === "YM2608"
+        ? new YM2203()
+        : null;
     this.calendar = new Calendar();
     this.irq = new IrqController();
     this.misc = new MiscPorts();
     this.graphics = new PC88Graphics();
 
     this.sysctrl.register(this.ioBus);
-    this.ppi.register(this.ioBus);
+    this.keyboard.register(this.ioBus);
     this.crtc.register(this.ioBus);
     this.dmac.register(this.ioBus);
+    this.usart.registerChannel(this.ioBus, 0x20, 0);
+    this.usart.registerChannel(this.ioBus, 0xc0, 1);
+    this.usart.registerChannel(this.ioBus, 0xc2, 2);
+    this.kanji.registerBank(this.ioBus, 0xe8, 0);
+    this.kanji.registerBank(this.ioBus, 0xec, 1);
+    if (this.opn) this.opn.register(this.ioBus);
     this.calendar.register(this.ioBus);
     this.irq.register(this.ioBus);
     this.misc.register(this.ioBus);
@@ -180,6 +208,10 @@ export class PC88Machine {
       sysctrl: this.sysctrl.snapshot(),
       crtc: this.crtc.snapshot(),
       dmac: this.dmac.snapshot(),
+      usart: this.usart.snapshot(),
+      kanji: this.kanji.snapshot(),
+      keyboard: this.keyboard.snapshot(),
+      opn: this.opn?.snapshot() ?? null,
       irq: this.irq.snapshot(),
       misc: this.misc.snapshot(),
       beeper: this.beeper.snapshot(),

@@ -29,9 +29,13 @@ describe("PC88Machine.snapshot", () => {
         "dmac",
         "graphics",
         "irq",
+        "kanji",
+        "keyboard",
         "memoryMap",
         "misc",
+        "opn",
         "sysctrl",
+        "usart",
       ].sort(),
     );
 

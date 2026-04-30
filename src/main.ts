@@ -175,7 +175,8 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
 `;
 
 function diagnostics(machine: PC88Machine, result: RunResult): string {
-  const { memoryMap, sysctrl, crtc, dmac, beeper, irq, misc, ppi } = machine;
+  const { memoryMap, sysctrl, crtc, dmac, beeper, irq, misc, keyboard } =
+    machine;
   const lines: string[] = [];
 
   lines.push(`reason         : ${result.reason}`);
@@ -249,7 +250,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   }
   lines.push(`bytes @ PC     :${surroundBytes.join(" ")}`);
 
-  void ppi; // PPI is just a logger right now; keep destructure stable.
+  void keyboard; // Keyboard rows are read-only stubs right now; keep destructure stable.
   return lines.join("\n");
 }
 

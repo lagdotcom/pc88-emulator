@@ -191,23 +191,43 @@ export class SystemController {
     this.applyEROMEnable();
   }
 
+  /*
+   * Port 0x32 (R/W). Not on vanilla PC-8801 — added on mkII onward.
+   * Bit layout per MAME's pc8801.cpp `misc_ctrl_w` (transcribed from
+   * the NEC PC-8801 mkII Hardware Manual):
+   *
+   *   bit 7  SINTM  sound-IRQ mask    0=enabled 1=masked
+   *   bit 6  GVAM   GVRAM access mode 0=independent 1=ALU
+   *   bit 5  PMODE  palette select    0=digital 1=analog
+   *   bit 4  TMODE  high-speed RAM    0=dedicated TVRAM chip (SR+)
+   *                                   1=main RAM bank (mkI/mkII)
+   *   bits 2-3 SCROUT  screen output mode
+   *                    00=TV/video 01=disabled 10=analog-RGB 11=optional
+   *   bits 0-1 EROMSL  internal EROM slot select
+   *
+   * TMODE on pre-SR machines is meaningless because there is no
+   * dedicated TVRAM chip — `tvramSeparate` in MemoryConfig defaults
+   * to false on those variants. On SR onwards bit 4 is a runtime
+   * toggle the BIOS uses to switch between the two TVRAM sources;
+   * we'll wire that to PC88MemoryMap when SR boot work starts.
+   */
   private handle32(v: u8): void {
     const eromsl = v & 0x03;
-    const avc = (
+    const scrout = (
       {
         0x00: "tv-video",
-        0x04: "PROHIBITED",
-        0x08: "computer",
-        0x0c: "option",
+        0x04: "disabled",
+        0x08: "analog-rgb",
+        0x0c: "optional",
       } as const
     )[v & 0x0c];
-    const tmode = v & 0x10 ? "main" : "high-speed";
-    const pmode = v & 0x20 ? "analog-512" : "digital-8";
-    const gvam = v & 0x40 ? "extended" : "independent";
-    const sintm = v & 0x80 ? "disable" : "enable";
+    const tmode = v & 0x10 ? "main-ram" : "dedicated-tvram";
+    const pmode = v & 0x20 ? "analog" : "digital";
+    const gvam = v & 0x40 ? "alu" : "independent";
+    const sintm = v & 0x80 ? "masked" : "enabled";
 
     log.info(
-      `0x32 write: eromsl=${eromsl} avc=${avc} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
+      `0x32 write: eromsl=${eromsl} scrout=${scrout} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
     );
 
     // bits 0-1 select the active extension-ROM slot, but they don't
