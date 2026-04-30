@@ -50,6 +50,20 @@ export interface CRTCSnapshot {
   rowsPerScreen: Chars;
   attrPairsPerRow: number;
   charHeightLines: number;
+  // SET MODE param 0 bit 7. Per MAME's upd3301 device this is the
+  // DMA-mode flag (0 = "burst" DMA, 1 = "character-pull" DMA), not
+  // a cell-stride control. Surfaced for diagnostic parity with
+  // MAME but not currently consumed.
+  dmaCharMode: boolean;
+  // SET MODE param 4 bits 5-7 — gfx mode encoded as
+  // (AT1 << 2) | (AT0 << 1) | SC. Per MAME upd3301:
+  //   0b000 = transparent b&w with special control character
+  //   0b001 = no attributes, no special control
+  //   0b010 = transparent colour
+  //   0b100 = non-transparent b&w, special control
+  //   0b101 = non-transparent b&w, no special control
+  // PC-8801 BASIC variants both program 0 (transparent b&w + SC).
+  gfxMode: number;
   displayOn: boolean;
   // Pending-parameter state, so a savestate captured mid-command
   // resumes correctly.
@@ -72,6 +86,8 @@ export class μPD3301 {
   rowsPerScreen: Chars = 0;
   attrPairsPerRow = 0;
   charHeightLines = 0;
+  dmaCharMode = false;
+  gfxMode = 0;
   // True after START DISPLAY (cmd 0x20-0x3F); cleared by RESET. A
   // real CRTC blanks the raster when this is false; toAsciiDump
   // doesn't enforce that since we'd want to see the banner regardless.
@@ -96,6 +112,8 @@ export class μPD3301 {
       rowsPerScreen: this.rowsPerScreen,
       attrPairsPerRow: this.attrPairsPerRow,
       charHeightLines: this.charHeightLines,
+      dmaCharMode: this.dmaCharMode,
+      gfxMode: this.gfxMode,
       displayOn: this.displayOn,
       command: this.command,
       paramsLeft: this.paramsLeft,
@@ -109,6 +127,8 @@ export class μPD3301 {
     this.rowsPerScreen = s.rowsPerScreen;
     this.attrPairsPerRow = s.attrPairsPerRow;
     this.charHeightLines = s.charHeightLines;
+    this.dmaCharMode = s.dmaCharMode;
+    this.gfxMode = s.gfxMode;
     this.displayOn = s.displayOn;
     this.command = s.command;
     this.paramsLeft = s.paramsLeft;
@@ -142,6 +162,8 @@ export class μPD3301 {
       this.rowsPerScreen = 0;
       this.attrPairsPerRow = 0;
       this.charHeightLines = 0;
+      this.dmaCharMode = false;
+      this.gfxMode = 0;
       this.displayOn = false;
     } else if (op === 0x20) {
       // START DISPLAY: bits [4:0] are display-format flags. We only
@@ -173,23 +195,45 @@ export class μPD3301 {
           .join(",")}]`,
       );
       // RESET / SET MODE (0x00-0x1F): 5-byte parameter block per the
-      // μPD3301 datasheet. PC-8801 N-BASIC sends [0xCE 0x93 0x69 0xBE
-      // 0x13] which decodes to 80 chars × 20 rows.
-      //   p0: bits 0-6 = chars-per-row - 2
-      //   p1: bits 0-5 = rows - 1
-      //   p2: bits 0-4 = attribute pairs per row (active count)
-      //   p3: bits 0-4 = character height - 1
-      //   p4: cursor / blink config
+      // μPD3301 datasheet (transcribed in MAME's upd3301_device).
+      // PC-8801 BASIC sends [0xCE 0x93 0x69 0xBE 0x13]:
+      //
+      //   p0 bit 7        DMA mode (0 = burst, 1 = character)
+      //   p0 bits 0-6     chars-per-row - 2 (= number of CHAR bytes
+      //                   per row; the CRTC pulls exactly this many
+      //                   bytes via DMA before pulling attr pairs)
+      //   p1 bits 6-7     cursor blink rate selector
+      //   p1 bits 0-5     rows-per-screen - 1
+      //   p2 bit 7        skip-line (pseudo-interlace)
+      //   p2 bits 5-6     cursor mode (00..11)
+      //   p2 bits 0-4     character height - 1 (raster lines per row)
+      //   p3 bits 5-7     vblank lines - 1
+      //   p3 bits 0-4     hblank width - 2
+      //   p4 bits 5-7     gfx-mode = (AT1 << 2) | (AT0 << 1) | SC
+      //   p4 bits 0-4     attribute pairs per row - 1 (max 20)
+      //
+      // Important: each cell is **one byte** in TVRAM. The CRTC
+      // streams `charsPerRow` bytes, then `attrPairsPerRow * 2`
+      // bytes, then on to the next row. There is no 2-byte
+      // interleaved char/attr stride. Per-cell attributes come from
+      // resolving the (column, attr) pairs in the trailing area.
       if ((cmd & 0xe0) === 0x00) {
-        const [p0 = 0, p1 = 0, p2 = 0, p3 = 0] = this.params;
+        const [p0 = 0, p1 = 0, p2 = 0, p3 = 0, p4 = 0] = this.params;
+        this.dmaCharMode = (p0 & 0x80) !== 0;
         this.charsPerRow = (p0 & 0x7f) + 2;
         this.rowsPerScreen = (p1 & 0x3f) + 1;
-        this.attrPairsPerRow = p2 & 0x1f;
-        this.charHeightLines = (p3 & 0x1f) + 1;
+        this.charHeightLines = (p2 & 0x1f) + 1;
+        this.gfxMode = (p4 & 0xe0) >> 5;
+        // The "attr pairs per row" field is +1 in the encoding;
+        // gfx-mode 0b001 (no attributes / no SC) suppresses it.
+        this.attrPairsPerRow =
+          this.gfxMode === 0b001 ? 0 : Math.min((p4 & 0x1f) + 1, 20);
         log.info(
-          `SET MODE: ${this.charsPerRow}x${this.rowsPerScreen}, ` +
-            `active-attr-pairs/row=${this.attrPairsPerRow}, ` +
-            `char-height=${this.charHeightLines}`,
+          `SET MODE: ${this.charsPerRow}×${this.rowsPerScreen} ` +
+            `(dma=${this.dmaCharMode ? "char" : "burst"}, ` +
+            `gfx=${this.gfxMode.toString(2).padStart(3, "0")}, ` +
+            `attr-pairs/row=${this.attrPairsPerRow}, ` +
+            `char-height=${this.charHeightLines})`,
         );
       }
       this.command = null;

@@ -208,10 +208,13 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   );
   lines.push(`sys status     : 0x${hex(sysctrl.systemStatus, 2)}`);
   lines.push(
-    `crtc           : ${crtc.charsPerRow}x${crtc.rowsPerScreen}, ` +
+    `crtc           : ${crtc.charsPerRow}-byte run × ${crtc.rowsPerScreen} rows ` +
+      `(${sysctrl.cols80 ? "80-col 1-byte cells" : "40-col 2-byte cells"}, ` +
+      `dma=${crtc.dmaCharMode ? "char" : "burst"}, ` +
+      `gfx=${crtc.gfxMode.toString(2).padStart(3, "0")}, ` +
       `attr-pairs/row=${crtc.attrPairsPerRow}, ` +
       `display=${crtc.displayOn ? "on" : "off"}, ` +
-      `status=0x${hex(crtc.status, 2)}`,
+      `status=0x${hex(crtc.status, 2)})`,
   );
   lines.push(
     `dmac ch2       : src=0x${hex(dmac.channelAddress(2), 4)} ` +

@@ -34,13 +34,17 @@ describe("PC88TextDisplay visible region", () => {
   });
 
   it("renders the CRTC+DMAC-fetched region when SET MODE has run", () => {
-    // Program the machine the way N-BASIC does: SET MODE for an
-    // 80-byte cell run × 20 rows, DMAC ch2 source = 0xF300, then
-    // drop "HELLO" at the top-left of the visible region.
+    // Program the machine the way N-BASIC does: 40-col 2-byte-cell
+    // mode (port 0x30 bit 0 clear), CRTC SET MODE for an 80-byte
+    // cell run × 20 rows, DMAC ch2 source = 0xF300, then drop
+    // "HELLO" at the top-left of the visible region.
     const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
     machine.reset();
 
-    // CRTC SET MODE (cmd 0x00, 5 params: 80x20, etc.)
+    // Port 0x30 write with COLS_80 clear → 40-col / 2-byte-cell mode.
+    machine.ioBus.write(0x30, 0x00);
+
+    // CRTC SET MODE (cmd 0x00, 5 params: 80×20).
     machine.ioBus.write(0x51, 0x00);
     machine.ioBus.write(0x50, 0xce);
     machine.ioBus.write(0x50, 0x93);
@@ -63,9 +67,11 @@ describe("PC88TextDisplay visible region", () => {
   it("honours the DMAC source offset when it isn't 0xF000", () => {
     // The first 0x300 bytes of TVRAM are off-screen scratch when
     // DMAC ch2 starts at 0xF300; bytes there must NOT show up in
-    // the visible dump.
+    // the visible dump. 40-col 2-byte-cell mode for the 2-byte
+    // fillTextCells helper to populate cells correctly.
     const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
     machine.reset();
+    machine.ioBus.write(0x30, 0x00); // COLS_80 clear → 40-col mode
     machine.ioBus.write(0x51, 0x00);
     machine.ioBus.write(0x50, 0xce);
     machine.ioBus.write(0x50, 0x93);

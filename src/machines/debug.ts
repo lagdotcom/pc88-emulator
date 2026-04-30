@@ -164,8 +164,11 @@ function printChips(machine: PC88Machine): void {
       `  vram window  : ${snap.memoryMap.vramEnabled ? "on" : "off"}\n` +
       `  DIP 30/31    : ${byte(cfg.dipSwitches.port30)} / ${byte(cfg.dipSwitches.port31)}\n` +
       `  sys status   : ${byte(snap.sysctrl.systemStatus)} (DIP1=${byte(snap.sysctrl.dipSwitch1)} DIP2=${byte(snap.sysctrl.dipSwitch2)})\n` +
-      `  crtc         : ${snap.crtc.charsPerRow}x${snap.crtc.rowsPerScreen} ` +
-      `(attr-pairs/row=${snap.crtc.attrPairsPerRow}, ` +
+      `  crtc         : ${snap.crtc.charsPerRow}-byte run × ${snap.crtc.rowsPerScreen} rows ` +
+      `(${snap.sysctrl.cols80 ? "80-col 1-byte cells" : "40-col 2-byte cells"}, ` +
+      `dma=${snap.crtc.dmaCharMode ? "char" : "burst"}, ` +
+      `gfx=${snap.crtc.gfxMode.toString(2).padStart(3, "0")}, ` +
+      `attr-pairs/row=${snap.crtc.attrPairsPerRow}, ` +
       `display=${snap.crtc.displayOn ? "on" : "off"}, ` +
       `status=${byte(snap.crtc.status)})\n` +
       `  dmac ch2     : src=${word(dmac.channelAddress(2))} count=${dmac.channelByteCount(2)}\n` +

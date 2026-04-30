@@ -15,14 +15,16 @@ describe("μPD3301 port routing", () => {
     const { bus, crtc } = setup();
     // RESET / SET MODE: cmd 0x00 expects 5 params.
     bus.write(0x51, 0x00);
-    bus.write(0x50, 0xce); // chars-per-row byte length: 80
-    bus.write(0x50, 0x93); // rows-1: 0x13 → 20
-    bus.write(0x50, 0x69); // attr-pairs / per-row config
-    bus.write(0x50, 0xbe); // char height-1
-    bus.write(0x50, 0x13); // cursor / blink config
+    bus.write(0x50, 0xce); // p0: dma=char (bit 7), chars-per-row byte length: 80
+    bus.write(0x50, 0x93); // p1: blink rate, rows-1: 20
+    bus.write(0x50, 0x69); // p2: skip / cursor mode / char-height-1
+    bus.write(0x50, 0xbe); // p3: vblank-1 / hblank-2
+    bus.write(0x50, 0x13); // p4: gfx-mode (0b000) / attr-pairs-1 (capped 20)
     expect(crtc.charsPerRow).toBe(80);
     expect(crtc.rowsPerScreen).toBe(20);
-    expect(crtc.attrPairsPerRow).toBe(9);
+    expect(crtc.attrPairsPerRow).toBe(20);
+    expect(crtc.gfxMode).toBe(0);
+    expect(crtc.dmaCharMode).toBe(true);
   });
 
   it("ignores writes to 0x50 when no command is in flight", () => {

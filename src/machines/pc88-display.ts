@@ -1,3 +1,4 @@
+import type { SystemController } from "../chips/io/sysctrl.js";
 import type { μPD3301 } from "../chips/io/μPD3301.js";
 import type { μPD8257 } from "../chips/io/μPD8257.js";
 import type { Chars, Pixels, u16 } from "../flavours.js";
@@ -36,30 +37,36 @@ export interface PC88Display {
   rawTVRAMDump(): string;
 }
 
-// PC-8801 mkI TVRAM layout per row, confirmed empirically against
-// the DMAC channel 2 byte count BASIC programs (0x0960 = 2400 = 20
-// rows × 120 bytes) and the location of "BASIC" in TVRAM (chars at
-// even offsets, attrs at odd):
+// PC-88 TVRAM layout per row, per MAME's upd3301_device::dack_w:
 //
-//   bytes  0..79  : 40 visible cells × 2 bytes (char + attribute)
-//   bytes 80..119 : 20 attribute pair slots × 2 bytes (column, attr)
+//   bytes 0..(H-1):              H single-byte chars (1 byte per cell)
+//   bytes H..(H + 2*A - 1):      A (column, attr) pairs (2 bytes each)
+//   trailing:                    padding up to row stride
 //
-// PC-88 always uses "attribute mode" where each visible cell is
-// stored as a (char, attribute) pair at consecutive byte offsets.
-// The CRTC's `chars-per-row` parameter is the *byte length* of the
-// cell run, so visible-cells = charsPerRow / 2. The trailing
-// attribute-pair area gives skip-zone attribute changes within a
-// row (for runs of cells that share the same colour/etc.); we
-// don't resolve those to per-cell attributes yet — that's a
-// renderer job.
+// where H = `crtc.charsPerRow` (= 80 in PC-8801 BASIC) and A =
+// `crtc.attrPairsPerRow` (= up to 20). The BIOS programs DMAC
+// channel 2 to stream `H + 2*A` bytes per row (40 attr pairs + 80
+// chars = 120 bytes when A=20, matching the observed 0x960 / 20
+// rows = 120 bytes/row count).
+//
+// Each cell is ONE byte. There is no 2-byte interleaved char/attr
+// stride. Per-cell attributes are resolved by walking the (column,
+// attr) pairs in the trailing area — that's a renderer job we
+// don't yet do; for headless TVRAM dumping we just expose the
+// chars and an empty attrs array.
+//
+// N-BASIC stores its banner as "char,0x00,char,0x00,..." which
+// looks like a 2-byte cell layout but is actually 80 chars per row
+// where every other byte is NUL — wasteful, but correct under
+// MAME's model.
 //
 // The DMAC channel 2 source register tells us where the visible
-// region starts inside TVRAM (0xF300 on N-BASIC boot, not 0xF000).
-const CELL_BYTES = 2;
-const ATTR_OFFSET = 1;
-// Number of attribute-pair-area bytes per row (independent of how
-// many of those pairs are actually "active" — the BIOS reserves
-// the whole area regardless).
+// region starts inside TVRAM (0xF300 on N-BASIC boot, 0xF3C8 on
+// N88-BASIC).
+//
+// Total bytes per row that we read for layout purposes — H chars
+// plus the full 40-byte attr-pair area (20 slots × 2 bytes), which
+// the BIOS reserves regardless of how many slots are active.
 const ATTR_AREA_BYTES = 40;
 // Hex-dump line width for rawTvramDump.
 const HEX_DUMP_WIDTH = 16;
@@ -72,6 +79,7 @@ export class PC88TextDisplay implements PC88Display {
     private readonly memory: PC88MemoryMap,
     private readonly crtc: μPD3301,
     private readonly dmac: μPD8257,
+    private readonly sysctrl: SystemController,
     private readonly displayRegs: DisplayRegisters,
   ) {}
 
@@ -82,10 +90,15 @@ export class PC88TextDisplay implements PC88Display {
   // MODE) returns an empty frame; callers can fall back to
   // rawTvramDump() for diagnostic context.
   getTextFrame(): TextFrame {
-    // CRTC charsPerRow is the *byte length* of the cell run per row;
-    // each visible cell is 2 bytes (char + attribute). Halve it.
+    // The CRTC programs charsPerRow as the *byte* count of the cell
+    // run (typically 80 for PC-8801 BASIC). The system-register
+    // bit COLS_80 then chooses the cell stride: 80-col mode uses
+    // 1 byte per cell (= cellRunBytes / 1 = 80 visible cols),
+    // 40-col mode uses 2 bytes per cell (= cellRunBytes / 2 = 40
+    // visible cols, with the second byte being a per-cell attr).
     const cellRunBytes = this.crtc.charsPerRow || 0;
-    const cols = cellRunBytes >> 1;
+    const cellSize = this.sysctrl.cols80 ? 1 : 2;
+    const cols = (cellRunBytes / cellSize) | 0;
     const rows = this.crtc.rowsPerScreen || 0;
     if (cols === 0 || rows === 0) {
       return {
@@ -96,9 +109,9 @@ export class PC88TextDisplay implements PC88Display {
         rows: 0,
       };
     }
-    // Per-row stride: cell-run bytes + the trailing 40-byte
-    // attribute-pair area. This matches the DMAC count BASIC
-    // programs (2400 / 20 rows = 120 bytes/row).
+    // Per-row stride: char run (cellRunBytes) + the 40-byte
+    // attribute-pair area. Matches the DMAC count BASIC programs
+    // (0x0960 = 20 × 120) regardless of cell stride.
     const stride = cellRunBytes + ATTR_AREA_BYTES;
     // DMAC ch 2 source is the absolute CPU-side address of the first
     // byte. TVRAM lives at 0xF000; subtracting gives the offset into
@@ -114,9 +127,11 @@ export class PC88TextDisplay implements PC88Display {
     for (let row = 0; row < rows; row++) {
       const rowBase = (tvramOrigin + row * stride) & mask;
       for (let col = 0; col < cols; col++) {
-        const cellBase = (rowBase + col * CELL_BYTES) & mask;
+        const cellBase = (rowBase + col * cellSize) & mask;
         chars[row * cols + col] = tvram[cellBase] ?? 0;
-        attrs[row * cols + col] = tvram[(cellBase + ATTR_OFFSET) & mask] ?? 0;
+        if (cellSize === 2) {
+          attrs[row * cols + col] = tvram[(cellBase + 1) & mask] ?? 0;
+        }
       }
     }
     return { chars, attrs, cursor: null, cols, rows };

@@ -134,6 +134,7 @@ export class PC88Machine {
       this.memoryMap,
       this.crtc,
       this.dmac,
+      this.sysctrl,
       this.displayRegs,
     );
   }

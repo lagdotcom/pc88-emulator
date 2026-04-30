@@ -93,6 +93,13 @@ export interface SystemControllerSnapshot {
   systemStatus: u8;
   eromSelection: u8;
   textWindow: u8;
+  // 80-column mode select (mirrors port 0x30 bit 0 / COLS_80). The
+  // text display uses this to choose the TVRAM cell stride: 1 byte
+  // per cell in 80-col mode (N88-BASIC convention), 2 bytes per
+  // cell in 40-col mode (N-BASIC convention). Same physical CRTC
+  // programming in both modes; the discriminator is the system
+  // register, not a CRTC parameter.
+  cols80: boolean;
 }
 
 export class SystemController {
@@ -131,6 +138,11 @@ export class SystemController {
   // doesn't block first-light.
   textWindow: u8 = 0;
 
+  // 80-col mode select; defaults true to match the typical mkI
+  // power-on. Updated from port 0x30 writes (bit 0 / COLS_80) and
+  // consumed by PC88TextDisplay to choose TVRAM cell stride.
+  cols80 = true;
+
   // Visible to the runner so the VBL pulse can flip the bit too.
   setVBlank(active: boolean): void {
     if (active) this.systemStatus |= PORT40_R.VBL_ACTIVE;
@@ -144,6 +156,7 @@ export class SystemController {
       systemStatus: this.systemStatus,
       eromSelection: this.eromSelection,
       textWindow: this.textWindow,
+      cols80: this.cols80,
     };
   }
 
@@ -153,6 +166,7 @@ export class SystemController {
     this.systemStatus = s.systemStatus;
     this.eromSelection = s.eromSelection;
     this.textWindow = s.textWindow;
+    this.cols80 = s.cols80;
   }
 
   constructor(
@@ -198,7 +212,8 @@ export class SystemController {
   }
 
   private handle30(v: u8): void {
-    const cols = v & PORT30.COLS_80 ? 80 : 40;
+    this.cols80 = (v & PORT30.COLS_80) !== 0;
+    const cols = this.cols80 ? 80 : 40;
     const color = v & PORT30.MONO ? "mono" : "color";
     const carrier = v & PORT30.CARRIER_MARK ? "mark" : "space";
     const motor = (v & PORT30.CASSETTE_MOTOR) !== 0;
