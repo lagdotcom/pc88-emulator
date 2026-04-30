@@ -406,12 +406,24 @@ branch-cheap).
 ## Interactive debugger
 
 `yarn pc88 --debug` (or `-d`) drops into a REPL before any code
-runs. Commands: `step` / `next` (step over) / `continue` /
-`break <addr>` / `unbreak <addr>` / `breaks` / `regs` / `chips` /
-`peek <addr> [count]` / `peekw <addr>` / `poke <addr> <val>` /
-`quit` / `help`. Initial breakpoints can be installed up-front
-with `--break=ADDR` (repeatable). Addresses accept `0xff`, `ff`,
-or decimal; out-of-range values are masked to u16.
+runs. Commands: `step` / `next` (step over) / `continue [cycles]`
+(stops on breakpoint / halt / op cap, or after N CPU cycles when
+the optional arg is given) / `break <addr>` / `unbreak <addr>` /
+`breaks` / `regs` / `chips` / `screen` (renders the live CRTC+DMAC
+visible region) / `dis [count]` (disassembles N instructions
+starting at PC, default 8) / `peek <addr> [count]` /
+`peekw <addr>` / `poke <addr> <val>` / `quit` / `help`. Initial
+breakpoints can be installed up-front with `--break=ADDR`
+(repeatable). Addresses accept `0xff`, `ff`, or decimal;
+out-of-range values are masked to u16.
+
+Disassembly is driven by `src/chips/z80/disasm.ts` which walks the
+existing `opCodes` / `cbOpCodes` / `edOpCodes` / `ddOpCodes` /
+`fdOpCodes` / `ddCbOpCodes` / `fdCbOpCodes` mnemonic strings and
+substitutes `n` / `nn` / `d` / `(IX+d)` / `(IY+d)` placeholders
+with the bytes read at PC. New opcodes added to `ops.ts` get
+disassembly for free as long as the mnemonic uses those
+placeholders. Tests in `tests/z80/disasm.test.ts`.
 
 The debugger and the headless runner share a single VBL pump
 (`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so

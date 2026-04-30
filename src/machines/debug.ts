@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 
 import logLib from "log";
 
+import { disassemble } from "../chips/z80/disasm.js";
 import { byte, word } from "../tools.js";
 import { PC88Machine, makeVblState, pumpVbl, stepOneInstruction } from "./pc88.js";
 
@@ -33,18 +34,39 @@ Debugger commands (anything in <> takes a hex address; "0x" optional):
 
   s, step                 single-step one instruction
   n, next                 step over (CALL/RST → run until after the call)
-  c, continue             run until breakpoint / halt / op cap
+  c, continue [cycles]    run until breakpoint / halt / op cap; with a
+                          numeric arg, also stop after N CPU cycles
   b, break <addr>         add a breakpoint at <addr>
   bd, unbreak <addr>      remove a breakpoint
   bl, breaks              list breakpoints
   r, regs                 show CPU registers
   chips                   show CRTC / DMAC / IRQ / sysctrl / DIP state
+  screen                  render the CRTC+DMAC visible region
+  dis [count]             disassemble the next [count] instructions
+                          (default 8) starting at PC
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
   pw, peekw <addr>        read 16-bit little-endian word at <addr>
   poke <addr> <value>     write a byte
   q, quit                 exit
   h, ?, help              this help
 `;
+
+// Parse a cycle-count argument (no u16 wrap, can be larger than
+// 0xFFFF). Accepts the same syntaxes as parseAddr but returns the
+// full integer value rather than masking to 16 bits.
+function parseCycleArg(raw: string): number | null {
+  const s = raw.trim().toLowerCase();
+  if (s.startsWith("0x")) {
+    const n = parseInt(s.slice(2), 16);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
+    const n = parseInt(s, 16);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 // Hex parser that accepts "0xff", "ff", or decimal "255".
 function parseAddr(raw: string | undefined): number | null {
@@ -122,20 +144,28 @@ function printChips(machine: PC88Machine): void {
   );
 }
 
-// One-line summary printed before each prompt: PC, current opcode
-// byte, and a hint about whether it's a CALL/RST (so the user can
-// tell at a glance whether `next` will skip or just step).
+// One-line summary printed before each prompt: PC, the raw bytes
+// the next instruction occupies, and the disassembled mnemonic. The
+// disassembler reads through `machine.memBus` so bank-switched
+// pages are interpreted as the CPU sees them.
 function printPromptSummary(machine: PC88Machine): void {
-  const cpu = machine.cpu;
-  const pc = cpu.regs.PC;
-  const op = machine.memBus.read(pc);
-  const next1 = machine.memBus.read((pc + 1) & 0xffff);
-  const next2 = machine.memBus.read((pc + 2) & 0xffff);
-  const callLen = callOpLength(op);
-  const annot = callLen !== null ? ` (${callLen}-byte CALL/RST)` : "";
-  process.stdout.write(
-    `  @ ${word(pc)}: ${byte(op)} ${byte(next1)} ${byte(next2)}${annot}\n`,
-  );
+  const pc = machine.cpu.regs.PC;
+  const d = disassemble((a) => machine.memBus.read(a), pc);
+  const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+  process.stdout.write(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
+}
+
+// Multi-line disassembly listing for the `dis` command. Walks
+// forward using each instruction's reported length so the next
+// line shows the actual following instruction, not a fixed offset.
+function printDisassembly(machine: PC88Machine, count: number): void {
+  let pc = machine.cpu.regs.PC;
+  for (let i = 0; i < count; i++) {
+    const d = disassemble((a) => machine.memBus.read(a), pc);
+    const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+    process.stdout.write(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
+    pc = (pc + d.length) & 0xffff;
+  }
 }
 
 function doPeek(machine: PC88Machine, addr: number, count: number): void {
@@ -173,14 +203,25 @@ function singleStep(machine: PC88Machine, state: DebugState): void {
 }
 
 // Run instructions until one of: breakpoint hit, step-over target
-// hit, halt-no-irq, or op cap reached.
+// hit, halt-no-irq, op cap reached, or (when `maxCycles` is set)
+// the cycle budget exhausted. Without a cycle budget, behaves the
+// same as before — caller-supplied cycle limit is the new bit.
 function runUntilStop(
   machine: PC88Machine,
   state: DebugState,
   reasonHint: string,
+  maxCycles?: number,
 ): void {
   const startOps = state.ops;
+  const startCycles = machine.cpu.cycles;
+  const cycleBudget = maxCycles !== undefined ? maxCycles : Infinity;
   while (state.ops - startOps < CONTINUE_MAX_OPS) {
+    if (machine.cpu.cycles - startCycles >= cycleBudget) {
+      process.stdout.write(
+        `  (stopped: ${(machine.cpu.cycles - startCycles).toLocaleString()} cycles run)\n`,
+      );
+      return;
+    }
     pumpVbl(machine, state.vbl);
     if (machine.cpu.halted && !machine.cpu.iff1) {
       process.stdout.write(`  (stopped: HALT with IFF1=0)\n`);
@@ -266,9 +307,25 @@ export async function runDebug(
 
         case "c":
         case "cont":
-        case "continue":
-          runUntilStop(machine, state, "continue");
+        case "continue": {
+          // `continue` with no arg: existing behaviour (run until
+          // breakpoint / halt / op cap). `continue N` adds an
+          // N-cycle stop condition on top — useful for "step
+          // forward by ~one frame's worth" without setting a PC
+          // breakpoint. Hex (0x... or trailing hex chars) and
+          // decimal both work.
+          let cycleBudget: number | undefined;
+          if (args[0] !== undefined) {
+            const n = parseCycleArg(args[0]);
+            if (n === null) {
+              process.stdout.write(`  usage: continue [cycles]\n`);
+              break;
+            }
+            cycleBudget = n;
+          }
+          runUntilStop(machine, state, "continue", cycleBudget);
           break;
+        }
 
         case "b":
         case "break": {
@@ -307,6 +364,29 @@ export async function runDebug(
         case "chips":
           printChips(machine);
           break;
+
+        case "screen":
+          // Same surface as the headless runner's "--- Visible screen
+          // ---" block. Renders the CRTC+DMAC region; falls back to a
+          // placeholder string before SET MODE has run so the user
+          // doesn't have to remember which init step gates it.
+          process.stdout.write(machine.display.toAsciiDump() + "\n");
+          break;
+
+        case "dis":
+        case "l":
+        case "list": {
+          // Default to 8 instructions ahead — enough to spot a CALL
+          // / loop / branch without flooding the screen. Counts
+          // larger than 256 are clamped (debugger should stay
+          // responsive even if the user fat-fingers a big number).
+          const count = Math.min(
+            256,
+            Math.max(1, args[0] ? parseInt(args[0], 10) || 8 : 8),
+          );
+          printDisassembly(machine, count);
+          break;
+        }
 
         case "p":
         case "peek": {
