@@ -64,12 +64,16 @@ export class PC88MemoryMap implements MemoryProvider {
   // refreshPages() so that read/write pick up the new mapping.
   private _basicRomEnabled = true;
   private _basicMode: BasicMode = "n80";
-  // Active extension-ROM slot (port 0x32, bits 0-1). The slot whose
-  // image is loaded gets mapped at 0x6000-0x7FFF; if no image is
-  // loaded for the active slot we fall through to the BASIC ROM
-  // continuation. Earlier code modelled this as a boolean E0-only
-  // toggle, which broke as soon as anything wanted E1/E2/E3.
+  // Active extension-ROM slot (port 0x32, bits 0-1). The selected
+  // slot's image is mapped at 0x6000-0x7FFF only when the chip has
+  // also been *enabled*; otherwise the page falls through to the
+  // BASIC ROM continuation. Reset state is "slot 0, disabled" — the
+  // BIOS init path expects BASIC continuation at boot and toggles
+  // the enable when it wants an E-ROM in. Earlier code modelled
+  // "slot 0 = always-enabled E0" which broke first-light because
+  // E0 was mapped at 0x6000 before the BIOS asked for it.
   private _eromSlot: EromSlot = 0;
+  private _eromEnabled = false;
   private _vramEnabled = false;
   private _gvramPlane: 0 | 1 | 2 = 0;
 
@@ -110,6 +114,12 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
+  setEromEnabled(enabled: boolean): void {
+    if (this._eromEnabled === enabled) return;
+    this._eromEnabled = enabled;
+    this.refreshPages();
+  }
+
   setVramEnabled(enabled: boolean): void {
     if (this._vramEnabled === enabled) return;
     this._vramEnabled = enabled;
@@ -131,6 +141,9 @@ export class PC88MemoryMap implements MemoryProvider {
   get eromSlot(): EromSlot {
     return this._eromSlot;
   }
+  get eromEnabled(): boolean {
+    return this._eromEnabled;
+  }
   get vramEnabled(): boolean {
     return this._vramEnabled;
   }
@@ -147,7 +160,7 @@ export class PC88MemoryMap implements MemoryProvider {
     const basicRom = this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
     if (this._basicRomEnabled) {
       this.mapRomPages(0, 6, basicRom, 0);
-      const erom = this.activeEromImage();
+      const erom = this._eromEnabled ? this.activeEromImage() : undefined;
       if (erom) {
         this.mapRomPages(6, 8, erom, 0);
       } else {

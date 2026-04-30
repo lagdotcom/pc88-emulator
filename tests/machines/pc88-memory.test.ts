@@ -34,11 +34,17 @@ describe("PC88MemoryMap", () => {
     expect(m.read(0x0000)).toBe(0x80);
   });
 
-  it("maps the active extension-ROM slot at 0x6000-0x7FFF", () => {
-    // Default slot is 0; with the E0 image loaded that's what the
-    // BIOS sees at 0x6000. Switching to a slot whose image is
-    // missing falls back to the BASIC ROM continuation so the
-    // BIOS doesn't read garbage.
+  it("default state at 0x6000 is BASIC ROM continuation, not the E-ROM slot", () => {
+    // Reset state must NOT map an E-ROM at 0x6000 — the BIOS init
+    // path expects BASIC continuation there until it explicitly
+    // enables an E-ROM via port 0x32. Earlier code that mapped
+    // slot 0 unconditionally regressed N-BASIC boot.
+    const m = new PC88MemoryMap(fixture());
+    expect(m.read(0x6000)).toBe(0x80); // BASIC continuation
+    expect(m.eromEnabled).toBe(false);
+  });
+
+  it("maps the active extension-ROM slot only when enabled", () => {
     const fixtureWithAllE = (): LoadedRoms => ({
       n80: filledROM(0x8000, 0x80),
       n88: filledROM(0x8000, 0x88),
@@ -48,6 +54,7 @@ describe("PC88MemoryMap", () => {
       e3: filledROM(0x2000, 0xe3),
     });
     const m = new PC88MemoryMap(fixtureWithAllE());
+    m.setEromEnabled(true);
     expect(m.read(0x6000)).toBe(0xe0); // slot 0 = E0
     m.setEromSlot(1);
     expect(m.read(0x6000)).toBe(0xe1);
@@ -56,13 +63,16 @@ describe("PC88MemoryMap", () => {
     m.setEromSlot(3);
     expect(m.read(0x6000)).toBe(0xe3);
     expect(m.read(0x5fff)).toBe(0x80); // outside the slot window
+    m.setEromEnabled(false);
+    expect(m.read(0x6000)).toBe(0x80); // back to BASIC continuation
   });
 
   it("falls back to BASIC ROM continuation when the active slot has no image", () => {
-    // mkI only ships E0; selecting slot 1/2/3 there must still
-    // return readable bytes (the BASIC ROM continuation), not
-    // throw or return garbage.
+    // mkI only ships E0; selecting slot 1/2/3 with E-ROMs enabled
+    // must still return readable bytes (the BASIC ROM continuation),
+    // not throw or return garbage.
     const m = new PC88MemoryMap(fixture());
+    m.setEromEnabled(true);
     m.setEromSlot(1);
     expect(m.read(0x6000)).toBe(0x80);
     m.setEromSlot(0);

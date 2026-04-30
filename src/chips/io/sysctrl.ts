@@ -140,12 +140,18 @@ export class SystemController {
       `0x31 write: lines=${lines} mmode=${mmode} rmode=${rmode} graph=${graph} hcolor=${hcolor} highres=${highres}`,
     );
 
-    // Bit 1 selects ROM vs RAM in the 0x0000-0x7FFF window; bit 2
-    // selects N-BASIC vs N88-BASIC when ROM is the source. Propagate
-    // both so the BIOS can flip BASIC modes at runtime (which is
-    // exactly what the N88 boot path does after reading the DIP).
-    this.memoryMap.setBasicRomEnabled(mmode === "rom");
-    this.memoryMap.setBasicMode(rmode);
+    // Earlier code propagated `mmode` to setBasicRomEnabled() and
+    // `rmode` to setBasicMode() on every port-0x31 write, on the
+    // theory that the BIOS would use those bits to flip BASIC modes
+    // at runtime. That was wrong — port 0x31 writes have *different*
+    // bit semantics from reads (reads return DIP state; writes are a
+    // multi-purpose system register where bit 1 is meaningful only
+    // in conjunction with other bits we don't model yet). Doing the
+    // propagation tripped the BIOS into "ROM mapped out" mid-init
+    // and stuck it before CRTC programming. Cold-boot DIP selection
+    // is handled in PC88Machine.reset() instead. Until we model the
+    // full system-register semantics, treat port 0x31 writes as
+    // configuration-only.
   }
 
   private handle32(v: u8): void {
@@ -167,11 +173,17 @@ export class SystemController {
       `0x32 write: eromsl=${eromsl} avc=${avc} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
     );
 
-    // bits 0-1 select which extension-ROM image is mapped at
-    // 0x6000-0x7FFF. The memory map falls back to the BASIC ROM
-    // continuation when the slot has no image loaded (mkI only
-    // ships E0; mkII SR has E0-E3).
+    // bits 0-1 select which extension-ROM slot is "current"; the
+    // mapping is only applied when E-ROMs are also enabled. The
+    // historical mkI N-BASIC behaviour we matched empirically was
+    // "eromsl == 0 maps E0 in, anything else falls back to BASIC
+    // continuation" — so we mirror that as: select the slot, and
+    // enable iff eromsl == 0. TODO: this is almost certainly wrong
+    // for N88-BASIC which uses E1/E2/E3; the real enable bit is
+    // probably elsewhere on this port (or another) and we'll only
+    // know when the N88 trace surfaces it.
     this.memoryMap.setEromSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
+    this.memoryMap.setEromEnabled(eromsl === 0);
   }
 
   private handle40(v: u8): void {

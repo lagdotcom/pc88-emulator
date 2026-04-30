@@ -229,9 +229,21 @@ Roughly ordered by what's blocking what.
   `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
   that compile cleanly. They still need real shapes (see machine layer
   TODOs).
-- [ ] **End-to-end real-ROM smoke test**. Gate behind `PC88_ROM_DIR`
-  pointing at a real mkI ROM dump and assert the BASIC banner appears
-  in `display.toAsciiDump()`. Don't check ROMs into the repo.
+- [x] **End-to-end real-ROM smoke test**. `tests/machines/pc88-real-rom.test.ts`
+  is gated on `PC88_REAL_ROMS=1` and runs the mkI N-BASIC boot
+  against the real ROM image, asserting the banner ("NEC PC-8001
+  BASIC", "Copyright 1979 (C) by Microsoft", "Ok") appears in the
+  CRTC+DMAC visible region. A second case asserts `--basic=n88`
+  reaches CRTC/DMAC programming + IRQ-mask programming (it
+  currently stalls there on the missing sub-CPU PPI handshake;
+  tighten the assertion to require the N88 banner once sub-CPU
+  emulation lands). ROMs go in `roms/` (gitignored) — see
+  `src/machines/variants/mk1.ts` for filenames + md5s.
+- [ ] **Sub-CPU PPI handshake** for N88-BASIC. N88 init programs
+  the CRTC + DMAC, sets IRQ mask = 0x00 (everything masked), then
+  busy-waits for the sub-CPU on PPI ports 0x00-0x03. Without
+  replies it never reaches the banner. N-BASIC doesn't need this
+  because its boot path doesn't depend on the sub-CPU.
 - [x] **mkI BASIC banner reaches TVRAM**. The N-BASIC banner ("NEC
   PC-8001 BASIC Ver 1.2", "Copyright 1979 (C) by Microsoft", "Ok")
   is now visible in the TVRAM dump.

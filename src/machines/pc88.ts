@@ -120,6 +120,10 @@ export class PC88Machine {
       this.config.dipSwitches.port31 & 0x04 ? "n80" : "n88",
     );
     this.memoryMap.setEromSlot(0);
+    // E-ROM disabled at reset; the BIOS init path expects BASIC ROM
+    // continuation at 0x6000-0x7FFF and explicitly enables an E-ROM
+    // via port 0x32 when it wants one mapped in.
+    this.memoryMap.setEromEnabled(false);
     this.memoryMap.setVramEnabled(false);
   }
 
