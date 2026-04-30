@@ -29,11 +29,22 @@ sound) is mostly unbuilt.
 
 - `src/chips/` — silicon-level emulation. Each chip module knows about
   itself only; chips never reach across to each other. The Z80 lives
-  under `chips/z80/`; the PC-88 I/O surface chips
-  (`sysctrl`/`i8255`/`μPD3301`/`μPD8257`/`calendar`/`beeper`/`irq`/`misc`)
-  live under `chips/io/`. The I/O chips are still mostly stubs at
-  first-light scope — they accept the BASIC ROM init writes and
-  return idle status reads, no rendering or audio yet.
+  under `chips/z80/`; the PC-88 I/O surface chips live under
+  `chips/io/`:
+    - `sysctrl` — system controller / gate-array (DIP, ROM banks,
+      EROM gating, status, beeper strobe, EROM bank, text window)
+    - `μPD3301` — CRTC (text controller; 80×20 mode programming)
+    - `μPD8257` — DMAC (channel 2 streams TVRAM to CRTC)
+    - `μPD8251` — USART (3 channels: CMT + RS-232 ch.1/ch.2)
+    - `keyboard` — 16 read-only key-matrix rows at 0x00-0x0F
+    - `kanji` — kanji-ROM lookup at 0xE8-0xEF (2 banks)
+    - `YM2203` — OPN sound chip (mkII SR onwards; 0x44-0x45)
+    - `irq`, `calendar`, `beeper`, `misc` — small stubs
+  The I/O chips are still mostly stubs at first-light scope — they
+  accept the BASIC ROM init writes and return idle status reads, no
+  rendering or audio yet. Anything stubbed-but-not-implemented logs
+  its writes at warn-level (with a `(stub)` suffix) so they stay
+  visible in the trace.
 - `src/core/` — buses and shared infrastructure. `MemoryBus` is the
   multi-provider memory bus with a fast path for the single-array
   case. `IOBus` is the 256-slot pre-resolved I/O port bus used by the
@@ -49,11 +60,17 @@ sound) is mostly unbuilt.
   granularity; subarray views into ROM/RAM/VRAM). `pc88-display.ts`
   is the frame-capture interface (`getTextFrame()` works today,
   `getPixelFrame()` returns null until graphics are implemented).
-  `rom-loader.ts` resolves `ROMDescriptor.id` to `roms/${id}.rom`,
-  validates the size, and md5-checks against the descriptor (md5s
-  are populated for mkI in `variants/mk1.ts`).
-  Models are config-driven (`PC88Config` in `machines/config.ts`);
-  variants under `machines/variants/` are data, not subclasses.
+  `display-regs.ts` is the palette/layer-mask/plane-select register
+  block (in-gate-array; not a separate chip). `rom-loader.ts`
+  resolves `ROMDescriptor.id` to `roms/${id}.rom`, validates the
+  size, and md5-checks against the descriptor (md5s are populated
+  for mkI in `variants/mk1.ts`; other variants have md5s for ROMs
+  the user has dumped locally and `"todo-md5"` placeholders for
+  the rest). Models are config-driven (`PC88Config` in
+  `machines/config.ts`); variants under `machines/variants/` are
+  data, not subclasses. Twelve variants modelled: mkI / mkII / SR /
+  FR / MR / FH / MH / FA / MA / MA2 (mkII TR, MC, FE/FE2, and the
+  PC-88 VA family are explicitly out of scope).
 - Disk formats will live separately from the FDC behind a `Disk`
   interface (not yet written — design before implementing the FDC).
 
@@ -349,9 +366,14 @@ each of these at least once:
 - `toASCIIDump` / `rawTVRAMDump`, not `toAsciiDump` / `rawTvramDump`
 - `ROMID`, `MD5Sum`, `WebURI`
 
-Same rule applies to chip filenames: silicon part numbers stay in
-their canonical form (`i8255.ts`, `μPD3301.ts`, `μPD8257.ts` — not
-`ppi-8255.ts` / `crtc-3301.ts` / `dmac-8257.ts`).
+Same rule applies to chip filenames: NEC second-source chips get
+the Greek `μPD` prefix (`μPD3301.ts`, `μPD8251.ts`, `μPD8257.ts` —
+not `ppi-8255.ts` / `crtc-3301.ts` / `dmac-8257.ts`). Yamaha keeps
+its own part numbering (`YM2203.ts`). Non-chip register blocks
+that don't have a real silicon name (the keyboard matrix, the
+display register block) get descriptive names: `keyboard.ts`,
+`display-regs.ts` — not `i8255.ts` (the keyboard matrix is NOT a
+PPI on PC-88 hardware; that was an early refactor mistake).
 
 When in doubt, search the codebase for an existing case-form before
 introducing a new one.
@@ -428,37 +450,47 @@ selected" and "slot enabled" into a single integer also regressed
 N-BASIC boot, hence the separate flags.
 
 TVRAM is **not** bank-switchable on mkI: CPU reads/writes always hit
-the 4 KB TVRAM array. The CRTC controls whether the contents are
-displayed, but it doesn't toggle CPU addressability. Earlier code
-modelled a `_tvramEnabled` flag that fell back to main RAM; this was
-wrong and caused early BIOS writes to be lost.
+the 4 KB TVRAM region. On mkI/mkII/FR/FA/FH that region is the upper
+4 KB of main RAM (`mainRam.subarray(0xF000, 0x10000)`); on SR/MR/MH/
+MA/MA2 it's a separate 4 KB chip — driven from
+`MemoryConfig.tvramSeparate` per variant. Either way `.tvram` is a
+Uint8Array view callers can write to directly.
 
 ROM/VRAM state lives on the map and is mutated by the system controller
-on writes to ports 0x30/0x31/0x32/0x5C. Writes to ROM-mapped pages go
-to a 4 KB discard buffer. After every state mutation, `refreshPages()`
-recomputes all 16 page slots; the cost is negligible compared to the
-millions of reads between bank flips.
+on writes to ports 0x30/0x31/0x32/0x5C/0x71. Writes to ROM-mapped pages
+go through to main RAM at the same offset (write-through shadowing) —
+real silicon ROM /OE is gated by the bank register but RAM /WE always
+tracks the bus, so a Z80 write at 0x1234 lands in `mainRam[0x1234]`
+regardless of ROM mapping. After every state mutation,
+`refreshPages()` recomputes all 16 page slots.
 
-I/O port surface (the chip-stub-fed slots — anything else is a
-noisy-once 0xff read / no-op write):
+I/O port surface (chips registered against the IOBus; anything else
+is a noisy-once 0xff read / no-op write at the bus default):
 
 ```
-0x00-0x03    PPI #1                  (i8255.ts: keyboard, idle)
-0x09         hardware probe           (misc.ts: returns 0xff)
+0x00-0x0F    keyboard rows           (keyboard.ts: 16 read-only KEY rows)
+0x09         soft-boot status         (misc.ts: returns 0xff)
 0x10         calendar / cassette     (calendar.ts)
-0x30         system DIP 1 / ROM bank (sysctrl.ts)
-0x31         system DIP 2 / ext ROM  (sysctrl.ts)
-0x32         VRAM/TVRAM window       (sysctrl.ts)
-0x40         status / beep / strobe  (sysctrl.ts → beeper.ts)
+0x20-0x21    USART ch.0 (CMT/RS-232) (μPD8251.ts: latched, no traffic)
+0x30         system DIP 1 / sysctrl1 (sysctrl.ts: latches cols80 etc.)
+0x31         system DIP 2 / sysctrl2 (sysctrl.ts: latches mmode/rmode for EROM gate)
+0x32         misc_ctrl (eromsl etc.) (sysctrl.ts: SCROUT/TMODE/PMODE/GVAM/SINTM)
+0x40         status / strobe / beep  (sysctrl.ts → beeper.ts)
+0x44-0x45    OPN sound (SR onwards)  (YM2203.ts: register latch, no audio)
 0x50         CRTC data / status      (μPD3301.ts: param + status)
 0x51         CRTC command            (μPD3301.ts: cmd, status read)
-0x5C         GVRAM plane select      (sysctrl.ts)
-0x60-0x68    DMAC 8257               (μPD8257.ts: param eater)
-0x71         secondary ROM bank      (sysctrl.ts: noop)
+0x52-0x5B    palette / layer mask    (display-regs.ts: bgpal + palram + layer-mask)
+0x5C-0x5F    GVRAM plane / RAM sel   (display-regs.ts: port-low-2 = sel index)
+0x60-0x68    DMAC 8257               (μPD8257.ts: addr/count/mode)
+0x70         text window             (sysctrl.ts: latched, mapping not yet wired)
+0x71         EROM bank select        (sysctrl.ts: one-hot active-low slot)
+0xC0-0xC3    USART ch.1/ch.2         (μPD8251.ts: latched, no traffic)
+0xC8 / 0xCA  RS232 prohibited gates  (misc.ts: stub)
 0xE4         IRQ priority             (irq.ts: latched, no behaviour)
 0xE6         IRQ mask                 (irq.ts: bit 0 = VBL — runner honours)
-0xE7         IRQ-related (mkII+)      (misc.ts: latched, no behaviour)
-0xF8         boot/FDD-IF (mkII+)      (misc.ts: latched, no behaviour)
+0xE7         alt IRQ mask (mkII+)     (misc.ts: latched, no behaviour)
+0xE8-0xEF    kanji ROM lookup        (kanji.ts: 2 banks, addr latch + 0xFF read)
+0xF4 / 0xF8  external floppy DMA     (misc.ts: read 0xFF = card not present)
 ```
 
 The runner (`runMachine` in `pc88.ts`) pumps a 60 Hz VBL: every
@@ -480,34 +512,53 @@ On real PC-88 hardware the visible image is decided by three pieces
 of state working together:
 
 - **μPD3301 RESET / SET MODE** (cmd `0x00`-`0x1F`) programs the
-  visible geometry via 5 follow-up parameter bytes: characters per
-  row, rows per screen, attribute pairs per row, character cell
-  height. The chip dispatches by the top 3 bits of the command byte
-  (RESET = 000, START DISPLAY = 001, INTERRUPT MASK = 010, LOAD
-  CURSOR = 100, etc.); the low 5 bits are flags.
-  N-BASIC sends `[0xCE 0x93 0x69 0xBE 0x13]` → 80 cols × 20 rows.
-  Stored as `crtc.charsPerRow`, `crtc.rowsPerScreen`, etc.
+  visible geometry via 5 follow-up parameter bytes. The chip
+  dispatches by the top 3 bits of the command byte (RESET = 000,
+  START DISPLAY = 001, INTERRUPT MASK = 010, LOAD CURSOR = 100,
+  etc.); the low 5 bits are flags. PC-8801 BASIC sends
+  `[0xCE 0x93 0x69 0xBE 0x13]` → 80 chars × 20 rows. Decoding,
+  per MAME's `upd3301_device::write` MODE_RESET handler:
+    p0 bit 7 = `dmaCharMode` (DMA mode: char-pull vs burst)
+    p0 bits 0-6 = `charsPerRow - 2` (the *byte count* of the
+                  cell run pulled per row)
+    p1 bits 6-7 = blink rate; bits 0-5 = `rows - 1`
+    p2 bit 7 = skip-line; bits 5-6 = cursor mode;
+                bits 0-4 = `charHeight - 1`
+    p3 bits 5-7 = vblank-1; bits 0-4 = hblank-2
+    p4 bits 5-7 = `gfxMode` (AT1|AT0|SC); bits 0-4 = attr-pairs-1
+                  (= 20 in BASIC's programming, capped 20)
 - **μPD8257 channel 2** carries the TVRAM start address + byte
   count to the CRTC each frame. `dmac.channelAddress(2)` /
-  `dmac.channelByteCount(2)` expose this. N-BASIC programs
-  `src=0xF300, count=0x0960` → 20 rows × 120 bytes/row.
+  `dmac.channelByteCount(2)` expose this. PC-8801 BASIC programs
+  `src=0xF300` (N-BASIC) or `0xF3C8` (N88) and
+  `count=0x0960` → 20 rows × 120 bytes/row.
 - **μPD3301 START DISPLAY** (`0x20`-`0x3F`) gates whether the
   raster is unblanked. `crtc.displayOn` tracks it. There is no
   separate STOP DISPLAY on the PC-88; RESET clears it.
 
-PC-88 always uses **attribute mode**: each visible cell is 2 bytes
-(char at even offset, attribute at odd). The CRTC SET MODE
-parameter `chars-per-row` is the *byte length* of the cell run, so
-visible cells = `charsPerRow / 2`. N-BASIC's 80-byte cell run
-gives 40 visible columns (matching the `cols=40` reading off
-sysctrl port 0x30). The trailing 40 bytes of each row are the
-attribute-pair area: 20 slots × 2 bytes (column, attribute) for
-skip-zone attribute changes within the row, separate from the
-per-cell attribute bytes.
+**Per MAME's `upd3301_device::dack_w`, the CRTC streams
+`charsPerRow` 1-byte chars per row, then `attrPairsPerRow * 2`
+attribute-pair bytes** — there is no 2-byte interleaved char/attr
+stride at the chip level. Both BASICs program `charsPerRow = 80`.
 
-Per-row stride = `charsPerRow + 40` bytes (cell run + pair area),
-confirmed by the DMAC channel-2 count BASIC programs (2400 / 20
-rows = 120 bytes/row).
+What looks like "2-byte cells" in N-BASIC's TVRAM dump
+(`4e 00 45 00 43 00...`) is just N-BASIC choosing to write text
+at every other byte with NUL fill; the CRTC streams all 80 bytes
+unchanged. **Software-side cell stride** is selected by
+`sysctrl.cols80` (mirrors port 0x30 bit 0 / COLS_80 written by
+the BIOS):
+
+  - `cols80 = false` (40-col mode) → BASIC stores 40 cells × 2
+    bytes (char + attr); display reads chars at even offsets,
+    attrs at odd. N-BASIC's convention.
+  - `cols80 = true` (80-col mode) → BASIC stores 80 cells × 1
+    byte (char only); per-cell attributes come from the trailing
+    attr-pair area. N88-BASIC's convention.
+
+Per-row stride = `charsPerRow + 40` bytes (cell run + 40-byte
+attribute-pair area; the BIOS reserves all 20 attr slots whether
+or not they're active). Confirmed by the DMAC channel-2 count
+BASIC programs (2400 / 20 rows = 120 bytes/row in both modes).
 
 `PC88TextDisplay.toASCIIDump()` honours all three: it reads only
 the bytes the DMAC is configured to fetch, and only the rows × cols
@@ -673,10 +724,43 @@ JSON round-trip.
 Per-variant DIP-switch state lives on `PC88Config.dipSwitches`
 (`{ port30: u8, port31: u8 }`) — never hardcode magic bytes in
 chip stubs. `SystemController` consumes the bytes via constructor
-injection and surfaces them at port reads. To add a new model,
-copy the shape from `MKI` in `src/machines/variants/mk1.ts` and
-adjust the bits per the model's hardware manual. Bit assignments
-are documented inline on `DIPSwitchState` in `config.ts`.
+injection and surfaces them at port reads.
+
+Variant configs construct their DIP bytes by OR-ing the symbolic
+constants exported from `machines/config.ts`:
+
+```ts
+import { PORT30, PORT31, makeROM, type PC88Config } from "../config.js";
+
+dipSwitches: {
+  port30:
+    PORT30.COLS_80 |
+    PORT30.MONO |
+    PORT30.CASSETTE_MOTOR |
+    PORT30.USART_RS232_HIGH |
+    0xc0, // bits 6-7 model-specific
+  port31:
+    PORT31.LINES_200 |
+    PORT31.RMODE_N80 |
+    PORT31.GRPH |
+    PORT31.HIGHRES |
+    0xc0, // bits 6-7 model-specific
+},
+```
+
+The `0xc0` for bits 6-7 stays as a literal because those bits are
+documented as "model-specific" without a public bit-name standard
+across NEC's hardware manuals. SystemController re-uses PORT30 and
+PORT31 to interpret the same bit positions on writes (port 0x30
+write triggers `cols80` updates etc.). Bit-position docs live
+inline on `PORT30` / `PORT31` in config.ts.
+
+`PORT32`, `PORT40_R`, `PORT40_W`, `PORT71` (system-control register
+bits not exposed via the DIP interface) stay private to
+`sysctrl.ts` since no variant config touches them. `IRQ_MASK` lives
+in `irq.ts`. `PORT52`, `PORT53`, `VRAM_SEL` live in
+`display-regs.ts`. All follow the `as const` object pattern so they
+compose with `&`/`|` without TS-enum casts.
 
 ## Branch / pushing
 

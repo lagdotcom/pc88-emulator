@@ -2,8 +2,9 @@
 
 A TypeScript emulator for the NEC PC-8801 family. Initial target is the
 PC-8801 mkII SR — accurate enough to boot and run simple disk-based
-RPGs. Later models (FH/MH and the VA branch) are planned via the
-config-driven machine wiring; the chip layer is shared.
+RPGs. Later models (FH/MH/MA/MA2) are planned via the config-driven
+machine wiring; the chip layer is shared. The PC-88 VA family
+(μPD9002 hybrid CPU + V3 mode) is explicitly out of scope.
 
 ## Status
 
@@ -27,11 +28,20 @@ Working:
 Not yet built:
 
 - FDC (μPD765a) and the `Disk` interface that abstracts D88 from it.
-- Sub-CPU model (mkII has a second Z80 driving the FDC; communicates
-  through shared latches).
-- Pixel-accurate CRT controller (currently a parameter-eating stub),
-  graphics VRAM rendering, analogue palette.
-- PSG / YM2203 / YM2608 sound (beeper toggles are counted, not played).
+- Sub-CPU model (mkII+ has a second Z80 driving the FDC via the
+  `μPD8255` PPI at 0xFC-0xFF; communicates through shared latches).
+- Pixel-accurate CRT controller rendering (the μPD3301 stub
+  consumes the SET MODE block correctly but doesn't generate raster).
+- Graphics VRAM rendering + analogue palette (palette ports
+  0x52-0x5B latch but don't drive a renderer).
+- Sound generation. YM2203 (OPN) at 0x44/0x45 is stubbed for SR+
+  variants; YM2608 (OPNA) for FH+ uses the same stub. Beeper
+  toggles are counted, not played.
+- Kanji rendering. The kanji ROM lookup at 0xE8-0xEF latches
+  addresses but returns 0xFF for the bitmap (no source ROM image
+  loaded yet).
+- USART traffic. μPD8251 stubs at 0x20/0xC0/0xC2 latch mode/
+  command bytes and return idle status; no actual TX/RX.
 - IM 0 / NMI interrupt acceptance — IM 1 + IM 2 + a 60 Hz VBL pump
   work, IM 0 + NMI are TODO.
 
@@ -42,15 +52,24 @@ Working enough for first-light boot:
 - Pre-resolved 256-slot `IOBus` (replaces `MemoryBus` for the I/O
   side; the per-port dispatch is one array load + one call).
 - `PC88MemoryMap` with bank-switched 4 KB pages: BASIC ROM (n80/n88),
-  E-ROM slot 0..3 at 0x6000-0x7FFF, TVRAM permanently mapped at 0xF000,
-  GVRAM plane window at 0xC000.
-- Chip stubs (`SystemController`, `i8255` PPI, `μPD3301` CRTC,
-  `μPD8257` DMAC, `Calendar`, `Beeper`, IRQ-mask, misc-port) with just
-  enough state-machine to keep the BIOS init path advancing.
+  E-ROM slot 0..3 at 0x6000-0x7FFF gated on RMODE/MMODE/IEROM,
+  TVRAM permanently mapped at 0xF000 (= upper 4 KB of mainRam on
+  pre-SR variants, dedicated chip on SR+), GVRAM plane window at
+  0xC000.
+- Chip modules: `SystemController` (sysctrl gate-array), `Keyboard`
+  (16 read-only matrix rows at 0x00-0x0F), `μPD3301` CRTC,
+  `μPD8257` DMAC, `μPD8251` USART (3 channels), `KanjiROM` (2
+  banks at 0xE8-0xEF), `YM2203` OPN (SR+ only), `Calendar`,
+  `Beeper`, `IrqController`, `MiscPorts`, `DisplayRegisters`
+  (palette + layer mask + plane select). All stub real silicon
+  enough to keep the BIOS init path advancing; unimplemented
+  writes log at warn-level with a `(stub)` suffix.
 - ROM loader with size + md5 validation against the descriptors in
   `src/machines/variants/`.
 - Display capture (`PC88TextDisplay.toASCIIDump()`) so headless tests
-  can assert against TVRAM contents.
+  can assert against TVRAM contents. Cell stride is driven by
+  `sysctrl.cols80` (port 0x30 bit 0): 1-byte cells in 80-col mode
+  (N88-BASIC), 2-byte cells in 40-col mode (N-BASIC).
 - Interactive debugger (`yarn pc88 -d` / `--debug`): step / next /
   continue / break / regs / chips / screen / dis / peek / poke /
   label / portlabel / quit. Per-ROM, per-variant-RAM, and per-variant
@@ -109,20 +128,29 @@ src/
   chips/            silicon-level emulation, no cross-knowledge
     z80/              CPU, register file, opcode tables, disasm,
                       symbol-file parser
-    io/               sysctrl, i8255, μPD3301, μPD8257, calendar,
-                      beeper, irq, misc (mostly stubs at first light)
+    io/               sysctrl, keyboard, μPD3301, μPD8257, μPD8251,
+                      kanji, YM2203, calendar, beeper, irq, misc
+                      (mostly stubs at first light)
   core/             buses + shared infrastructure
     MemoryBus.ts      providers + fast-path single-array memory bus
     IOBus.ts          pre-resolved 256-slot port bus (PC-88 I/O)
   machines/         machine wiring (config-driven, not subclassed)
-    config.ts         PC88Config / VideoConfig / DiskConfig / ...
-    variants/         data-only model definitions (mkI, mkII, mkII-SR)
+    config.ts         PC88Config / VideoConfig / DiskConfig + DIP
+                      bit constants (PORT30 / PORT31)
+    variants/         data-only model definitions (12 variants:
+                      mkI, mkII, SR, FR, MR, FH, MH, FA, MA, MA2)
     pc88.ts           PC88Machine factory + runMachine() VBL pump
     pc88-memory.ts    PC88MemoryMap, paged ROM/RAM/VRAM banking
+                      (write-through to mainRam under ROM)
     pc88-display.ts   text-frame capture + ASCII dump
+    display-regs.ts   palette + layer-mask + plane-select register block
     debug.ts          interactive REPL debugger
     debug-symbols.ts  per-variant symbol-file routing
     rom-loader.ts     md5-validating fs ROM resolver
+refs/             references for chip behaviour cross-referenced
+                  during reverse-engineering — D88 format,
+                  Z80 undocumented, MAME PC-8801 port handlers,
+                  port-plan.md (gap analysis vs MAME)
 tests/
   z80/              SingleStepTests harness
   programs/         hand-assembled programs + zexdoc runner +
@@ -217,29 +245,43 @@ Roughly ordered by what's blocking what.
   instances + a shared latch object; FDC connects to the sub-CPU
   bus, not the main bus. Design the IPC latch before writing FDC
   code so the FDC doesn't accidentally couple to the main bus.
-- [ ] **Real CRTC parameter parsing**. The current `Crtc3301` stub
-  guesses parameter counts from a small table and falls back to 5;
-  this is enough for first light but the actual μPD3301 command set
-  has 8 commands with specific parameter layouts (Reset / Start /
-  Set Mode / Load Cursor / Reset Counters / Read Light Pen /
-  Interrupt Mask / Sync). Replace before driving a real renderer.
-- [ ] **DMAC channel scheduling**. The `Dmac8257` stub accepts the
-  init handshake but doesn't actually perform character-pull
-  transfers; once the renderer is real, the DMAC will need to drive
-  TVRAM → CRTC fetches each scanline.
+- [x] **Real CRTC parameter parsing**. `μPD3301.ts` decodes all 5
+  SET MODE parameter bytes per MAME's `upd3301_device::write`
+  MODE_RESET handler: `dmaCharMode`, `charsPerRow`, `rowsPerScreen`,
+  `charHeightLines`, `gfxMode`, `attrPairsPerRow`. Surfaced through
+  `CRTCSnapshot` and the `chips` debugger command.
+- [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
+  init handshake (channel address/count + mode-set) but doesn't
+  actually perform character-pull transfers; once the renderer is
+  real, the DMAC will need to drive TVRAM → CRTC fetches each
+  scanline.
 
 ### Chips
 
 - [ ] **μPD765a FDC** behind the Disk interface. Seek time, step
   rate, motor state, status-register timing — copy-protected disks
   rely on it. Don't ship until cycle-accurate.
-- [ ] **CRT controller** + text VRAM + graphics VRAM (3 planes,
-  16 KB per plane on the SR).
-- [ ] **Palette + analogue colour** (mkII SR introduces analogue
-  palette).
-- [ ] **YM2203 (OPN)** for sound on the SR. PSG-only beeper for
-  earlier models; YM2608 for FH/MA.
-- [ ] **Calendar clock, USART, DMAC** (μPD8253, μPD8255).
+- [ ] **Pixel-accurate CRT controller**. The μPD3301 stub consumes
+  SET MODE / START DISPLAY / etc. correctly but doesn't generate
+  raster timing or scanlines. Renderer + text+graphics composite
+  blocks on this.
+- [ ] **Graphics VRAM rendering** (3 planes, 16 KB per plane,
+  switched in at 0xC000-0xEFFF via port 0x5C-0x5F).
+- [ ] **Palette + analogue colour**. `display-regs.ts` latches
+  port 0x52 (border/bg) + 0x54-0x5B (palette RAM) but doesn't
+  feed a renderer yet. mkII SR onwards has the analogue palette
+  (selectable via port 0x32 bit 5 / `PMODE_ANALOG`).
+- [ ] **YM2203 / YM2608 sound generation**. `YM2203.ts` latches
+  register writes (0x44 = addr, 0x45 = data) but doesn't generate
+  audio. Needs FM synth + SSG + per-channel mixer.
+- [x] **USART stub** (μPD8251). Three channels at 0x20/0xC0/0xC2
+  with mode/command latching and idle status reads — enough for
+  N88 boot init not to stall on the channel-1/-2 reset sequence.
+  Real serial / cassette traffic still TODO.
+- [x] **Kanji ROM lookup** (μPD3301 sister chip). 0xE8-0xEF
+  latches the 16-bit address per bank; reads return 0xFF until a
+  real kanji ROM image is loaded. Kanji rendering = renderer +
+  ROM-image work.
 
 ### Tooling
 
@@ -286,16 +328,16 @@ Roughly ordered by what's blocking what.
 - [x] **mkI BASIC banner reaches TVRAM**. The N-BASIC banner ("NEC
   PC-8001 BASIC Ver 1.2", "Copyright 1979 (C) by Microsoft", "Ok")
   is now visible in the TVRAM dump.
-- [x] **PC88TextDisplay reads the right layout**. The actual mkI
-  layout is 20 rows × 120 bytes, where each row is an 80-byte
-  cell run (2-byte cells: char at even offset, attribute at odd)
-  followed by a 40-byte attribute-pair area (20 slots × 2 bytes
-  for skip-zone attribute changes within the row). 80-byte run
-  ÷ 2 = 40 visible cols, matching the `cols=40` reading off
-  sysctrl port 0x30. The DMAC channel-2 byte count (2400 = 20 ×
-  120) confirms the stride. The earlier "stride 120, 80 chars
-  contiguous" theory and the briefly-tried "stride 160 interleaved"
-  theory were both wrong.
+- [x] **PC88TextDisplay reads the right layout**. Per MAME's
+  `upd3301_device::dack_w`, the CRTC streams `charsPerRow` bytes
+  (= 80) as **single-byte chars**, then `attrPairsPerRow * 2` (=
+  40) attr-pair bytes — total 120 bytes/row matching the DMAC
+  count. Software-side cell stride is selected by
+  `sysctrl.cols80` (mirrors port 0x30 bit 0): 1 byte/cell in
+  80-col mode (N88-BASIC), 2 bytes/cell in 40-col mode (N-BASIC,
+  with chars at even offsets and attrs at odd). The "always
+  2-byte cells" theory I had earlier was wrong — N-BASIC just
+  uses the same 80-byte stream as a 40 × 2 layout.
 - [x] **Visible region driven by CRTC + DMAC**. The on-screen image
   is whatever the μPD3301 (rows × cols, programmed via SET MODE
   cmd `0x00`-`0x1F` — top 3 bits dispatch the command, low 5 bits
