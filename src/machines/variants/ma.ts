@@ -1,6 +1,9 @@
 import { makeROM, type PC88Config } from "../config.js";
-import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
-import { MH_KANJI2, MH_N80 } from "./mh.js";
+import { FA_N88 } from "./fa.js";
+import { FH_E0 } from "./fh.js";
+import { MH_DISK, MH_E1, MH_E3, MH_N80 } from "./mh.js";
+import { MKI_KANJI1 } from "./mk1.js";
+import { MR_KANJI2 } from "./mk2mr.js";
 
 // PC-8801 MA (1987): identical hardware to FA except for an added
 // dictionary ROM (jisyo) for Japanese input-method support — accessed
@@ -9,12 +12,7 @@ import { MH_KANJI2, MH_N80 } from "./mh.js";
 // Per MAME's pc8801ma ROM_START: ma_n80 = mh_n80 (same image),
 // ma_n88 + E0-E3 are MA-specific, kanji2 = mh_kanji2 (same image),
 // jisyo.rom is the new piece (256 KB).
-export const MA_N88 = makeROM("ma-n88", 32, "todo-md5");
-export const MA_E0 = makeROM("ma-e0", 8, "todo-md5");
-export const MA_E1 = makeROM("ma-e1", 8, "todo-md5");
-export const MA_E2 = makeROM("ma-e2", 8, "todo-md5");
-export const MA_E3 = makeROM("ma-e3", 8, "todo-md5");
-export const MA_JISHO = makeROM("ma-jisho", 256, "todo-md5");
+const MA_JISHO = makeROM("ma-jisho", 256, "cbcade0d0057bb9eee79a6b370b4dd3a");
 
 export const MA: PC88Config = {
   model: "PC-8801 MA",
@@ -43,15 +41,15 @@ export const MA: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
-    disk: MKI_DISC,
+    disk: MH_DISK,
     n80: MH_N80,
-    n88: MA_N88,
-    e0: MA_E0,
-    e1: MA_E1,
-    e2: MA_E2,
-    e3: MA_E3,
+    n88: FA_N88,
+    e0: FH_E0,
+    e1: MH_E1,
+    // TODO I don't seem to have an e2 ROM for this???
+    e3: MH_E3,
     kanji1: MKI_KANJI1,
-    kanji2: MH_KANJI2,
+    kanji2: MR_KANJI2,
     jisho: MA_JISHO,
   },
 };

@@ -1,6 +1,9 @@
 import { makeROM, type PC88Config } from "../config.js";
-import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
-import { MH_KANJI2, MH_N80 } from "./mh.js";
+import { FH_E0, FH_E2 } from "./fh.js";
+import { MH_E1, MH_E3, MH_N80 } from "./mh.js";
+import { MKI_KANJI1 } from "./mk1.js";
+import { FR_DISK } from "./mk2fr.js";
+import { MR_KANJI2 } from "./mk2mr.js";
 
 // PC-8801 FA (1987): same FH/MH-class hardware (Z80 4/8 MHz, OPNA,
 // V2 mode) with newer firmware. MAME's `pc8801fa` state class is
@@ -9,11 +12,7 @@ import { MH_KANJI2, MH_N80 } from "./mh.js";
 // MAME's pc8801fa ROM_START shares fa_n80.rom with MH (same CRC).
 // The n88 and E1-E3 ROMs are FA-specific (newer BASIC versions
 // "2.3 V2 / 1.9 V1" per MAME comment).
-export const FA_N88 = makeROM("fa-n88", 32, "todo-md5");
-export const FA_E0 = makeROM("fa-e0", 8, "todo-md5");
-export const FA_E1 = makeROM("fa-e1", 8, "todo-md5");
-export const FA_E2 = makeROM("fa-e2", 8, "todo-md5");
-export const FA_E3 = makeROM("fa-e3", 8, "todo-md5");
+export const FA_N88 = makeROM("fa-n88", 32, "f7cba6a308c2718dbe97e60e46ddd66a");
 
 export const FA: PC88Config = {
   model: "PC-8801 FA",
@@ -40,19 +39,14 @@ export const FA: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
-    disk: MKI_DISC,
-    // FA reuses MH's n80 image (same CRC in MAME).
+    disk: FR_DISK,
     n80: MH_N80,
     n88: FA_N88,
-    e0: FA_E0,
-    e1: FA_E1,
-    e2: FA_E2,
-    e3: FA_E3,
+    e0: FH_E0,
+    e1: MH_E1,
+    e2: FH_E2,
+    e3: MH_E3,
     kanji1: MKI_KANJI1,
-    // kanji2 differs from MH (FA has its own dump CRC=376eb677...
-    // wait, MAME shows fa_kanji2.rom CRC=376eb677 same as MH).
-    // Reuse MH_KANJI2 — the byte image is identical across the
-    // FH/MH/FA generation per MAME's hashes.
-    kanji2: MH_KANJI2,
+    kanji2: MR_KANJI2,
   },
 };

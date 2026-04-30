@@ -1,7 +1,7 @@
 import { makeROM, type PC88Config } from "../config.js";
 
-export const MKI_DISC = makeROM(
-  "mkI-disc",
+export const MKI_DISK = makeROM(
+  "mkI-disk",
   2,
   "793f86784e5608352a5d7f03f03e0858",
 );
@@ -45,7 +45,7 @@ export const MKI: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
-    disk: MKI_DISC,
+    disk: MKI_DISK,
     font: MKI_FONT,
     n80: MKI_N80,
     n88: MKI_N88,

@@ -1,13 +1,15 @@
 import { makeROM, type PC88Config } from "../config.js";
-import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
-import { MA_E0, MA_E1, MA_E2, MA_E3 } from "./ma.js";
-import { MH_KANJI2, MH_N80 } from "./mh.js";
+import { FH_E0 } from "./fh.js";
+import { MH_DISK, MH_E1, MH_E3, MH_N80 } from "./mh.js";
+import { MKI_KANJI1 } from "./mk1.js";
+import { MR_KANJI2 } from "./mk2mr.js";
 
 // PC-8801 MA2 (1988): MA with newer dictionary ROM. Per MAME's
 // pc8801ma2 ROM_START the n80, n88, E0-E3 and kanji2 are bit-identical
 // to MA — only the jisho ROM is bumped.
-const MA2_N88 = makeROM("ma2-n88", 32, "todo-md5");
-const MA2_JISHO = makeROM("ma2-jisho", 256, "todo-md5");
+const MA2_N88 = makeROM("ma2-n88", 32, "681e37570581cc43c785bae53eefa155");
+const MA2_E2 = makeROM("ma2-e2", 8, "87bc14a8a9ec66a99e89561bca4bda9b");
+const MA2_JISHO = makeROM("ma2-jisho", 256, "b4d66a04e8ce3ec00410d397e04f549e");
 
 export const MA2: PC88Config = {
   model: "PC-8801 MA2",
@@ -36,15 +38,15 @@ export const MA2: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
-    disk: MKI_DISC,
+    disk: MH_DISK,
     n80: MH_N80,
     n88: MA2_N88,
-    e0: MA_E0,
-    e1: MA_E1,
-    e2: MA_E2,
-    e3: MA_E3,
+    e0: FH_E0,
+    e1: MH_E1,
+    e2: MA2_E2,
+    e3: MH_E3,
     kanji1: MKI_KANJI1,
-    kanji2: MH_KANJI2,
+    kanji2: MR_KANJI2,
     jisho: MA2_JISHO,
   },
 };

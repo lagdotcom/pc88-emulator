@@ -52,6 +52,7 @@ export interface DIPSwitchState {
 //   - PC-88 VA / VA2 / VA3 (μPD9002 hybrid CPU; needs MAME's
 //     pc88va.cpp driver as a reference, not in scope)
 //   - PC-8801 MC (CD-ROM interface; out of scope for first-light)
+// TODO removed FE for being too boring and no ROMs
 export type PC88Model =
   | "PC-8801"
   | "PC-8801 mkII"
@@ -62,9 +63,7 @@ export type PC88Model =
   | "PC-8801 MH"
   | "PC-8801 FA"
   | "PC-8801 MA"
-  | "PC-8801 FE"
-  | "PC-8801 MA2"
-  | "PC-8801 FE2";
+  | "PC-8801 MA2";
 
 export interface CPUConfig {
   // μPD780C-1: 4 MHz Z80 (mkI through mkII MR)
@@ -121,7 +120,6 @@ export interface ROMManifest {
   readonly kanji1?: ROMDescriptor;
   readonly kanji2?: ROMDescriptor;
   readonly jisho?: ROMDescriptor;
-  readonly cdBios?: ROMDescriptor;
 }
 
 export interface ROMDescriptor {

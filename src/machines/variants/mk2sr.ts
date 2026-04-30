@@ -1,5 +1,5 @@
 import { makeROM, type PC88Config } from "../config.js";
-import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
+import { MKI_DISK, MKI_KANJI1 } from "./mk1.js";
 
 export const SR_N80 = makeROM("sr-n80", 32, "2ff07b8769367321128e03924af668a0");
 const SR_N88 = makeROM("sr-n88", 32, "4f984e04a99d56c4cfe36115415d6eb8");
@@ -50,7 +50,7 @@ export const MKII_SR: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
-    disk: MKI_DISC,
+    disk: MKI_DISK,
     font: SR_FONT,
     n80: SR_N80,
     n88: SR_N88,

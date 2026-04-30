@@ -1,6 +1,8 @@
-import { type PC88Config } from "../config.js";
+import { makeROM, type PC88Config } from "../config.js";
+import { MH_E1, MH_E3, MH_N80, MH_N88 } from "./mh.js";
 import { MKI_KANJI1 } from "./mk1.js";
-import { MH_E0, MH_E1, MH_E2, MH_E3, MH_KANJI2, MH_N80, MH_N88 } from "./mh.js";
+import { FR_DISK } from "./mk2fr.js";
+import { MR_KANJI2 } from "./mk2mr.js";
 
 // PC-8801 FH (1985): same chassis as MH but no built-in floppy
 // drive (FH = Floppy-less Hardware? marketed as the cheaper option).
@@ -11,6 +13,10 @@ import { MH_E0, MH_E1, MH_E2, MH_E3, MH_KANJI2, MH_N80, MH_N88 } from "./mh.js";
 // Reuses MH's ROM set entirely. Disk count is 0 (FH had no internal
 // drive; users could attach external 5.25" or 8" drives via the
 // floppy I/F card).
+// TODO according to my ROM sets, it uses FR's DISK somehow
+export const FH_E0 = makeROM("mh-e0", 8, "c254685f00ca9c31b97203d6ef19f5e2");
+export const FH_E2 = makeROM("mh-e2", 8, "9d03154fd9abfc28c4e6d4dc705e6e23");
+
 export const FH: PC88Config = {
   model: "PC-8801 FH",
   nicknames: ["fh"],
@@ -38,13 +44,14 @@ export const FH: PC88Config = {
     port31: 0b1110_1101,
   },
   roms: {
+    disk: FR_DISK,
     n80: MH_N80,
     n88: MH_N88,
-    e0: MH_E0,
+    e0: FH_E0,
     e1: MH_E1,
-    e2: MH_E2,
+    e2: FH_E2,
     e3: MH_E3,
     kanji1: MKI_KANJI1,
-    kanji2: MH_KANJI2,
+    kanji2: MR_KANJI2,
   },
 };

@@ -18,12 +18,9 @@ import { mHz, mOps } from "../flavour.makers.js";
 import type { Cycles, Operations, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
-import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import { DisplayRegisters } from "./display-regs.js";
-import {
-  type LoadedROMs as MemoryLoadedRoms,
-  PC88MemoryMap,
-} from "./pc88-memory.js";
+import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
+import { type LoadedROMs, PC88MemoryMap } from "./pc88-memory.js";
 
 const log = logLib.get("pc88");
 
@@ -85,7 +82,7 @@ export class PC88Machine {
 
   constructor(
     public config: PC88Config,
-    roms: MemoryLoadedRoms,
+    roms: LoadedROMs,
   ) {
     this.memoryMap = new PC88MemoryMap(roms, {
       tvramSeparate: config.memory.tvramSeparate,
