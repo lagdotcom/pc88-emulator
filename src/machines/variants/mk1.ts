@@ -24,14 +24,12 @@ export const MKI: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: false,
-    hasExtendedRam: false,
   },
   video: {
     modes: ["N", "V1"],
     // Analogue palette was introduced on mkII SR (1985); pre-SR
     // machines hardwire the 8-colour digital palette.
     hasAnaloguePalette: false,
-    hasKanjiRom: true,
   },
   sound: { psg: "beeper" },
   disk: { count: 0, model: "μPD765a", hasSubCpu: false },

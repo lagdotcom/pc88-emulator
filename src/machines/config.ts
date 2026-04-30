@@ -113,6 +113,11 @@ export interface CPUConfig {
 }
 
 export interface MemoryConfig {
+  // Total addressable RAM in KB. 64 on mkI / mkII / SR / FR / FA / FE
+  // / FE2 / FH; 192 on MR / MH / MA / MA2 (the latter ship with
+  // 64 KB main + 128 KB extended RAM bank-switched via ports
+  // 0xE2/0xE3). The "has extended RAM" boolean is derivable from
+  // `mainRam > 64`, so it's not a separate field.
   readonly mainRam: Kilobytes;
   readonly textVram: Kilobytes;
   // True iff TVRAM is a physically separate 4 KB chip (SR onwards).
@@ -122,7 +127,6 @@ export interface MemoryConfig {
   // appear in mainRam. SR introduces a separate text VRAM chip so
   // that the CRTC reads it without contending for main-RAM access.
   readonly tvramSeparate: boolean;
-  readonly hasExtendedRam: boolean;
   // GVRAM is universally 3 × 16 KB across every PC-8801 variant we
   // model (mkI through MA2). PC88MemoryMap allocates that shape
   // unconditionally; if a future variant ever differs, add specific
@@ -131,8 +135,13 @@ export interface MemoryConfig {
 
 export interface VideoConfig {
   readonly modes: VideoMode[];
+  // True from mkII SR onwards; mkI and mkII hardwire the 8-colour
+  // digital palette. Selectable at runtime via port 0x32 bit 5
+  // (PMODE_ANALOG) on the variants that have it.
   readonly hasAnaloguePalette: boolean;
-  readonly hasKanjiRom: boolean;
+  // (Whether a kanji ROM is fitted is derivable from
+  //  `roms.kanji1 !== undefined` — every variant we model has one,
+  //  so it isn't a separate field.)
 }
 
 export type VideoMode = "N" | "V1" | "V2" | "V3";

@@ -27,7 +27,6 @@ export const MKII_SR: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: true,
-    hasExtendedRam: false,
   },
   video: {
     // SR introduces V2 mode (640×200 8-colour analogue) alongside
@@ -36,7 +35,6 @@ export const MKII_SR: PC88Config = {
     // First model with the analogue palette + the YM2203 sound
     // chip — pre-SR is digital + beeper.
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2203" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },

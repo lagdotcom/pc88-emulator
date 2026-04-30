@@ -24,7 +24,6 @@ export const MKII_FR: PC88Config = {
     // FR shares the SR architecture; SR onwards has the dedicated
     // 4 KB TVRAM chip rather than upper-RAM aliasing.
     tvramSeparate: true,
-    hasExtendedRam: false,
   },
   video: {
     // FR ships the n80 ROM and the BIOS still honours the RMODE DIP
@@ -32,7 +31,6 @@ export const MKII_FR: PC88Config = {
     // dropped it from the front-of-box features list.
     modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2203" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },

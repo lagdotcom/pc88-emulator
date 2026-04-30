@@ -13,13 +13,11 @@ export const MKII: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: false,
-    hasExtendedRam: false,
   },
   video: {
     modes: ["N", "V1"],
     // YM2203 + analogue palette arrive on mkII SR (1985).
     hasAnaloguePalette: false,
-    hasKanjiRom: true,
   },
   // mkII shipped with the same beeper as mkI; YM2203 added on SR.
   sound: { psg: "beeper" },

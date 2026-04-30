@@ -24,12 +24,10 @@ export const FA: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: true,
-    hasExtendedRam: false,
   },
   video: {
     modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2608" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },

@@ -26,16 +26,12 @@ export const MH: PC88Config = {
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: true },
   memory: {
     mainRam: 192,
-    // MR/MH/MA/MA2 ship with 64 KB main + 128 KB extended
-    // RAM (port 0xE2/0xE3 bank-switch). Total addressable 192 KB.
-    hasExtendedRam: true,
     textVram: 4,
     tvramSeparate: true,
   },
   video: {
     modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   // OPNA (YM2608): superset of OPN — adds rhythm + ADPCM channels.
   sound: { psg: "YM2608" },
