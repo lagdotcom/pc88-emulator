@@ -433,6 +433,46 @@ address space (e.g. `--base=0x6000 e0.rom` for an E-ROM image).
 Uses the same disassemble() that powers the debugger; same output
 format. Useful for poking at a ROM dump without booting anything.
 
+## Symbol files
+
+Each ROM that's been reverse-engineered enough to have named
+addresses lives alongside a symbol file in `syms/<rom-id>.sym`.
+The id matches `ROMDescriptor.id` from `src/machines/variants/`,
+so `roms/mkI-n88.rom` ↔ `syms/mkI-n88.sym`. Files are committed
+to the repo (not gitignored) — symbol names accumulated during
+debugging are useful forever and lose nothing by being shared.
+
+Format (plain text, one per line):
+
+```
+# md5: 22be239bc0c4298bc0561252eed98633
+0x5550 print_string         ; print NUL-terminated string at HL
+0x7968 print_banner_seq
+```
+
+`# md5: <hash>` is a header comment that's checked at load time
+against the actual ROM's md5; mismatch emits a warning to stderr
+and the symbols still load. `# ...` lines and blank lines are
+preserved verbatim across rewrites — including the user's hand-
+tuned column alignment for inline `; ...` comments. Edits via
+`setSymbol()` drop the verbatim line so the rewritten symbol is
+emitted in canonical form; surrounding lines stay untouched.
+
+`yarn dis` auto-loads `syms/<basename>.sym` next to its CWD when
+the path matches; `--syms=PATH` is an explicit override and
+`--syms=off` disables substitution. The disassembler substitutes
+labels for resolved addresses in JP / CALL / JR targets and
+16-bit `LD HL,nn` / `LD (nn),HL`-style operands; 8-bit `n`
+immediates are left as hex (they're almost never addresses).
+Address-equal labels also print as a header line above the
+instruction.
+
+Phase 2 (debugger integration: `label` / `unlabel` / `labels`
+commands with eager-write persistence) and phase 3 (separate RAM
+and port namespace files, name+offset fuzzy resolution) are
+follow-ups — symbols module is shaped to compose those cleanly via
+`mergeSymbolTables()`.
+
 The debugger and the headless runner share a single VBL pump
 (`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so
 timing-sensitive code sees IRQs at the same instruction

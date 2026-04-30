@@ -22,7 +22,10 @@ import {
 
 export interface DisasmResult {
   // Formatted mnemonic with operand bytes substituted (e.g.
-  // "LD A,0x42" or "JR 0x023b" or "BIT 5,(IX+0x10)").
+  // "LD A,0x42" or "JR 0x023b" or "BIT 5,(IX+0x10)"). When a
+  // SymbolTable is supplied to disassemble() and the resolved
+  // address has a label, the hex literal is replaced with the
+  // label name.
   readonly mnemonic: string;
   // Total instruction length in bytes (1-4).
   readonly length: number;
@@ -31,6 +34,17 @@ export interface DisasmResult {
 }
 
 export type DisasmReader = (addr: number) => number;
+
+// Optional symbol-resolution callback. Called by disassemble() with
+// every absolute address the instruction would jump-to / call /
+// load — JR/JP/CALL targets and `LD HL,nn` / `LD A,(nn)` / etc.
+// Returning a string substitutes the label for the hex literal;
+// returning undefined keeps the literal.
+export type ResolveLabel = (addr: number) => string | undefined;
+
+export interface DisasmOptions {
+  resolveLabel?: ResolveLabel;
+}
 
 function hex2(b: number): string {
   return "0x" + ((b & 0xff).toString(16).padStart(2, "0"));
@@ -90,31 +104,47 @@ function operandSpec(template: string): OperandSpec {
 // byte from a fixed position (PC+2) instead of consuming it from
 // `operands[0]` — DDCB byte order is `DD CB d opc` so the
 // displacement comes BEFORE the opcode rather than after.
+// Format an absolute address as either its label (when the resolver
+// supplies one) or as a 4-digit hex literal. Used everywhere we
+// have a CPU-side address that the user might recognise.
+function fmtAddr(addr: number, resolve: ResolveLabel | undefined): string {
+  const a = addr & 0xffff;
+  const label = resolve?.(a);
+  return label ?? hex4(a);
+}
+
 function fillTemplate(
   template: string,
   pc: number,
   length: number,
   operands: number[],
-  dispOverride?: number,
+  opts: {
+    dispOverride?: number | undefined;
+    resolve?: ResolveLabel | undefined;
+  } = {},
 ): string {
   let m = template;
   let i = 0;
 
   if (/\(IX\+d\)/.test(m)) {
-    const d = dispOverride ?? operands[i++]!;
+    const d = opts.dispOverride ?? operands[i++]!;
     m = m.replace(/\(IX\+d\)/g, `(IX${signedDisp(d)})`);
   }
   if (/\(IY\+d\)/.test(m)) {
-    const d = dispOverride ?? operands[i++]!;
+    const d = opts.dispOverride ?? operands[i++]!;
     m = m.replace(/\(IY\+d\)/g, `(IY${signedDisp(d)})`);
   }
   if (/\bnn\b/.test(m)) {
     const lo = operands[i++]!;
     const hi = operands[i++]!;
-    m = m.replace(/\bnn\b/, hex4((hi << 8) | lo));
+    // 16-bit operands are addresses for JP/CALL/LD HL,nn/etc;
+    // resolve to a label when one exists.
+    m = m.replace(/\bnn\b/, fmtAddr((hi << 8) | lo, opts.resolve));
   }
   if (/\bn\b/.test(m)) {
     const v = operands[i++]!;
+    // 8-bit `n` is almost always an immediate value, not an
+    // address. Don't substitute labels.
     m = m.replace(/\bn\b/, hex2(v));
   }
   // JR/DJNZ relative `d` — render as the absolute target so the
@@ -126,7 +156,7 @@ function fillTemplate(
     const d = operands[i++]!;
     const sd = (d & 0x80) !== 0 ? d - 256 : d;
     const target = (pc + length + sd) & 0xffff;
-    m = m.replace(/\bd\b/, hex4(target));
+    m = m.replace(/\bd\b/, fmtAddr(target, opts.resolve));
   }
   return m;
 }
@@ -144,7 +174,18 @@ function lookup(
 //
 // Unknown / illegal opcodes produce a "??  XX" mnemonic with the raw
 // hex byte so the caller still sees something useful.
-export function disassemble(read: DisasmReader, pc: number): DisasmResult {
+//
+// Pass `opts.resolveLabel` to substitute label names for the absolute
+// addresses in JP/CALL/JR targets and 16-bit `nn` operands. When
+// the resolver returns undefined for an address, the hex literal is
+// emitted as before, so passing or omitting the option never breaks
+// any other formatting.
+export function disassemble(
+  read: DisasmReader,
+  pc: number,
+  opts: DisasmOptions = {},
+): DisasmResult {
+  const resolve = opts.resolveLabel;
   const b0 = read(pc & 0xffff) & 0xff;
   const bytes: number[] = [b0];
 
@@ -161,7 +202,7 @@ export function disassemble(read: DisasmReader, pc: number): DisasmResult {
       bytes.push(d, opc);
       const template =
         lookup(isDd ? ddCbOpCodes : fdCbOpCodes, opc) ?? `??  ${hex2(opc)}`;
-      const m = fillTemplate(template, pc, 4, [], d);
+      const m = fillTemplate(template, pc, 4, [], { dispOverride: d, resolve });
       return { mnemonic: m, length: 4, bytes };
     }
 
@@ -181,7 +222,7 @@ export function disassemble(read: DisasmReader, pc: number): DisasmResult {
       bytes.push(b);
     }
     const length = 2 + spec.total;
-    return { mnemonic: fillTemplate(template, pc, length, operands), length, bytes };
+    return { mnemonic: fillTemplate(template, pc, length, operands, { resolve }), length, bytes };
   }
 
   // CB / ED single prefix — 2-byte opcode (no further operands for CB,
@@ -205,7 +246,7 @@ export function disassemble(read: DisasmReader, pc: number): DisasmResult {
       bytes.push(b);
     }
     const length = 2 + spec.total;
-    return { mnemonic: fillTemplate(template, pc, length, operands), length, bytes };
+    return { mnemonic: fillTemplate(template, pc, length, operands, { resolve }), length, bytes };
   }
 
   // Base.
@@ -221,5 +262,5 @@ export function disassemble(read: DisasmReader, pc: number): DisasmResult {
     bytes.push(b);
   }
   const length = 1 + spec.total;
-  return { mnemonic: fillTemplate(template, pc, length, operands), length, bytes };
+  return { mnemonic: fillTemplate(template, pc, length, operands, { resolve }), length, bytes };
 }

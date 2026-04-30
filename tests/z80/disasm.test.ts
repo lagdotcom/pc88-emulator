@@ -103,3 +103,47 @@ describe("Z80 disassembler", () => {
     expect(d.mnemonic).toBe("CALL 0x5678");
   });
 });
+
+describe("Z80 disassembler — symbol resolution", () => {
+  // Stub a tiny resolver mapping a couple of addresses to names.
+  const resolveLabel = (a: number): string | undefined =>
+    ({ 0x5678: "print_string", 0x107: "loop" })[a];
+
+  it("substitutes a label for a CALL nn target", () => {
+    const r = readerFor([0xcd, 0x78, 0x56]); // CALL 0x5678
+    const d = disassemble(r, 0, { resolveLabel });
+    expect(d.mnemonic).toBe("CALL print_string");
+    expect(d.length).toBe(3);
+  });
+
+  it("substitutes a label for a JR target", () => {
+    // JR +5 at PC=0x100 → target 0x107 (= "loop")
+    const r = readerFor([0x18, 0x05], 0x100);
+    expect(disassemble(r, 0x100, { resolveLabel }).mnemonic).toBe("JR loop");
+  });
+
+  it("substitutes a label for a 16-bit LD nn operand", () => {
+    // LD HL,0x5678
+    const r = readerFor([0x21, 0x78, 0x56]);
+    expect(disassemble(r, 0, { resolveLabel }).mnemonic).toBe(
+      "LD HL,print_string",
+    );
+  });
+
+  it("does not substitute when the resolver returns undefined", () => {
+    const r = readerFor([0xcd, 0x99, 0x99]); // CALL 0x9999 (no label)
+    expect(disassemble(r, 0, { resolveLabel }).mnemonic).toBe("CALL 0x9999");
+  });
+
+  it("does not touch 8-bit immediate values", () => {
+    // LD A,0x78 — same low byte as a known label, but it's not an
+    // address so the resolver shouldn't fire.
+    const r = readerFor([0x3e, 0x78]);
+    expect(disassemble(r, 0, { resolveLabel }).mnemonic).toBe("LD A,0x78");
+  });
+
+  it("works without options (resolveLabel optional)", () => {
+    const r = readerFor([0xcd, 0x78, 0x56]);
+    expect(disassemble(r, 0).mnemonic).toBe("CALL 0x5678");
+  });
+});

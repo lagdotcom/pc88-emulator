@@ -1,0 +1,26 @@
+# Symbol file for mkI-n88. Discovered during the N88-BASIC boot-stall
+# diagnosis (see README TODO). Expand as the BIOS reverse-engineering
+# progresses. md5 below is checked at load time; if it mismatches the
+# loaded ROM, a warning is emitted and symbols still load.
+# md5: 22be239bc0c4298bc0561252eed98633
+
+# --- Banner / startup print sequence ---
+0x7968 print_banner_seq     ; banner / "Bytes free" / Copyright sequence
+0x5550 print_string         ; print NUL-terminated string at HL via RST 18
+0x5925 print_handler        ; main char-print path entered from RST 18
+0x4B52 print_alt_handler    ; alt path when (0xEC88) != 0 (console redirect?)
+0x59A5 print_to_tvram       ; the actual write-to-TVRAM target (not yet reached)
+
+# --- Banner string data ---
+0x79B2 str_bytes_free       ; " Bytes free\0"
+0x79BE str_n88_banner       ; "NEC N-88 BASIC Version 1.0\0"
+0x79DA str_copyright        ; "Copyright (C) 1981 by Microsoft\0"
+
+# --- Print-path RAM hooks (live in 0xE000-0xEFFF main RAM) ---
+# These probably belong in syms/mkI.ram.sym once we add RAM-namespace
+# support. For now, keeping them here for context next to the ROM
+# code that references them.
+# 0xEC88 ram_print_redir_flag ; non-zero -> 0x5925 takes the alt path
+# 0xED42 ram_print_hook       ; RAM-resident print hook; called from RST 18
+# 0xED99 ram_print_check      ; called from print_handler before TVRAM write
+# 0xE64C ram_print_state      ; some print-state byte tested at 0x592D
