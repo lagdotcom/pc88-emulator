@@ -72,7 +72,9 @@ export class IrqController {
       read: () => this.priority,
       write: (_p, v) => {
         this.priority = v;
-        log.info(`priority := 0x${v.toString(16)}`);
+        // The priority/level register is latched but not consulted
+        // anywhere — IM 2 priority resolution isn't modelled yet.
+        log.warn(`priority := 0x${v.toString(16)} (stub)`);
       },
     });
     bus.register(0xe6, {

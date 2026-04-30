@@ -116,7 +116,9 @@ export class DisplayRegisters {
       name: "display/bgpal",
       write: (_p, v) => {
         this.bgColor = (v & PORT52.BG_MASK) >> PORT52.BG_SHIFT;
-        log.info(`0x52 write: bgColor=${byte(v)}`);
+        // No renderer yet — the latched value is just kept around
+        // for snapshot diagnostics.
+        log.warn(`0x52 write: bgColor=${byte(v)} (stub)`);
       },
     });
 
@@ -128,8 +130,8 @@ export class DisplayRegisters {
         this.showGVRAM1 = (v & PORT53.HIDE_GVRAM1) === 0;
         this.showGVRAM2 = (v & PORT53.HIDE_GVRAM2) === 0;
         this.showGVRAM3 = (v & PORT53.HIDE_GVRAM3) === 0;
-        log.info(
-          `0x53 write: text=${this.showText} g0=${this.showGVRAM0} g1=${this.showGVRAM1} g2=${this.showGVRAM2} g3=${this.showGVRAM3}`,
+        log.warn(
+          `0x53 write: text=${this.showText} g0=${this.showGVRAM0} g1=${this.showGVRAM1} g2=${this.showGVRAM2} g3=${this.showGVRAM3} (stub)`,
         );
       },
     });
@@ -139,7 +141,7 @@ export class DisplayRegisters {
       bus.register(port, {
         name: `display/pal${i}`,
         write: (_p, v) => {
-          log.info(`pal${i} := 0x${byte(v)}`);
+          log.warn(`pal${i} := 0x${byte(v)} (stub)`);
         },
       });
     }

@@ -121,7 +121,7 @@ export class μPD8251 {
         if (ch.expectingMode) {
           ch.lastMode = v;
           ch.expectingMode = false;
-          log.info(`ch${channel} mode = 0x${v.toString(16)}`);
+          log.warn(`ch${channel} mode = 0x${v.toString(16)} (stub)`);
         } else {
           ch.lastCommand = v;
           // 8251 command byte bit 6 = "internal reset" — flips us
@@ -129,9 +129,9 @@ export class μPD8251 {
           // the mode without a full hardware reset.
           if ((v & 0x40) !== 0) {
             ch.expectingMode = true;
-            log.info(`ch${channel} reset (next odd write = mode)`);
+            log.warn(`ch${channel} reset (next odd write = mode)`);
           } else {
-            log.info(`ch${channel} cmd = 0x${v.toString(16)}`);
+            log.warn(`ch${channel} cmd = 0x${v.toString(16)} (stub)`);
           }
         }
       },

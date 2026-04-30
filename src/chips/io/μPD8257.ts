@@ -116,9 +116,31 @@ export class μPD8257 {
       log.info(`ch${ch}.count=${word(this.channelByteCount(ch))}`);
   }
 
+  // Mode-set register bit layout per the i8257 / μPD8257 datasheet:
+  //
+  //   bit 0  EN0  enable channel 0
+  //   bit 1  EN1  enable channel 1
+  //   bit 2  EN2  enable channel 2
+  //   bit 3  EN3  enable channel 3
+  //   bit 4  ROT  rotating-priority mode
+  //   bit 5  EXT  extended write
+  //   bit 6  TCS  TC-stop (auto-disable channel on terminal count)
+  //   bit 7  AL   auto-load (chain to channel 2/3 on TC for ch 2)
+  //
+  // PC-88 BIOS programs this register with two values during init:
+  //   0x80 = AL alone — no channels enabled; configures the
+  //          autoload register.
+  //   0xC4 = AL | TCS | EN2 — enables channel 2 (CRTC raster
+  //          streaming) with autoload + TC-stop. This is the
+  //          steady-state value the runner observes most of the
+  //          time once the screen is running.
+  //
+  // We don't act on the mode register yet — channel 2 is "always
+  // on" from the renderer's perspective. Logged as a stub so the
+  // BIOS's mode programming stays visible.
   private writeMode(v: u8): void {
     this.mode = v;
     this.toggle = false;
-    log.info(`mode 0x${v.toString(16)}`);
+    log.warn(`mode 0x${v.toString(16)} (stub — bits not acted on)`);
   }
 }

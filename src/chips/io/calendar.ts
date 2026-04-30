@@ -18,7 +18,7 @@ export class Calendar {
       write: (_p, v) => {
         if (!this.warned) {
           this.warned = true;
-          log.info(`first calendar write 0x${v.toString(16)}`);
+          log.warn(`first calendar write 0x${v.toString(16)} (stub)`);
         }
       },
     });

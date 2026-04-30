@@ -63,9 +63,12 @@ export class YM2203 {
       read: () => 0x00,
       write: (_p, v) => {
         this.regs[this.addr] = v;
-        // Log the first time each register is written so we notice
-        // anything beyond simple reset-write-zero patterns.
-        log.info(`reg 0x${this.addr.toString(16)} := 0x${v.toString(16)}`);
+        // No actual sound generation yet — every register write is a
+        // no-op. Surface as a warning so the BIOS's first
+        // sound-init pass is visible in the log without grep.
+        log.warn(
+          `reg 0x${this.addr.toString(16)} := 0x${v.toString(16)} (stub)`,
+        );
       },
     });
   }
