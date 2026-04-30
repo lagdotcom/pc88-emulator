@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { Bytes } from "../flavours.js";
 import type { PC88Config, ROMDescriptor, ROMManifest } from "./config.js";
 
 // ROMs found on disk, keyed by their slot in `ROMManifest`. Required
@@ -63,7 +64,7 @@ export async function loadRoms(
       continue;
     }
     const bytes = new Uint8Array(await readFile(path));
-    const expectedSize = descriptor.size * 1024;
+    const expectedSize: Bytes = descriptor.size * 1024;
     if (bytes.length !== expectedSize) {
       throw new RomLoadError(
         `ROM "${descriptor.id}" at ${path} is ${bytes.length} bytes, expected ${expectedSize}`,

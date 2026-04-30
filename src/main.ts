@@ -6,6 +6,7 @@ import { config as loadDotEnv } from "dotenv";
 import emitter from "log/lib/emitter";
 import startNodeLogging from "log-node";
 
+import type { PC88Config } from "./machines/config.js";
 import {
   PC88Machine,
   runMachine,
@@ -15,11 +16,20 @@ import {
 import type { LoadedRoms } from "./machines/pc88-memory.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { MKI } from "./machines/variants/mk1.js";
+import { MKII } from "./machines/variants/mk2.js";
+import { MKII_FR } from "./machines/variants/mk2fr.js";
+import { MKII_SR } from "./machines/variants/mk2sr.js";
 import { hex } from "./tools.js";
 
 const DEFAULT_MAX_OPS = 150_000;
 
+const variants = [MKI, MKII, MKII_SR, MKII_FR];
+const variantNames = Object.fromEntries(
+  variants.flatMap((mach) => mach.nicknames.map((nick) => [nick, mach])),
+);
+
 interface CliFlags {
+  config: PC88Config;
   romDir: string;
   maxOps: number;
   traceIo: "off" | "deduped" | "raw";
@@ -38,6 +48,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     strict: true,
     allowPositionals: false,
     options: {
+      machine: { type: "string", short: "m" },
       "rom-dir": { type: "string" },
       "max-ops": { type: "string" },
       "trace-io": { type: "string" },
@@ -72,7 +83,20 @@ function parseCliFlags(argv: string[]): CliFlags {
         ? "main.log"
         : null;
 
-  return { romDir, maxOps, traceIo, rawTvram, logFile, help: !!values.help };
+  const config =
+    variantNames[values["machine"]?.toLowerCase() as keyof typeof variantNames];
+  if (!config && values["machine"])
+    throw new Error(`Unknown machine name: ${values["machine"]}`);
+
+  return {
+    romDir,
+    maxOps,
+    traceIo,
+    rawTvram,
+    logFile,
+    help: !!values.help,
+    config: config ?? MKI,
+  };
 }
 
 const HELP = `\
@@ -189,19 +213,15 @@ async function main(): Promise<void> {
   startNodeLogging();
   if (flags.logFile) addFileLogger(flags.logFile);
 
-  const loaded = await loadRoms(MKI, { dir: flags.romDir });
+  // TODO change signature to { loaded: bool, missing: [] } so this check isn't hard coded here
+  const loaded = await loadRoms(flags.config, { dir: flags.romDir });
   if (!loaded.n80 || !loaded.n88 || !loaded.e0) {
     throw new Error(
       `mkI requires n80, n88, e0 ROMs in ${flags.romDir}/ (got ${Object.keys(loaded).join(", ")})`,
     );
   }
-  const roms: LoadedRoms = {
-    n80: loaded.n80,
-    n88: loaded.n88,
-    e0: loaded.e0,
-  };
 
-  const machine = new PC88Machine(MKI, roms);
+  const machine = new PC88Machine(flags.config, loaded as LoadedRoms);
   machine.reset();
 
   if (flags.traceIo !== "off") {

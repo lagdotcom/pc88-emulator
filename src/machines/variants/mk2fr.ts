@@ -15,6 +15,7 @@ export const FR_E3 = makeROM("fr-e3", 8, "3ba670725fb95b3675fcbc75b8b0f49f");
 
 export const MKII_FR: PC88Config = {
   model: "PC-8801 mkII FR",
+  nicknames: ["fr", "mkiifr", "mkii_fr", "mkii-fr"],
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,

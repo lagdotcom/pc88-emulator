@@ -6,6 +6,7 @@ const MKII_E0 = makeROM("mkII-e0", 8, "f198cae1050af141dd3c09f0b2c6facf");
 
 export const MKII: PC88Config = {
   model: "PC-8801 mkII",
+  nicknames: ["ii", "mkii", "2"],
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,

@@ -2,6 +2,7 @@ import type { Kilobytes, u8 } from "../flavours.js";
 
 export interface PC88Config {
   readonly model: PC88Model;
+  readonly nicknames: string[];
   readonly cpu: CPUConfig;
   readonly memory: MemoryConfig;
   readonly video: VideoConfig;

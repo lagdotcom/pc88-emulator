@@ -17,6 +17,7 @@ export const MKI_KANJI1 = makeROM(
 
 export const MKI: PC88Config = {
   model: "PC-8801",
+  nicknames: ["88", "pc88", "mki", "original"],
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
