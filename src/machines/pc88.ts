@@ -101,6 +101,11 @@ export class PC88Machine {
   }
 
   // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.
+  // Initial BASIC selection comes from DIP port31 bit 2 (the same
+  // bit the BIOS reads to decide which BASIC banner to print). On
+  // real hardware the BASIC ROMs share a common entry that branches
+  // on the DIP; modelling the choice up-front avoids needing the
+  // shared entry to do a runtime ROM swap before printing anything.
   reset(): void {
     this.cpu.regs.PC = 0;
     this.cpu.regs.SP = 0;
@@ -111,8 +116,10 @@ export class PC88Machine {
     this.cpu.irqLine = false;
     this.cpu.cycles = 0;
     this.memoryMap.setBasicRomEnabled(true);
-    this.memoryMap.setBasicMode("n80");
-    this.memoryMap.setE0RomEnabled(false);
+    this.memoryMap.setBasicMode(
+      this.config.dipSwitches.port31 & 0x04 ? "n80" : "n88",
+    );
+    this.memoryMap.setEromSlot(0);
     this.memoryMap.setVramEnabled(false);
   }
 }

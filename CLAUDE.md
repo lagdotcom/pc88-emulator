@@ -285,12 +285,20 @@ at 4 KB page granularity, which keeps `read(addr)` to one array load
 + one indexed Uint8Array load even with bank-switching active:
 
 ```
-0x0000-0x5FFF  BASIC ROM (n80 or n88)            [bank-switchable]
-0x6000-0x7FFF  E0 extension ROM (or BASIC cont.)  [bank-switchable]
+0x0000-0x5FFF  BASIC ROM (n80 or n88)             [DIP-selected at reset; runtime via port 0x31 bit 2]
+0x6000-0x7FFF  Active extension-ROM slot E0..E3   [port 0x32 bits 0-1; falls back to BASIC continuation if slot unloaded]
 0x8000-0xBFFF  main RAM (always)
 0xC000-0xEFFF  GVRAM plane 0/1/2 or main RAM      [VRAM enable + plane]
 0xF000-0xFFFF  TVRAM (4 KB)                       [permanently mapped]
 ```
+
+`PC88MemoryMap.setEromSlot(0|1|2|3)` selects which extension-ROM
+image is mapped at 0x6000-0x7FFF. If `roms[`e0..e3`]` is undefined
+for the active slot, the page falls through to the BASIC ROM
+continuation (BASIC ROM bytes 0x6000-0x7FFF). mkI ships only E0;
+mkII SR ships E0-E3. Earlier code hardcoded a boolean
+`setE0RomEnabled` which broke the moment N88-BASIC tried to
+swap to E1.
 
 TVRAM is **not** bank-switchable on mkI: CPU reads/writes always hit
 the 4 KB TVRAM array. The CRTC controls whether the contents are

@@ -35,6 +35,10 @@ interface CliFlags {
   traceIo: "off" | "deduped" | "raw";
   rawTvram: boolean;
   logFile: string | null;
+  // Optional BASIC override: if set, flips bit 2 of the variant's
+  // DIP port31 before machine construction. null leaves the
+  // variant's factory default in place.
+  basicOverride: "n80" | "n88" | null;
   help: boolean;
 }
 
@@ -49,6 +53,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     allowPositionals: false,
     options: {
       machine: { type: "string", short: "m" },
+      basic: { type: "string" },
       "rom-dir": { type: "string" },
       "max-ops": { type: "string" },
       "trace-io": { type: "string" },
@@ -88,20 +93,34 @@ function parseCliFlags(argv: string[]): CliFlags {
   if (!config && values["machine"])
     throw new Error(`Unknown machine name: ${values["machine"]}`);
 
+  const basicArg = values["basic"]?.toLowerCase();
+  let basicOverride: CliFlags["basicOverride"] = null;
+  if (basicArg !== undefined) {
+    if (basicArg !== "n80" && basicArg !== "n88") {
+      throw new Error(`--basic must be n80 or n88, got ${values["basic"]}`);
+    }
+    basicOverride = basicArg;
+  }
+
   return {
     romDir,
     maxOps,
     traceIo,
     rawTvram,
     logFile,
+    basicOverride,
     help: !!values.help,
     config: config ?? MKI,
   };
 }
 
 const HELP = `\
-yarn pc88 — boot mkI N-BASIC, dump TVRAM after a fixed op budget
+yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
 
+  -m, --machine=NAME  machine variant (default: mkI; nicknames: mki,
+                      ii, sr, fr, ...)
+  --basic=n80|n88     override DIP-switch BASIC selection without
+                      editing the variant (n80 = N-BASIC, n88 = N88-BASIC)
   --rom-dir=PATH      ROM directory (default: roms; env: PC88_ROM_DIR)
   --max-ops=N         instruction budget (default: ${DEFAULT_MAX_OPS}; env: PC88_MAX_OPS)
   --trace-io[=raw]    log every IN/OUT with PC; bare flag dedupes
@@ -215,13 +234,33 @@ async function main(): Promise<void> {
 
   // TODO change signature to { loaded: bool, missing: [] } so this check isn't hard coded here
   const loaded = await loadRoms(flags.config, { dir: flags.romDir });
-  if (!loaded.n80 || !loaded.n88 || !loaded.e0) {
+  // n80 and n88 are required for any PC-88 boot. E-ROM slots E0..E3
+  // are optional — the memory map falls back to BASIC ROM
+  // continuation when the active slot has no image.
+  if (!loaded.n80 || !loaded.n88) {
     throw new Error(
-      `mkI requires n80, n88, e0 ROMs in ${flags.romDir}/ (got ${Object.keys(loaded).join(", ")})`,
+      `${flags.config.model} requires n80 and n88 ROMs in ${flags.romDir}/ (got ${Object.keys(loaded).join(", ")})`,
     );
   }
 
-  const machine = new PC88Machine(flags.config, loaded as LoadedRoms);
+  // Apply the --basic override (if any) to the variant's DIP byte
+  // before constructing the machine. Bit 2 of port31 is the rmode
+  // flag: 1 = N-BASIC, 0 = N88-BASIC. Cleanest is to clone the
+  // config so the source variant object stays untouched.
+  const config: PC88Config = flags.basicOverride
+    ? {
+        ...flags.config,
+        dipSwitches: {
+          ...flags.config.dipSwitches,
+          port31:
+            flags.basicOverride === "n80"
+              ? flags.config.dipSwitches.port31 | 0x04
+              : flags.config.dipSwitches.port31 & ~0x04,
+        },
+      }
+    : flags.config;
+
+  const machine = new PC88Machine(config, loaded as LoadedRoms);
   machine.reset();
 
   if (flags.traceIo !== "off") {

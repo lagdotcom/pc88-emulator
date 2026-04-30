@@ -34,12 +34,39 @@ describe("PC88MemoryMap", () => {
     expect(m.read(0x0000)).toBe(0x80);
   });
 
-  it("swaps E0 ROM in over the upper half of BASIC ROM", () => {
+  it("maps the active extension-ROM slot at 0x6000-0x7FFF", () => {
+    // Default slot is 0; with the E0 image loaded that's what the
+    // BIOS sees at 0x6000. Switching to a slot whose image is
+    // missing falls back to the BASIC ROM continuation so the
+    // BIOS doesn't read garbage.
+    const fixtureWithAllE = (): LoadedRoms => ({
+      n80: filledROM(0x8000, 0x80),
+      n88: filledROM(0x8000, 0x88),
+      e0: filledROM(0x2000, 0xe0),
+      e1: filledROM(0x2000, 0xe1),
+      e2: filledROM(0x2000, 0xe2),
+      e3: filledROM(0x2000, 0xe3),
+    });
+    const m = new PC88MemoryMap(fixtureWithAllE());
+    expect(m.read(0x6000)).toBe(0xe0); // slot 0 = E0
+    m.setEromSlot(1);
+    expect(m.read(0x6000)).toBe(0xe1);
+    m.setEromSlot(2);
+    expect(m.read(0x6000)).toBe(0xe2);
+    m.setEromSlot(3);
+    expect(m.read(0x6000)).toBe(0xe3);
+    expect(m.read(0x5fff)).toBe(0x80); // outside the slot window
+  });
+
+  it("falls back to BASIC ROM continuation when the active slot has no image", () => {
+    // mkI only ships E0; selecting slot 1/2/3 there must still
+    // return readable bytes (the BASIC ROM continuation), not
+    // throw or return garbage.
     const m = new PC88MemoryMap(fixture());
-    expect(m.read(0x6000)).toBe(0x80); // BASIC ROM continuation
-    m.setE0RomEnabled(true);
+    m.setEromSlot(1);
+    expect(m.read(0x6000)).toBe(0x80);
+    m.setEromSlot(0);
     expect(m.read(0x6000)).toBe(0xe0);
-    expect(m.read(0x5fff)).toBe(0x80); // outside the E0 window
   });
 
   it("maps TVRAM permanently at 0xF000 (no bank toggle)", () => {

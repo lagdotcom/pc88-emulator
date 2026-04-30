@@ -41,20 +41,20 @@ describe("SystemController DIP wiring", () => {
 });
 
 describe("SystemController ROM banking via port 0x32", () => {
-  it("eromsl=0 enables E0 ROM at 0x6000", () => {
+  it("port 0x32 bits 0-1 select the active extension-ROM slot", () => {
+    // The setup() fixture only loads E0; selecting slot 1/2/3 with
+    // no image must fall back to BASIC ROM continuation (0x80).
     const { bus, memoryMap } = setup();
-    // BASIC ROM continuation by default.
-    expect(memoryMap.read(0x6000)).toBe(0x80);
-    bus.write(0x32, 0x00); // eromsl bits = 0
+    bus.write(0x32, 0x00); // eromsl = 0 → E0 mapped (loaded)
     expect(memoryMap.read(0x6000)).toBe(0xe0);
-  });
-
-  it("eromsl != 0 disables the E0 window (falls back to BASIC ROM continuation)", () => {
-    const { bus, memoryMap } = setup();
-    bus.write(0x32, 0x00);
-    expect(memoryMap.read(0x6000)).toBe(0xe0);
-    bus.write(0x32, 0x01);
+    bus.write(0x32, 0x01); // eromsl = 1 → E1 missing → BASIC continuation
     expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x32, 0x02); // eromsl = 2 → E2 missing → BASIC continuation
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x32, 0x03); // eromsl = 3 → E3 missing → BASIC continuation
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x32, 0x00); // back to slot 0
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
   });
 });
 

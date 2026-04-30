@@ -10,15 +10,22 @@ const PAGE_SIZE = 1 << PAGE_SHIFT;
 const PAGE_MASK = PAGE_SIZE - 1;
 const PAGE_COUNT = 0x10000 >> PAGE_SHIFT;
 
-// Loaded image of one ROM. We don't try to slice the underlying bytes
-// into per-page sub-arrays here; the map does that on every refresh.
+// Loaded image of one ROM. The N-BASIC and N88-BASIC images are
+// always present; the four E-ROM extension slots and (later) the
+// font / kanji ROMs are optional and per-variant. The map falls
+// back to the BASIC ROM continuation at 0x6000-0x7FFF when the
+// active extension slot has no image loaded.
 export interface LoadedRoms {
   readonly n80: Uint8Array; // 32 KB
   readonly n88: Uint8Array; // 32 KB
-  readonly e0: Uint8Array; //   8 KB
+  readonly e0?: Uint8Array; //  8 KB
+  readonly e1?: Uint8Array; //  8 KB
+  readonly e2?: Uint8Array; //  8 KB
+  readonly e3?: Uint8Array; //  8 KB
 }
 
 export type BasicMode = "n80" | "n88";
+export type EromSlot = 0 | 1 | 2 | 3;
 
 // PC-88 memory layout, paged at 4 KB granularity. Reads dispatch
 // through `readPages[addr >> 12][addr & 0xfff]` — one indirection,
@@ -57,7 +64,12 @@ export class PC88MemoryMap implements MemoryProvider {
   // refreshPages() so that read/write pick up the new mapping.
   private _basicRomEnabled = true;
   private _basicMode: BasicMode = "n80";
-  private _e0RomEnabled = false;
+  // Active extension-ROM slot (port 0x32, bits 0-1). The slot whose
+  // image is loaded gets mapped at 0x6000-0x7FFF; if no image is
+  // loaded for the active slot we fall through to the BASIC ROM
+  // continuation. Earlier code modelled this as a boolean E0-only
+  // toggle, which broke as soon as anything wanted E1/E2/E3.
+  private _eromSlot: EromSlot = 0;
   private _vramEnabled = false;
   private _gvramPlane: 0 | 1 | 2 = 0;
 
@@ -92,9 +104,9 @@ export class PC88MemoryMap implements MemoryProvider {
     this.refreshPages();
   }
 
-  setE0RomEnabled(enabled: boolean): void {
-    if (this._e0RomEnabled === enabled) return;
-    this._e0RomEnabled = enabled;
+  setEromSlot(slot: EromSlot): void {
+    if (this._eromSlot === slot) return;
+    this._eromSlot = slot;
     this.refreshPages();
   }
 
@@ -116,6 +128,9 @@ export class PC88MemoryMap implements MemoryProvider {
   get basicMode(): BasicMode {
     return this._basicMode;
   }
+  get eromSlot(): EromSlot {
+    return this._eromSlot;
+  }
   get vramEnabled(): boolean {
     return this._vramEnabled;
   }
@@ -126,13 +141,15 @@ export class PC88MemoryMap implements MemoryProvider {
     const ram = this.mainRam;
 
     // 0x0000-0x5FFF: BASIC ROM (n80 or n88) when enabled, else RAM.
-    // 0x6000-0x7FFF: E0 extension ROM if enabled, else continues the
-    //                BASIC ROM, else RAM.
+    // 0x6000-0x7FFF: extension ROM whose slot is selected at port
+    //                0x32 bits 0-1, OR the BASIC ROM continuation
+    //                if no image is loaded for that slot.
     const basicRom = this._basicMode === "n80" ? this.roms.n80 : this.roms.n88;
     if (this._basicRomEnabled) {
       this.mapRomPages(0, 6, basicRom, 0);
-      if (this._e0RomEnabled) {
-        this.mapRomPages(6, 8, this.roms.e0, 0);
+      const erom = this.activeEromImage();
+      if (erom) {
+        this.mapRomPages(6, 8, erom, 0);
       } else {
         this.mapRomPages(6, 8, basicRom, 6 * PAGE_SIZE);
       }
@@ -161,6 +178,22 @@ export class PC88MemoryMap implements MemoryProvider {
     // caused BIOS writes to vanish into shadow RAM until a guess at
     // a port write happened to flip the flag. Always map TVRAM.
     this.mapRamPage(15, this.tvram, 0);
+  }
+
+  // Return the loaded ROM image for the currently-selected slot, or
+  // undefined if no image is loaded for that slot. Callers fall back
+  // to the BASIC ROM continuation when this returns undefined.
+  private activeEromImage(): Uint8Array | undefined {
+    switch (this._eromSlot) {
+      case 0:
+        return this.roms.e0;
+      case 1:
+        return this.roms.e1;
+      case 2:
+        return this.roms.e2;
+      case 3:
+        return this.roms.e3;
+    }
   }
 
   private mapRomPages(

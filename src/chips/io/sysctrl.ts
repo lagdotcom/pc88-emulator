@@ -115,6 +115,13 @@ export class SystemController {
     log.info(
       `0x31 write: lines=${lines} mmode=${mmode} rmode=${rmode} graph=${graph} hcolor=${hcolor} highres=${highres}`,
     );
+
+    // Bit 1 selects ROM vs RAM in the 0x0000-0x7FFF window; bit 2
+    // selects N-BASIC vs N88-BASIC when ROM is the source. Propagate
+    // both so the BIOS can flip BASIC modes at runtime (which is
+    // exactly what the N88 boot path does after reading the DIP).
+    this.memoryMap.setBasicRomEnabled(mmode === "rom");
+    this.memoryMap.setBasicMode(rmode);
   }
 
   private handle32(v: u8): void {
@@ -136,10 +143,11 @@ export class SystemController {
       `0x32 write: eromsl=${eromsl} avc=${avc} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
     );
 
-    this.memoryMap.setE0RomEnabled(eromsl === 0);
-    // this.memoryMap.setE1RomEnabled(eromsl === 1);
-    // this.memoryMap.setE2RomEnabled(eromsl === 2);
-    // this.memoryMap.setE3RomEnabled(eromsl === 3);
+    // bits 0-1 select which extension-ROM image is mapped at
+    // 0x6000-0x7FFF. The memory map falls back to the BASIC ROM
+    // continuation when the slot has no image loaded (mkI only
+    // ships E0; mkII SR has E0-E3).
+    this.memoryMap.setEromSlot((eromsl & 0x03) as 0 | 1 | 2 | 3);
   }
 
   private handle40(v: u8): void {
