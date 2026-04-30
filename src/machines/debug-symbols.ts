@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { ResolveLabel } from "../chips/z80/disasm.js";
+import type { ResolveLabel, ResolvePort } from "../chips/z80/disasm.js";
 import {
   emptySymbolFile,
   loadSymbolFile,
@@ -37,9 +37,24 @@ interface DebugSymbolEntry {
 
 export interface DebugSymbols {
   byRomId: Map<ROMID, DebugSymbolEntry>;
+  // Variant-wide RAM (addresses outside ROM regions) and port
+  // labels. One file per variant, shared across N-BASIC and
+  // N88-BASIC. Always present — empty files are created on first
+  // mutation, same pattern as the per-ROM files.
+  ramFile: SymbolFile;
+  portFile: SymbolFile;
   // The resolver to pass to disassemble() — captures `this` so
-  // memory-map state at lookup time picks the right ROM.
+  // memory-map state at lookup time picks the right ROM. Includes
+  // fuzzy "name+N" fall-through within a 16-byte window.
   resolver: ResolveLabel;
+  // Port-number resolver for IN A,(n) / OUT (n),A.
+  portResolver: ResolvePort;
+}
+
+// Per-variant slug used to name the RAM and port symbol files.
+// Keeps it readable: "PC-8801 mkII SR" → "pc8801mkiisr".
+function variantSlug(machine: PC88Machine): string {
+  return machine.config.model.toLowerCase().replace(/\W+/g, "");
 }
 
 // Determine which ROM id is mapped at `addr` right now, given the
@@ -151,13 +166,39 @@ export async function loadDebugSymbols(
     byRomId.set(id, { romId: id, romBytes: bytes, file });
   }
 
-  const resolver: ResolveLabel = (addr) => {
+  // Variant-wide RAM + port files. Live alongside the per-ROM
+  // files at syms/<variant>.{ram,port}.sym.
+  const slug = variantSlug(machine);
+  const ramPath = join(SYMS_DIR, `${slug}.ram.sym`);
+  const portPath = join(SYMS_DIR, `${slug}.port.sym`);
+  const ramFile = (await loadSymbolFile(ramPath)) ?? emptySymbolFile(ramPath);
+  const portFile =
+    (await loadSymbolFile(portPath)) ?? emptySymbolFile(portPath);
+
+  // Address resolver: ROM region → per-ROM file via memory-map
+  // dispatch, otherwise → variant RAM file. Within 16 bytes of a
+  // preceding label we emit "name+N" so instructions in the
+  // middle of a labelled function still surface the name.
+  const FUZZ = 16;
+  const exact = (addr: number): string | undefined => {
     const id = romIdAt(machine, addr);
-    if (!id) return undefined;
-    return byRomId.get(id)?.file.byAddr.get(addr & 0xffff)?.name;
+    if (id) return byRomId.get(id)?.file.byAddr.get(addr & 0xffff)?.name;
+    return ramFile.byAddr.get(addr & 0xffff)?.name;
+  };
+  const resolver: ResolveLabel = (addr) => {
+    const direct = exact(addr);
+    if (direct !== undefined) return direct;
+    for (let off = 1; off <= FUZZ; off++) {
+      const name = exact((addr - off) & 0xffff);
+      if (name !== undefined) return `${name}+${off}`;
+    }
+    return undefined;
   };
 
-  return { byRomId, resolver };
+  const portResolver: ResolvePort = (port) =>
+    portFile.byAddr.get(port & 0xff)?.name;
+
+  return { byRomId, ramFile, portFile, resolver, portResolver };
 }
 
 // Add or rename a label. Determines which ROM the address belongs
@@ -172,12 +213,18 @@ export async function addLabel(
   addr: u16,
   name: string,
   comment?: string,
-): Promise<{ romId: ROMID; path: FilesystemPath }> {
+): Promise<{ scope: string; path: FilesystemPath }> {
   const id = romIdAt(machine, addr);
+  // RAM-region addresses (and any address outside a mapped ROM)
+  // route to the variant-wide RAM file. The same `name+N` window
+  // means the resolver can still find them when a code path
+  // reads from a slightly-offset address.
   if (!id) {
-    throw new Error(
-      `address 0x${addr.toString(16)} isn't in a ROM region; phase 3 will add RAM/port label support`,
-    );
+    seedHeaderIfNew(syms.ramFile, `# RAM symbols for ${variantSlug(machine)}`);
+    setSymbol(syms.ramFile, addr, name, comment);
+    mkdirSync(dirname(syms.ramFile.path), { recursive: true });
+    await saveSymbolFile(syms.ramFile);
+    return { scope: "ram", path: syms.ramFile.path };
   }
   const entry = syms.byRomId.get(id);
   if (!entry) {
@@ -207,33 +254,88 @@ export async function addLabel(
   // Make sure the syms/ directory exists on first write.
   mkdirSync(dirname(entry.file.path), { recursive: true });
   await saveSymbolFile(entry.file);
-  return { romId: id, path: entry.file.path };
+  return { scope: id, path: entry.file.path };
+}
+
+// Seed a fresh non-ROM symbol file with a one-line comment header
+// so it's obvious from skim what the file is for. Idempotent — if
+// the file already has anything (header or first symbol from a
+// previous session) we leave it alone.
+function seedHeaderIfNew(file: SymbolFile, headerText: string): void {
+  if (file.entries.length > 0) return;
+  file.entries.push({ kind: "comment", text: headerText });
+  file.entries.push({ kind: "blank" });
+}
+
+// Add or rename a port label. Variant-wide; lives in
+// syms/<variant>.port.sym alongside the RAM file. Port numbers
+// are u8 — masked at write time so callers can pass either a
+// bare number or a full 16-bit hex.
+export async function addPortLabel(
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  port: number,
+  name: string,
+  comment?: string,
+): Promise<{ scope: string; path: FilesystemPath }> {
+  const masked = port & 0xff;
+  seedHeaderIfNew(syms.portFile, `# Port symbols for ${variantSlug(machine)}`);
+  setSymbol(syms.portFile, masked, name, comment);
+  mkdirSync(dirname(syms.portFile.path), { recursive: true });
+  await saveSymbolFile(syms.portFile);
+  return { scope: "port", path: syms.portFile.path };
+}
+
+export async function deletePortLabel(
+  syms: DebugSymbols,
+  portOrName: number | string,
+): Promise<{ scope: string; path: FilesystemPath } | null> {
+  const target =
+    typeof portOrName === "number" ? portOrName & 0xff : portOrName;
+  if (!removeSymbol(syms.portFile, target)) return null;
+  await saveSymbolFile(syms.portFile);
+  return { scope: "port", path: syms.portFile.path };
 }
 
 // Remove a label by address or name. If by address, the lookup
 // uses the live memory-map state to pick the right ROM (so
 // `unlabel 0x5550` while N88 is mapped removes from mkI-n88.sym,
-// not mkI-n80.sym). If by name, every ROM file is searched.
+// not mkI-n80.sym). RAM addresses fall through to the variant
+// RAM file. If by name, every loaded file is searched (per-ROM,
+// then RAM, then port).
 export async function deleteLabel(
   machine: PC88Machine,
   syms: DebugSymbols,
   addrOrName: u16 | string,
-): Promise<{ romId: ROMID; path: FilesystemPath } | null> {
+): Promise<{ scope: string; path: FilesystemPath } | null> {
   if (typeof addrOrName === "number") {
     const id = romIdAt(machine, addrOrName);
-    if (!id) return null;
-    const entry = syms.byRomId.get(id);
-    if (!entry) return null;
-    if (!removeSymbol(entry.file, addrOrName)) return null;
-    await saveSymbolFile(entry.file);
-    return { romId: id, path: entry.file.path };
+    if (id) {
+      const entry = syms.byRomId.get(id);
+      if (!entry) return null;
+      if (!removeSymbol(entry.file, addrOrName)) return null;
+      await saveSymbolFile(entry.file);
+      return { scope: id, path: entry.file.path };
+    }
+    if (removeSymbol(syms.ramFile, addrOrName)) {
+      await saveSymbolFile(syms.ramFile);
+      return { scope: "ram", path: syms.ramFile.path };
+    }
+    return null;
   }
-  // Name-based: search every loaded file.
   for (const entry of syms.byRomId.values()) {
     if (removeSymbol(entry.file, addrOrName)) {
       await saveSymbolFile(entry.file);
-      return { romId: entry.romId, path: entry.file.path };
+      return { scope: entry.romId, path: entry.file.path };
     }
+  }
+  if (removeSymbol(syms.ramFile, addrOrName)) {
+    await saveSymbolFile(syms.ramFile);
+    return { scope: "ram", path: syms.ramFile.path };
+  }
+  if (removeSymbol(syms.portFile, addrOrName)) {
+    await saveSymbolFile(syms.portFile);
+    return { scope: "port", path: syms.portFile.path };
   }
   return null;
 }
@@ -243,20 +345,19 @@ export async function deleteLabel(
 // list isn't padded with header-only blocks.
 export function renderLabelList(syms: DebugSymbols): string {
   const out: string[] = [];
-  for (const entry of syms.byRomId.values()) {
-    if (entry.file.byAddr.size === 0) continue;
-    out.push(`-- ${entry.romId} (${entry.file.byAddr.size} labels) --`);
-    const sorted = [...entry.file.byAddr.values()].sort(
-      (a, b) => a.addr - b.addr,
-    );
+  const renderFile = (label: string, file: SymbolFile, hexWidth: number) => {
+    if (file.byAddr.size === 0) return;
+    out.push(`-- ${label} (${file.byAddr.size} labels) --`);
+    const sorted = [...file.byAddr.values()].sort((a, b) => a.addr - b.addr);
     for (const sym of sorted) {
-      const a = "0x" + sym.addr.toString(16).padStart(4, "0");
+      const a = "0x" + sym.addr.toString(16).padStart(hexWidth, "0");
       const c = sym.comment ? `  ; ${sym.comment}` : "";
       out.push(`  ${a}  ${sym.name}${c}`);
     }
-  }
-  if (out.length === 0) {
-    return "(no labels loaded)";
-  }
+  };
+  for (const entry of syms.byRomId.values()) renderFile(entry.romId, entry.file, 4);
+  renderFile("ram", syms.ramFile, 4);
+  renderFile("port", syms.portFile, 2);
+  if (out.length === 0) return "(no labels loaded)";
   return out.join("\n");
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   emptySymbolFile,
+  fuzzySymbolTable,
   parseSymbolFile,
   removeSymbol,
   serialiseSymbolFile,
@@ -114,6 +115,30 @@ describe("symbol-file parser", () => {
     const t = symbolTable(f);
     expect(t.lookup(0x5550)).toBe("print_string");
     expect(t.lookup(0x5551)).toBeUndefined();
+  });
+
+  it("fuzzySymbolTable returns name+N for addresses within the window", () => {
+    // print_string lives at 0x5550; instructions 1, 5, and 16
+    // bytes in should all surface as "print_string+N". An
+    // instruction 17 bytes in is past the default 16-byte window,
+    // so it returns undefined.
+    const f = parseSymbolFile("0x5550 print_string\n", "test.sym");
+    const fuzzy = fuzzySymbolTable(symbolTable(f));
+    expect(fuzzy.lookup(0x5550)).toBe("print_string");
+    expect(fuzzy.lookup(0x5551)).toBe("print_string+1");
+    expect(fuzzy.lookup(0x5555)).toBe("print_string+5");
+    expect(fuzzy.lookup(0x5560)).toBe("print_string+16");
+    expect(fuzzy.lookup(0x5561)).toBeUndefined();
+  });
+
+  it("fuzzy resolution prefers exact match to a closer +N", () => {
+    // Two labels 4 bytes apart: 0x5554 should resolve to bar (exact),
+    // not foo+4. Without exact-first preference the +N variant could
+    // shadow the more-specific exact name.
+    const f = parseSymbolFile("0x5550 foo\n0x5554 bar\n", "test.sym");
+    const fuzzy = fuzzySymbolTable(symbolTable(f));
+    expect(fuzzy.lookup(0x5554)).toBe("bar");
+    expect(fuzzy.lookup(0x5555)).toBe("bar+1");
   });
 
   it("ignores malformed lines but preserves them as comments on rewrite", () => {

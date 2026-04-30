@@ -13,7 +13,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { u8 } from "../../src/flavours.js";
 import {
   addLabel,
+  addPortLabel,
   deleteLabel,
+  deletePortLabel,
   loadDebugSymbols,
   renderLabelList,
   romIdAt,
@@ -34,8 +36,8 @@ function syntheticRoms(): LoadedROMs {
 
 // Spin up an isolated cwd so test runs of `addLabel` write into a
 // throw-away `syms/` directory. Restores cwd in afterEach.
-let cwdBackup: string;
-let tmpDir: string;
+let cwdBackup = "";
+let tmpDir = "";
 beforeEach(() => {
   cwdBackup = process.cwd();
   tmpDir = mkdtempSync(join(tmpdir(), "pc88-syms-"));
@@ -93,7 +95,7 @@ describe("addLabel + deleteLabel + renderLabelList", () => {
     const { machine, roms } = makeMachine();
     const syms = await loadDebugSymbols(machine, roms);
     const result = await addLabel(machine, roms, syms, 0x1234, "init_entry");
-    expect(result.romId).toBe(MKI.roms.n80.id);
+    expect(result.scope).toBe(MKI.roms.n80.id);
 
     const text = readFileSync(result.path, "utf-8");
     // md5 header must mention the actual n80 ROM hash and the
@@ -113,7 +115,7 @@ describe("addLabel + deleteLabel + renderLabelList", () => {
     machine.memoryMap.setBasicMode("n88");
     const syms = await loadDebugSymbols(machine, roms);
     const r = await addLabel(machine, roms, syms, 0x1234, "n88_entry");
-    expect(r.romId).toBe(MKI.roms.n88.id);
+    expect(r.scope).toBe(MKI.roms.n88.id);
     expect(r.path).toContain("mkI-n88.sym");
   });
 
@@ -150,7 +152,7 @@ describe("addLabel + deleteLabel + renderLabelList", () => {
     // delete should find it in mkI-n88.sym.
     const r = await deleteLabel(machine, syms, "n88_only");
     expect(r).not.toBeNull();
-    expect(r!.romId).toBe(MKI.roms.n88.id);
+    expect(r!.scope).toBe(MKI.roms.n88.id);
   });
 
   it("renderLabelList groups by ROM with sorted addresses", async () => {
@@ -191,12 +193,13 @@ describe("addLabel + deleteLabel + renderLabelList", () => {
     expect(syms.resolver(0x1234)).toBe("n80_label");
   });
 
-  it("addLabel rejects RAM-region addresses (phase 3 will handle them)", async () => {
+  it("addLabel routes RAM-region addresses to the variant RAM file", async () => {
+    // Was: rejects with "isn't in a ROM region". Phase 3 makes it
+    // succeed and write to syms/<variant>.ram.sym instead.
     const { machine, roms } = makeMachine();
     const syms = await loadDebugSymbols(machine, roms);
-    await expect(
-      addLabel(machine, roms, syms, 0x8000, "in_ram"),
-    ).rejects.toThrow(/isn't in a ROM region/);
+    const r = await addLabel(machine, roms, syms, 0x8000, "in_ram");
+    expect(r.scope).toBe("ram");
   });
 });
 
@@ -217,11 +220,10 @@ describe("md5 mismatch warning", () => {
     // Capture stderr.
     const errs: string[] = [];
     const origWrite = process.stderr.write;
-    // @ts-expect-error — process.stderr.write has a complex overload
-    process.stderr.write = (s: string) => {
+    process.stderr.write = ((s: string) => {
       errs.push(typeof s === "string" ? s : String(s));
       return true;
-    };
+    }) as typeof process.stderr.write;
     try {
       const syms = await loadDebugSymbols(machine, roms);
       expect(
@@ -231,6 +233,70 @@ describe("md5 mismatch warning", () => {
       process.stderr.write = origWrite;
     }
     expect(errs.join("")).toMatch(/declares md5=.*but ROM is/);
+  });
+});
+
+describe("RAM + port + fuzzy resolution", () => {
+  function makeMachine(): { machine: PC88Machine; roms: LoadedROMs } {
+    const roms = syntheticRoms();
+    const machine = new PC88Machine(MKI, roms);
+    machine.reset();
+    return { machine, roms };
+  }
+
+  it("addLabel routes RAM-region addresses to the variant RAM file", async () => {
+    const { machine, roms } = makeMachine();
+    const syms = await loadDebugSymbols(machine, roms);
+    const r = await addLabel(machine, roms, syms, 0xed42, "ram_print_hook");
+    expect(r.scope).toBe("ram");
+    expect(r.path).toContain(".ram.sym");
+    expect(syms.ramFile.byAddr.get(0xed42)?.name).toBe("ram_print_hook");
+    // Resolver picks up the RAM label since it's not in any ROM region.
+    expect(syms.resolver(0xed42)).toBe("ram_print_hook");
+  });
+
+  it("addPortLabel writes to variant.port.sym", async () => {
+    const { machine, roms } = makeMachine();
+    const syms = await loadDebugSymbols(machine, roms);
+    const r = await addPortLabel(machine, syms, 0x71, "io_rom_bank", "secondary ROM bank");
+    expect(r.scope).toBe("port");
+    expect(r.path).toContain(".port.sym");
+    expect(syms.portFile.byAddr.get(0x71)?.name).toBe("io_rom_bank");
+    expect(syms.portResolver(0x71)).toBe("io_rom_bank");
+    expect(syms.portResolver(0x99)).toBeUndefined();
+  });
+
+  it("deletePortLabel removes the entry by number or name", async () => {
+    const { machine, roms } = makeMachine();
+    const syms = await loadDebugSymbols(machine, roms);
+    await addPortLabel(machine, syms, 0x71, "io_rom_bank");
+    await addPortLabel(machine, syms, 0xe6, "irq_mask");
+    expect((await deletePortLabel(syms, 0x71))?.scope).toBe("port");
+    expect((await deletePortLabel(syms, "irq_mask"))?.scope).toBe("port");
+    expect(syms.portFile.byAddr.size).toBe(0);
+    expect(await deletePortLabel(syms, "missing")).toBeNull();
+  });
+
+  it("resolver emits name+N for addresses within the fuzzy window", async () => {
+    const { machine, roms } = makeMachine();
+    const syms = await loadDebugSymbols(machine, roms);
+    await addLabel(machine, roms, syms, 0x5550, "print_string");
+    expect(syms.resolver(0x5550)).toBe("print_string");
+    expect(syms.resolver(0x5552)).toBe("print_string+2");
+    expect(syms.resolver(0x5560)).toBe("print_string+16"); // window edge
+    expect(syms.resolver(0x5561)).toBeUndefined();
+  });
+
+  it("renderLabelList includes ram and port sections when populated", async () => {
+    const { machine, roms } = makeMachine();
+    const syms = await loadDebugSymbols(machine, roms);
+    await addLabel(machine, roms, syms, 0xed42, "ram_hook");
+    await addPortLabel(machine, syms, 0x71, "io_rom_bank");
+    const out = renderLabelList(syms);
+    expect(out).toContain("-- ram (1 labels) --");
+    expect(out).toContain("ram_hook");
+    expect(out).toContain("-- port (1 labels) --");
+    expect(out).toContain("io_rom_bank");
   });
 });
 

@@ -8,8 +8,10 @@ import type { Bytes, Cycles, Operations, u8, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import {
   addLabel,
+  addPortLabel,
   type DebugSymbols,
   deleteLabel,
+  deletePortLabel,
   loadDebugSymbols,
   renderLabelList,
 } from "./debug-symbols.js";
@@ -63,12 +65,16 @@ Debugger commands (anything in <> takes a hex address; "0x" optional):
   screen                  render the CRTC+DMAC visible region
   dis [count]             disassemble the next [count] instructions
                           (default 8) starting at PC
-  label <addr> <name>     add or rename a symbol at <addr> (writes
-                          syms/<rom-id>.sym); rom is picked from
-                          the live memory map at <addr>
-  unlabel <addr-or-name>  remove a symbol; addr looks up via the
-                          live map, name searches every ROM file
-  labels                  list every loaded symbol grouped by ROM
+  label <addr> <name>     add or rename a symbol; ROM addresses go
+                          to syms/<rom-id>.sym (live-map dispatch),
+                          RAM addresses to syms/<variant>.ram.sym
+  unlabel <addr-or-name>  remove a symbol; addr → live-map dispatch,
+                          name → search ROM/RAM/port files
+  portlabel <num> <name>  add or rename a port symbol; writes
+                          syms/<variant>.port.sym; surfaces in
+                          IN A,(n) / OUT (n),A disassembly
+  unportlabel <n-or-name> remove a port symbol
+  labels                  list every loaded symbol grouped by scope
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
   pw, peekw <addr>        read 16-bit little-endian word at <addr>
   poke <addr> <value>     write a byte
@@ -178,7 +184,7 @@ function printPromptSummary(
   syms: DebugSymbols | null,
 ): void {
   const pc = machine.cpu.regs.PC;
-  const opts = syms ? { resolveLabel: syms.resolver } : {};
+  const opts = syms ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver } : {};
   const d = disassemble((a) => machine.memBus.read(a), pc, opts);
   const bytesStr = d.bytes
     .map((b) => byte(b))
@@ -201,7 +207,7 @@ function printDisassembly(
   count: Bytes,
 ): void {
   let pc = machine.cpu.regs.PC;
-  const opts = syms ? { resolveLabel: syms.resolver } : {};
+  const opts = syms ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver } : {};
   for (let i = 0; i < count; i++) {
     const labelHere = syms?.resolver(pc);
     if (labelHere) process.stdout.write(`${labelHere}:\n`);
@@ -513,6 +519,59 @@ export async function runDebug(
           } else {
             process.stdout.write(`  no symbol matches ${arg}\n`);
           }
+          break;
+        }
+
+        case "portlabel": {
+          // `portlabel <num> <name> [comment...]`. Lives in the
+          // variant-wide port file; appears in disassembly for
+          // `IN A,(n)` / `OUT (n),A` operands.
+          if (!syms) {
+            process.stdout.write(`  symbols not loaded\n`);
+            break;
+          }
+          const p = parseAddr(args[0]);
+          const name = args[1];
+          if (p === null || !name) {
+            process.stdout.write(
+              `  usage: portlabel <num> <name> [comment...]\n`,
+            );
+            break;
+          }
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+            process.stdout.write(
+              `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
+            );
+            break;
+          }
+          const comment = args.slice(2).join(" ").trim() || undefined;
+          const r = await addPortLabel(machine, syms, p, name, comment);
+          process.stdout.write(
+            `  port ${byte(p)} = ${name} → ${r.path}\n`,
+          );
+          break;
+        }
+
+        case "unportlabel": {
+          if (!syms) {
+            process.stdout.write(`  symbols not loaded\n`);
+            break;
+          }
+          const arg = args[0];
+          if (!arg) {
+            process.stdout.write(`  usage: unportlabel <num-or-name>\n`);
+            break;
+          }
+          const target = /^[A-Za-z_]/.test(arg)
+            ? arg
+            : (parseAddr(arg) ?? null);
+          if (target === null) {
+            process.stdout.write(`  bad port or name: ${arg}\n`);
+            break;
+          }
+          const r = await deletePortLabel(syms, target);
+          if (r) process.stdout.write(`  unlabelled in ${r.path}\n`);
+          else process.stdout.write(`  no port symbol matches ${arg}\n`);
           break;
         }
 

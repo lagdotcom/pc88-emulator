@@ -494,9 +494,22 @@ computed from the live ROM bytes, and a blank separator. After
 that, mutations leave the header alone and use the same
 verbatim-original-line preservation phase 1 ships.
 
-Phase 3 (separate `<variant>.ram.sym` and `<variant>.port.sym`
-namespace files merged via `mergeSymbolTables()`, plus name+offset
-fuzzy resolution within a small window) is the next follow-up.
+Phase 3 — RAM and port namespaces, fuzzy `name+N` — landed.
+RAM addresses (0x8000+, outside any mapped ROM) route to
+`syms/<variant>.ram.sym`; port labels live in
+`syms/<variant>.port.sym` and surface in `IN A,(n)` / `OUT (n),A`
+disassembly via a separate `resolvePort` callback. The variant
+slug comes from the lowercased model name with non-word
+characters stripped (mkI → `pc8801`, mkII SR → `pc8801mkiisr`).
+The address resolver wraps the merged table in
+`fuzzySymbolTable()` which falls back to the nearest preceding
+label within 16 bytes, emitted as `name+N` so instructions
+mid-function still surface the function name. New REPL commands
+`portlabel <num> <name>` / `unportlabel <n-or-name>` mirror the
+existing label commands but write the port file. `yarn dis`
+gains `--ram-syms=PATH` and `--port-syms=PATH` for explicit
+paths (no auto-detect — RAM and port files belong to a variant,
+not a ROM file).
 
 The debugger and the headless runner share a single VBL pump
 (`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so

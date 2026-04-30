@@ -94,6 +94,30 @@ export function mergeSymbolTables(...tables: SymbolTable[]): SymbolTable {
   };
 }
 
+// Wrap a SymbolTable so that addresses without an exact match fall
+// back to the nearest preceding label within `windowBytes`, emitted
+// as "name+N". Caps at 16 bytes by default — large enough to span
+// most function prologues without hijacking unrelated nearby
+// addresses. Used by the disassembler so e.g. an instruction in
+// the middle of `print_string` shows as `print_string+5` instead
+// of a bare hex literal.
+export function fuzzySymbolTable(
+  base: SymbolTable,
+  windowBytes = 16,
+): SymbolTable {
+  return {
+    lookup: (addr) => {
+      const exact = base.lookup(addr);
+      if (exact !== undefined) return exact;
+      for (let off = 1; off <= windowBytes; off++) {
+        const name = base.lookup((addr - off) & 0xffff);
+        if (name !== undefined) return `${name}+${off}`;
+      }
+      return undefined;
+    },
+  };
+}
+
 export function parseSymbolFile(text: string, path: string): SymbolFile {
   const entries: FileEntry[] = [];
   const byAddr = new Map<number, SymbolEntry>();

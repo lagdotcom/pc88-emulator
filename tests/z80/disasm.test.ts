@@ -148,3 +148,36 @@ describe("Z80 disassembler — symbol resolution", () => {
     expect(disassemble(r, 0).mnemonic).toBe("CALL 0x5678");
   });
 });
+
+describe("Z80 disassembler — port resolution", () => {
+  const resolvePort = (p: number): string | undefined =>
+    ({ 0x71: "io_rom_bank", 0x40: "sysctrl_status" })[p];
+
+  it("substitutes a port label for IN A,(n)", () => {
+    // IN A,(0x71) → DB 71
+    const r = readerFor([0xdb, 0x71]);
+    expect(disassemble(r, 0, { resolvePort }).mnemonic).toBe(
+      "IN A,(io_rom_bank)",
+    );
+  });
+
+  it("substitutes a port label for OUT (n),A", () => {
+    // OUT (0x40),A → D3 40
+    const r = readerFor([0xd3, 0x40]);
+    expect(disassemble(r, 0, { resolvePort }).mnemonic).toBe(
+      "OUT (sysctrl_status),A",
+    );
+  });
+
+  it("does not affect non-port immediate values", () => {
+    // LD A,0x71 — same byte, but it's an immediate not a port.
+    const r = readerFor([0x3e, 0x71]);
+    expect(disassemble(r, 0, { resolvePort }).mnemonic).toBe("LD A,0x71");
+  });
+
+  it("falls through to hex when the port has no label", () => {
+    // IN A,(0x99) — no label; emit hex literal as before.
+    const r = readerFor([0xdb, 0x99]);
+    expect(disassemble(r, 0, { resolvePort }).mnemonic).toBe("IN A,(0x99)");
+  });
+});

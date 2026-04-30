@@ -43,8 +43,16 @@ export type DisasmReader = (addr: u16) => u8;
 // returning undefined keeps the literal.
 export type ResolveLabel = (addr: u16) => string | undefined;
 
+// Optional port-resolution callback. Called for the immediate `n`
+// operand of `IN A,(n)` and `OUT (n),A` instructions. Other `n`
+// operands are kept as hex literals because they're values, not
+// port numbers. `IN r,(C)` / `OUT (C),r` are register-indirect and
+// don't have an immediate to resolve.
+export type ResolvePort = (port: u8) => string | undefined;
+
 export interface DisasmOptions {
   resolveLabel?: ResolveLabel;
+  resolvePort?: ResolvePort;
 }
 
 function hex2(b: number): string {
@@ -122,6 +130,7 @@ function fillTemplate(
   opts: {
     dispOverride?: number | undefined;
     resolve?: ResolveLabel | undefined;
+    resolvePort?: ResolvePort | undefined;
   } = {},
 ): string {
   let m = template;
@@ -144,9 +153,13 @@ function fillTemplate(
   }
   if (/\bn\b/.test(m)) {
     const v = operands[i++]!;
-    // 8-bit `n` is almost always an immediate value, not an
-    // address. Don't substitute labels.
-    m = m.replace(/\bn\b/, hex2(v));
+    // 8-bit `n` is usually an immediate value, but for IN/OUT the
+    // mnemonic is `IN A,(n)` / `OUT (n),A` and the byte is the
+    // port number — those get the port resolver instead. Detect
+    // by literal "(n)" parens in the template.
+    const isPort = /\(n\)/.test(m);
+    const portLabel = isPort ? opts.resolvePort?.(v) : undefined;
+    m = m.replace(/\bn\b/, portLabel ?? hex2(v));
   }
   // JR/DJNZ relative `d` — render as the absolute target so the
   // user doesn't have to do PC arithmetic in their head. Done last
@@ -187,6 +200,7 @@ export function disassemble(
   opts: DisasmOptions = {},
 ): DisasmResult {
   const resolve = opts.resolveLabel;
+  const resolvePort = opts.resolvePort;
   const b0 = read(pc & 0xffff) & 0xff;
   const bytes: u8[] = [b0];
 
@@ -203,7 +217,7 @@ export function disassemble(
       bytes.push(d, opc);
       const template =
         lookup(isDd ? ddCbOpCodes : fdCbOpCodes, opc) ?? `??  ${hex2(opc)}`;
-      const m = fillTemplate(template, pc, 4, [], { dispOverride: d, resolve });
+      const m = fillTemplate(template, pc, 4, [], { dispOverride: d, resolve, resolvePort });
       return { mnemonic: m, length: 4, bytes };
     }
 
@@ -224,7 +238,7 @@ export function disassemble(
     }
     const length = 2 + spec.total;
     return {
-      mnemonic: fillTemplate(template, pc, length, operands, { resolve }),
+      mnemonic: fillTemplate(template, pc, length, operands, { resolve, resolvePort }),
       length,
       bytes,
     };
@@ -252,7 +266,7 @@ export function disassemble(
     }
     const length = 2 + spec.total;
     return {
-      mnemonic: fillTemplate(template, pc, length, operands, { resolve }),
+      mnemonic: fillTemplate(template, pc, length, operands, { resolve, resolvePort }),
       length,
       bytes,
     };
@@ -272,7 +286,7 @@ export function disassemble(
   }
   const length = 1 + spec.total;
   return {
-    mnemonic: fillTemplate(template, pc, length, operands, { resolve }),
+    mnemonic: fillTemplate(template, pc, length, operands, { resolve, resolvePort }),
     length,
     bytes,
   };

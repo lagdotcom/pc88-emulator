@@ -33,7 +33,9 @@ import { parseArgs } from "node:util";
 
 import { disassemble } from "./chips/z80/disasm.js";
 import {
+  fuzzySymbolTable,
   loadSymbolFile,
+  mergeSymbolTables,
   type SymbolTable,
   symbolTable,
 } from "./chips/z80/symbols.js";
@@ -49,8 +51,12 @@ Options:
   --base=ADDR    address the file is "loaded at" (default 0). The
                  file is read at offset (addr - base); JR / JP / CALL
                  targets render in the same address space.
-  --syms=PATH    symbol-file path. Default: syms/<basename>.sym next
-                 to the working directory. Pass "off" to disable.
+  --syms=PATH    per-ROM symbol-file path. Default: syms/<basename>.sym
+                 next to the working directory. Pass "off" to disable.
+  --ram-syms=PATH    auxiliary RAM symbol file (no auto-detect; merged
+                     with --syms via name+offset fuzzy resolution)
+  --port-syms=PATH   auxiliary port symbol file; substitutes labels in
+                     IN A,(n) / OUT (n),A operands
   -h, --help     this help
 
 Positional args:
@@ -84,6 +90,19 @@ function defaultSymsPath(romPath: FilesystemPath): FilesystemPath {
   const ext = extname(romPath);
   const stem = basename(romPath, ext);
   return join("syms", `${stem}.sym`);
+}
+
+// Plain loader for auxiliary (RAM / port) symbol files — no md5
+// check (those files don't correspond to a single binary).
+async function loadAuxSymbols(
+  path: FilesystemPath,
+): Promise<SymbolTable | undefined> {
+  const file = await loadSymbolFile(path);
+  if (!file) {
+    throw new Error(`symbol file not found: ${path}`);
+  }
+  process.stderr.write(`; loaded ${file.byAddr.size} symbols from ${path}\n`);
+  return symbolTable(file);
 }
 
 async function loadSymbols(
@@ -124,6 +143,8 @@ async function main(): Promise<void> {
     options: {
       base: { type: "string" },
       syms: { type: "string" },
+      "ram-syms": { type: "string" },
+      "port-syms": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -159,7 +180,25 @@ async function main(): Promise<void> {
     return bytes[off]!;
   };
 
-  const symbols = await loadSymbols(values.syms, filePath, bytes);
+  const romSyms = await loadSymbols(values.syms, filePath, bytes);
+  // Optional auxiliary tables — explicit paths only (no auto-detect
+  // because RAM and port files belong to a *variant*, not a ROM file).
+  const ramSyms = values["ram-syms"]
+    ? await loadAuxSymbols(values["ram-syms"])
+    : undefined;
+  const portSyms = values["port-syms"]
+    ? await loadAuxSymbols(values["port-syms"])
+    : undefined;
+
+  // Merge: per-ROM first (most specific), then RAM. Wrap the lot in
+  // the fuzzy "name+N" resolver so mid-function addresses also
+  // surface. Port resolution is a separate channel because port
+  // numbers share the u8 namespace with byte values.
+  const tables: SymbolTable[] = [];
+  if (romSyms) tables.push(romSyms);
+  if (ramSyms) tables.push(ramSyms);
+  const merged: SymbolTable | undefined =
+    tables.length === 0 ? undefined : fuzzySymbolTable(mergeSymbolTables(...tables));
 
   process.stdout.write(
     `; ${filePath} (${bytes.length} bytes), base=0x${hex(base, 4)}, ` +
@@ -172,11 +211,14 @@ async function main(): Promise<void> {
 
     // Print a label header line when this address has its own name.
     // Mirrors typical assembler output and makes function entry
-    // points obvious in a long listing.
-    const labelHere = symbols?.lookup(pc);
+    // points obvious in a long listing. Header only fires on EXACT
+    // match — fuzzy `name+N` matches don't get their own line.
+    const labelHere = romSyms?.lookup(pc) ?? ramSyms?.lookup(pc);
     if (labelHere) process.stdout.write(`${labelHere}:\n`);
 
-    const opts = symbols ? { resolveLabel: symbols.lookup } : {};
+    const opts: Parameters<typeof disassemble>[2] = {};
+    if (merged) opts.resolveLabel = merged.lookup;
+    if (portSyms) opts.resolvePort = (port) => portSyms.lookup(port & 0xff);
     const d = disassemble(read, pc, opts);
     const bytesStr = d.bytes
       .map((b) => byte(b))
