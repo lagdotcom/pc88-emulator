@@ -467,11 +467,36 @@ immediates are left as hex (they're almost never addresses).
 Address-equal labels also print as a header line above the
 instruction.
 
-Phase 2 (debugger integration: `label` / `unlabel` / `labels`
-commands with eager-write persistence) and phase 3 (separate RAM
-and port namespace files, name+offset fuzzy resolution) are
-follow-ups — symbols module is shaped to compose those cleanly via
-`mergeSymbolTables()`.
+The debugger loads symbol files for every ROM the active variant
+declares (via `src/machines/debug-symbols.ts`) and threads a
+memory-map-aware resolver into `printPromptSummary` /
+`printDisassembly`. Resolution is dispatched by the live state of
+the memory map: `romIdAt(machine, addr)` consults `basicMode` /
+`eromEnabled` / `eromSlot` to pick the right per-ROM file. So the
+same address `0x5550` resolves to one name when N-BASIC is mapped
+and another when N88-BASIC is mapped — the symbols don't
+cross-pollute.
+
+Three debugger commands persist mutations eagerly:
+
+```
+label <addr> <name> [comment...]   add / rename a symbol; writes
+                                   the right syms/<rom-id>.sym
+unlabel <addr-or-name>             addr → live-map lookup;
+                                   name → search every loaded file
+labels                             list every loaded symbol grouped
+                                   by ROM id, sorted by address
+```
+
+The first mutation against a previously-empty symbol file seeds
+it with a `# Symbol file for <id>.` header line, an md5 header
+computed from the live ROM bytes, and a blank separator. After
+that, mutations leave the header alone and use the same
+verbatim-original-line preservation phase 1 ships.
+
+Phase 3 (separate `<variant>.ram.sym` and `<variant>.port.sym`
+namespace files merged via `mergeSymbolTables()`, plus name+offset
+fuzzy resolution within a small window) is the next follow-up.
 
 The debugger and the headless runner share a single VBL pump
 (`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so

@@ -331,7 +331,10 @@ async function main(): Promise<void> {
     // return — skipping the diagnostics dump that the headless run
     // emits, since the user's been watching state interactively
     // anyway.
-    await runDebug(machine, { initialBreakpoints: flags.initialBreakpoints });
+    await runDebug(machine, {
+      initialBreakpoints: flags.initialBreakpoints,
+      loadedRoms: loaded as LoadedRoms,
+    });
     return;
   }
 

@@ -4,7 +4,15 @@ import logLib from "log";
 
 import { disassemble } from "../chips/z80/disasm.js";
 import { byte, word } from "../tools.js";
+import {
+  addLabel,
+  deleteLabel,
+  loadDebugSymbols,
+  renderLabelList,
+  type DebugSymbols,
+} from "./debug-symbols.js";
 import { PC88Machine, makeVblState, pumpVbl, stepOneInstruction } from "./pc88.js";
+import type { LoadedRoms } from "./pc88-memory.js";
 
 const log = logLib.get("debug");
 
@@ -17,6 +25,10 @@ export interface DebugOptions {
   // Optional initial breakpoint addresses. CLI passes the parsed
   // `--break=ADDR` here.
   initialBreakpoints?: number[];
+  // Loaded ROM bytes — needed by the symbol layer to compute md5
+  // headers for newly-created files. Optional so synthetic-ROM
+  // tests can pass `undefined` and skip symbol loading entirely.
+  loadedRoms?: LoadedRoms;
 }
 
 interface DebugState {
@@ -44,6 +56,12 @@ Debugger commands (anything in <> takes a hex address; "0x" optional):
   screen                  render the CRTC+DMAC visible region
   dis [count]             disassemble the next [count] instructions
                           (default 8) starting at PC
+  label <addr> <name>     add or rename a symbol at <addr> (writes
+                          syms/<rom-id>.sym); rom is picked from
+                          the live memory map at <addr>
+  unlabel <addr-or-name>  remove a symbol; addr looks up via the
+                          live map, name searches every ROM file
+  labels                  list every loaded symbol grouped by ROM
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
   pw, peekw <addr>        read 16-bit little-endian word at <addr>
   poke <addr> <value>     write a byte
@@ -148,20 +166,36 @@ function printChips(machine: PC88Machine): void {
 // the next instruction occupies, and the disassembled mnemonic. The
 // disassembler reads through `machine.memBus` so bank-switched
 // pages are interpreted as the CPU sees them.
-function printPromptSummary(machine: PC88Machine): void {
+function printPromptSummary(
+  machine: PC88Machine,
+  syms: DebugSymbols | null,
+): void {
   const pc = machine.cpu.regs.PC;
-  const d = disassemble((a) => machine.memBus.read(a), pc);
+  const opts = syms ? { resolveLabel: syms.resolver } : {};
+  const d = disassemble((a) => machine.memBus.read(a), pc, opts);
   const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
+  // If this PC has its own label, print it as a header line so
+  // function entry points stand out — same convention `yarn dis`
+  // uses.
+  const labelHere = syms?.resolver(pc);
+  if (labelHere) process.stdout.write(`${labelHere}:\n`);
   process.stdout.write(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
 }
 
 // Multi-line disassembly listing for the `dis` command. Walks
 // forward using each instruction's reported length so the next
 // line shows the actual following instruction, not a fixed offset.
-function printDisassembly(machine: PC88Machine, count: number): void {
+function printDisassembly(
+  machine: PC88Machine,
+  syms: DebugSymbols | null,
+  count: number,
+): void {
   let pc = machine.cpu.regs.PC;
+  const opts = syms ? { resolveLabel: syms.resolver } : {};
   for (let i = 0; i < count; i++) {
-    const d = disassemble((a) => machine.memBus.read(a), pc);
+    const labelHere = syms?.resolver(pc);
+    if (labelHere) process.stdout.write(`${labelHere}:\n`);
+    const d = disassemble((a) => machine.memBus.read(a), pc, opts);
     const bytesStr = d.bytes.map((b) => byte(b)).join(" ").padEnd(11);
     process.stdout.write(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
     pc = (pc + d.length) & 0xffff;
@@ -267,14 +301,30 @@ export async function runDebug(
     stepOverTarget: null,
   };
 
-  process.stdout.write(
-    `pc88 debugger — paused at reset. Type "help" for commands.\n`,
-  );
+  // Symbol files are optional — synthetic-ROM tests don't pass
+  // `loadedRoms`. When present, the resolver feeds disassembly and
+  // the `label` / `unlabel` / `labels` commands; when absent,
+  // those commands print a friendly diagnostic instead of crashing.
+  const syms: DebugSymbols | null = opts.loadedRoms
+    ? await loadDebugSymbols(machine, opts.loadedRoms)
+    : null;
+  if (syms) {
+    let count = 0;
+    for (const e of syms.byRomId.values()) count += e.file.byAddr.size;
+    process.stdout.write(
+      `pc88 debugger — paused at reset. ${count} labels loaded across ${syms.byRomId.size} ROMs. ` +
+        `Type "help" for commands.\n`,
+    );
+  } else {
+    process.stdout.write(
+      `pc88 debugger — paused at reset. Type "help" for commands.\n`,
+    );
+  }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
 
   while (true) {
-    printPromptSummary(machine);
+    printPromptSummary(machine, syms);
     const raw = await rl.question("> ");
     const line = raw.trim();
     if (!line) continue;
@@ -384,9 +434,81 @@ export async function runDebug(
             256,
             Math.max(1, args[0] ? parseInt(args[0], 10) || 8 : 8),
           );
-          printDisassembly(machine, count);
+          printDisassembly(machine, syms, count);
           break;
         }
+
+        case "label": {
+          // `label <addr> <name> [comment...]`. The trailing args
+          // are joined into a single comment so users can write
+          // free-form descriptions without needing to quote.
+          if (!syms || !opts.loadedRoms) {
+            process.stdout.write(
+              `  symbols not loaded (need ROM bytes to compute md5 headers)\n`,
+            );
+            break;
+          }
+          const a = parseAddr(args[0]);
+          const name = args[1];
+          if (a === null || !name) {
+            process.stdout.write(`  usage: label <addr> <name> [comment...]\n`);
+            break;
+          }
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+            process.stdout.write(
+              `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
+            );
+            break;
+          }
+          const comment = args.slice(2).join(" ").trim() || undefined;
+          try {
+            const r = await addLabel(
+              machine,
+              opts.loadedRoms,
+              syms,
+              a,
+              name,
+              comment,
+            );
+            process.stdout.write(`  label ${word(a)} = ${name} → ${r.path}\n`);
+          } catch (e) {
+            process.stdout.write(`  label failed: ${(e as Error).message}\n`);
+          }
+          break;
+        }
+
+        case "unlabel": {
+          if (!syms) {
+            process.stdout.write(`  symbols not loaded\n`);
+            break;
+          }
+          const arg = args[0];
+          if (!arg) {
+            process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
+            break;
+          }
+          const target =
+            /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
+          if (target === null) {
+            process.stdout.write(`  bad address or name: ${arg}\n`);
+            break;
+          }
+          const r = await deleteLabel(machine, syms, target);
+          if (r) {
+            process.stdout.write(`  unlabelled in ${r.path}\n`);
+          } else {
+            process.stdout.write(`  no symbol matches ${arg}\n`);
+          }
+          break;
+        }
+
+        case "labels":
+          if (!syms) {
+            process.stdout.write(`  symbols not loaded\n`);
+            break;
+          }
+          process.stdout.write(renderLabelList(syms) + "\n");
+          break;
 
         case "p":
         case "peek": {
