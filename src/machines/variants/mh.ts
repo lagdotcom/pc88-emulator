@@ -31,8 +31,6 @@ export const MH: PC88Config = {
     hasExtendedRam: true,
     textVram: 4,
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
   },
   video: {
     modes: ["N", "V1", "V2"],

@@ -24,8 +24,6 @@ export const FA: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
     hasExtendedRam: false,
   },
   video: {

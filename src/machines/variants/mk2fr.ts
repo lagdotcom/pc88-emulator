@@ -24,8 +24,6 @@ export const MKII_FR: PC88Config = {
     // FR shares the SR architecture; SR onwards has the dedicated
     // 4 KB TVRAM chip rather than upper-RAM aliasing.
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
     hasExtendedRam: false,
   },
   video: {

@@ -64,7 +64,10 @@ export class PC88MemoryMap implements MemoryProvider {
 
   // 3 graphics planes, 16 KB each (0xC000–0xFFFF when VRAM window is
   // enabled and the plane is selected). Only one plane is mapped at a
-  // time on the main bus.
+  // time on the main bus. This 3 × 16 KB layout is hardware-universal
+  // across every PC-8801 variant we model — mkI through MA2 — so it's
+  // hardcoded here rather than driven from MemoryConfig. If a future
+  // variant ever differs, plumb the shape through the constructor.
   readonly gvram: [Uint8Array, Uint8Array, Uint8Array] = [
     new Uint8Array(0x4000),
     new Uint8Array(0x4000),

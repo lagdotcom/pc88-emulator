@@ -122,9 +122,11 @@ export interface MemoryConfig {
   // appear in mainRam. SR introduces a separate text VRAM chip so
   // that the CRTC reads it without contending for main-RAM access.
   readonly tvramSeparate: boolean;
-  readonly graphicsVramPlanes: number;
-  readonly graphicsVramPerPlane: Kilobytes;
   readonly hasExtendedRam: boolean;
+  // GVRAM is universally 3 × 16 KB across every PC-8801 variant we
+  // model (mkI through MA2). PC88MemoryMap allocates that shape
+  // unconditionally; if a future variant ever differs, add specific
+  // fields here.
 }
 
 export interface VideoConfig {
