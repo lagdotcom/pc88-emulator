@@ -47,6 +47,11 @@ export interface DebugSymbols {
   // memory-map state at lookup time picks the right ROM. Includes
   // fuzzy "name+N" fall-through within a 16-byte window.
   resolver: ResolveLabel;
+  // Exact-only variant of `resolver`: returns a label only when the
+  // address is exactly a labelled symbol, never a `+N` fall-through.
+  // Used for the per-line label headers in disassembly listings so
+  // every mid-function instruction doesn't get a `name+N:` header.
+  exactResolver: ResolveLabel;
   // Port-number resolver for IN A,(n) / OUT (n),A.
   portResolver: ResolvePort;
 }
@@ -195,10 +200,12 @@ export async function loadDebugSymbols(
     return undefined;
   };
 
+  const exactResolver: ResolveLabel = (addr) => exact(addr);
+
   const portResolver: ResolvePort = (port) =>
     portFile.byAddr.get(port & 0xff)?.name;
 
-  return { byRomId, ramFile, portFile, resolver, portResolver };
+  return { byRomId, ramFile, portFile, resolver, exactResolver, portResolver };
 }
 
 // Add or rename a label. Determines which ROM the address belongs

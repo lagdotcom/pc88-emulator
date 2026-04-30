@@ -192,8 +192,10 @@ function printPromptSummary(
     .padEnd(11);
   // If this PC has its own label, print it as a header line so
   // function entry points stand out — same convention `yarn dis`
-  // uses.
-  const labelHere = syms?.resolver(pc);
+  // uses. Exact match only — fuzzy `name+N` matches don't get
+  // their own header, otherwise every mid-function step would be
+  // prefixed with a noisy `name+2:` / `name+4:` / etc. line.
+  const labelHere = syms?.exactResolver(pc);
   if (labelHere) process.stdout.write(`${labelHere}:\n`);
   process.stdout.write(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
 }
@@ -209,7 +211,7 @@ function printDisassembly(
   let pc = machine.cpu.regs.PC;
   const opts = syms ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver } : {};
   for (let i = 0; i < count; i++) {
-    const labelHere = syms?.resolver(pc);
+    const labelHere = syms?.exactResolver(pc);
     if (labelHere) process.stdout.write(`${labelHere}:\n`);
     const d = disassemble((a) => machine.memBus.read(a), pc, opts);
     const bytesStr = d.bytes
