@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 
 export const MKI_DISC = makeROM(
   "mkI-disc",
@@ -37,12 +37,25 @@ export const MKI: PC88Config = {
   },
   sound: { psg: "beeper" },
   disk: { count: 0, model: "μPD765a", hasSubCpu: false },
-  // mkI factory defaults: 80 cols, mono bit set, 200 lines / V1
-  // mode, ROM boot, N-BASIC. Reproduces the typical "out of the
-  // box" configuration users would have seen in 1981.
+  // mkI factory defaults: 80 cols, mono, 200 lines / V1, ROM boot,
+  // N-BASIC. Reproduces the typical "out of the box" configuration
+  // users would have seen in 1981.
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      // bit 2 clear: serial carrier mode = "space"
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH | // bits 4-5 = 11
+      0xc0, // bits 6-7 model-specific (set high)
+    port31:
+      PORT31.LINES_200 |
+      // bit 1 clear: MMODE = ROM boot
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      // bit 4 clear: HCOLOR off (mono palette)
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific (set high)
   },
   roms: {
     disk: MKI_DISC,

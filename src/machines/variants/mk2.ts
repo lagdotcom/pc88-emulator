@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 
 const MKII_N80 = makeROM("mkII-n80", 32, "6f2cd5b887c80a18cf60e6758d195c46");
 const MKII_N88 = makeROM("mkII-n88", 32, "16b4f08338382e0fe21b6c244f1b9c96");
@@ -30,8 +30,18 @@ export const MKII: PC88Config = {
   // mode as the typical out-of-the-box configuration. Verify against
   // a real mkII service manual when one is to hand.
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
   },
   roms: {
     n80: MKII_N80,

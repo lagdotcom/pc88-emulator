@@ -2,7 +2,7 @@ import logLib from "log";
 
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
-import type { DIPSwitchState } from "../../machines/config.js";
+import { type DIPSwitchState, PORT30, PORT31 } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
 import { byte } from "../../tools.js";
 import type { Beeper } from "./beeper.js";
@@ -29,29 +29,12 @@ const log = logLib.get("sysctrl");
 // labels so the two codebases grep against each other cleanly. Keep
 // these as `const` objects rather than TS `enum`s so they compose
 // with the bitwise operators the chip handlers use.
-
-// Port 0x30 (DIP-switch 1 read; system control 1 write).
-// Active-high in this convention: a 1 bit means the named state.
-const PORT30 = {
-  COLS_80: 1 << 0, // 1 = 80 col, 0 = 40 col
-  MONO: 1 << 1, // 1 = monochrome, 0 = colour
-  CARRIER_MARK: 1 << 2, // 1 = mark, 0 = space
-  CASSETTE_MOTOR: 1 << 3, // 1 = on, 0 = off
-  USART_MASK: 0b0011_0000, // bits 4-5 — USART rate selector
-  USART_CMT600: 0x00,
-  USART_CMT1200: 0x10,
-  USART_RS232: 0x20, // bits 4-5 = 10 or 11
-} as const;
-
-// Port 0x31 (DIP-switch 2 read; system control 2 write).
-const PORT31 = {
-  LINES_200: 1 << 0, // 1 = 200 lines, 0 = 400 lines (V1/V2)
-  MMODE_RAM: 1 << 1, // 1 = RAM at 0x0000-0x7FFF, 0 = ROM
-  RMODE_N80: 1 << 2, // 1 = N-BASIC, 0 = N88-BASIC
-  GRPH: 1 << 3, // 1 = graphics enabled
-  HCOLOR: 1 << 4, // 1 = high-res colour
-  HIGHRES: 1 << 5, // 1 = high-res mode
-} as const;
+//
+// PORT30 and PORT31 are shared with `src/machines/config.ts` (the DIP
+// switch bit definitions) — same physical bits whether you read them
+// off the port (DIP state) or interpret a write to the system
+// register. Re-exported below from config.ts to keep variant files'
+// imports tidy without re-declaring the bit positions.
 
 // Port 0x32 (misc_ctrl: only on mkII onwards). Per MAME's
 // `misc_ctrl_w` comment block.

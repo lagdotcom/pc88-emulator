@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 import { MKI_DISC, MKI_KANJI1 } from "./mk1.js";
 
 // PC-8801 MH (1986): first machine in the FH/MH generation. Adds:
@@ -43,8 +43,18 @@ export const MH: PC88Config = {
   sound: { psg: "YM2608" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
   },
   roms: {
     disk: MKI_DISC,

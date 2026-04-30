@@ -47,6 +47,42 @@ export interface DIPSwitchState {
   readonly port31: u8;
 }
 
+// Symbolic constants for the DIP-switch (and matching system-register)
+// bit positions. Variant configs OR these together to construct the
+// `port30` / `port31` bytes; SystemController re-uses them when
+// interpreting port writes. Same physical bits in both directions —
+// e.g. setting PORT30.COLS_80 in the DIP byte makes port-0x30 reads
+// return that bit, which the BIOS interprets as "80-column mode".
+//
+// Active-high in this convention: a 1 bit means the named state. For
+// fields that don't have a clean "on/off" sense (USART rate, screen-
+// output mode), the constant is the bit *pattern* and a `_MASK`
+// companion gives the field's full bit window.
+//
+// All values match MAME's pc8801.cpp `port30_w` / `port31_w` block
+// comments and the NEC PC-8801 mkII Hardware Manual where it's been
+// transcribed.
+export const PORT30 = {
+  COLS_80: 1 << 0, // 1 = 80 col, 0 = 40 col
+  MONO: 1 << 1, // 1 = monochrome, 0 = colour
+  CARRIER_MARK: 1 << 2, // 1 = mark, 0 = space
+  CASSETTE_MOTOR: 1 << 3, // 1 = on, 0 = off
+  USART_MASK: 0b0011_0000, // bits 4-5 — USART rate selector
+  USART_CMT600: 0x00,
+  USART_CMT1200: 0x10,
+  USART_RS232: 0x20, // bit pattern 10 (also matches 11)
+  USART_RS232_HIGH: 0x30, // alternate RS-232C; same chip, different wiring
+} as const;
+
+export const PORT31 = {
+  LINES_200: 1 << 0, // 1 = 200 lines, 0 = 400 lines (V1/V2)
+  MMODE_RAM: 1 << 1, // 1 = RAM at 0x0000-0x7FFF, 0 = ROM
+  RMODE_N80: 1 << 2, // 1 = N-BASIC, 0 = N88-BASIC
+  GRPH: 1 << 3, // 1 = graphics enabled
+  HCOLOR: 1 << 4, // 1 = high-res colour
+  HIGHRES: 1 << 5, // 1 = high-res mode
+} as const;
+
 // Variant lineup we plan to support. Excludes:
 //   - mkII TR (no public ROM dump)
 //   - PC-88 VA / VA2 / VA3 (μPD9002 hybrid CPU; needs MAME's
