@@ -14,8 +14,8 @@ import { MR_KANJI2 } from "./mk2mr.js";
 // drive; users could attach external 5.25" or 8" drives via the
 // floppy I/F card).
 // TODO according to my ROM sets, it uses FR's DISK somehow
-export const FH_E0 = makeROM("mh-e0", 8, "c254685f00ca9c31b97203d6ef19f5e2");
-export const FH_E2 = makeROM("mh-e2", 8, "9d03154fd9abfc28c4e6d4dc705e6e23");
+export const FH_E0 = makeROM("fh-e0", 8, "c254685f00ca9c31b97203d6ef19f5e2");
+export const FH_E2 = makeROM("fh-e2", 8, "9d03154fd9abfc28c4e6d4dc705e6e23");
 
 export const FH: PC88Config = {
   model: "PC-8801 FH",

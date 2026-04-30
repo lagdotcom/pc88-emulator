@@ -13,6 +13,12 @@ import { MR_KANJI2 } from "./mk2mr.js";
 // ma_n88 + E0-E3 are MA-specific, kanji2 = mh_kanji2 (same image),
 // jisyo.rom is the new piece (256 KB).
 const MA_JISHO = makeROM("ma-jisho", 256, "cbcade0d0057bb9eee79a6b370b4dd3a");
+// MA's E2 ROM: MAME's pc8801ma ROM_START loads `ma_n88_2.rom` here
+// but no local dump is available yet. Mark as not-required and
+// placeholder-md5 so the loader skips silently until a real dump
+// arrives (memory map falls back to BASIC continuation at slot 2,
+// which may be wrong for software that depends on it).
+const MA_E2 = makeROM("ma-e2", 8, "todo-md5", false);
 
 export const MA: PC88Config = {
   model: "PC-8801 MA",
@@ -50,7 +56,7 @@ export const MA: PC88Config = {
     n88: FA_N88,
     e0: FH_E0,
     e1: MH_E1,
-    // TODO I don't seem to have an e2 ROM for this???
+    e2: MA_E2,
     e3: MH_E3,
     kanji1: MKI_KANJI1,
     kanji2: MR_KANJI2,
