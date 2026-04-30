@@ -20,15 +20,20 @@ const log = logLib.get("display-regs");
 //   0x52       W   bgpal_w        border + background colour
 //   0x53       W   layer_masking  per-layer show/hide
 //   0x54-0x5B  W   palram_w       palette RAM (8 colour entries)
-//   0x5C-0x5F  RW  vram_select    GVRAM plane select (port-low-2 = plane)
+//   0x5C-0x5F  RW  vram_select    GVRAM plane select / main-RAM toggle
 //
-// Plane selection at 0x5C-0x5F: real silicon uses the *port number*
-// low 2 bits as the plane index, not the data byte — writing
-// anything to 0x5C selects plane 0, 0x5D plane 1, 0x5E plane 2, and
-// 0x5F enters a special mode (vram_sel=3, which MAME's vram_select_r
-// returns as 0xf8 distinguishing it from the bit-set per-plane
-// readback). Our `PC88MemoryMap.setGVRAMPlane` only accepts 0..2,
-// so we ignore the 0x5F mode for now — no first-light path uses it.
+// VRAM-window selection at 0x5C-0x5F: real silicon uses the *port
+// number* low 2 bits as the selector, not the data byte. Writing to
+//
+//   0x5C  →  GVRAM plane 0 visible at 0xC000-0xEFFF
+//   0x5D  →  GVRAM plane 1
+//   0x5E  →  GVRAM plane 2
+//   0x5F  →  main RAM at 0xC000-0xEFFF (GVRAM hidden)
+//
+// MAME's `vram_select_r` returns a one-hot encoding bit for sel 0..2
+// and a flat `0xf8` for sel 3 — that's the diagnostic for "main RAM"
+// mode (no plane bit set). We mirror the readback on every port in
+// the group so misaligned reads still return something sensible.
 export interface DisplayRegistersSnapshot {
   bgColor: u8;
   showText: boolean;
@@ -106,34 +111,41 @@ export class DisplayRegisters {
       });
     }
 
-    // 0x5C-0x5F: GVRAM plane select. The port number's low 2 bits are
-    // the plane index; the data byte is ignored. Reads at 0x5C return
-    // a one-hot active-low encoding of the current plane (or 0 in mode
-    // 3) — see MAME `vram_select_r`.
+    // 0x5C-0x5F: GVRAM plane select / main-RAM toggle. The port
+    // number's low 2 bits are the selector; the data byte is ignored.
+    //
+    //   0x5C  →  GVRAM plane 0 mapped at 0xC000-0xEFFF
+    //   0x5D  →  GVRAM plane 1
+    //   0x5E  →  GVRAM plane 2
+    //   0x5F  →  main RAM at 0xC000-0xEFFF (GVRAM hidden)
+    //
+    // Reads at 0x5C return a one-hot encoding of the active selector
+    // (`0xf8 | (1 << sel)` for sel 0..2; `0xf8` for sel 3 since "main
+    // RAM" has no plane bit). Per MAME `vram_select_r`.
     for (let i = 0; i < 4; i++) {
       const port = 0x5c + i;
-      const planeIdx = i as 0 | 1 | 2 | 3;
+      const sel = i as 0 | 1 | 2 | 3;
       bus.register(port, {
         name: `display/vram-sel${i}`,
-        // MAME's vram_select_r is registered only on 0x5C, but reading
-        // any port in this group at the bus level is harmless; mirror
-        // the same readback shape on each so a misaligned read still
-        // returns something sensible.
+        // MAME's vram_select_r is registered only on 0x5C, but
+        // mirroring the readback on each port is harmless.
         read: () => (this.vramSel === 3 ? 0xf8 : 0xf8 | (1 << this.vramSel)),
-        write: (_p, _v) => this.selectPlane(planeIdx),
+        write: (_p, _v) => this.selectVRAM(sel),
       });
     }
   }
 
-  private selectPlane(idx: 0 | 1 | 2 | 3): void {
-    this.vramSel = idx;
-    // Mode 3 is "TVRAM bank as plane" / a special access mode no
-    // first-light boot path exercises. Log so we notice if anything
-    // does start using it; otherwise apply the plane to memory map.
-    if (idx === 3) {
-      log.info(`vram_sel=3 (special mode, not implemented)`);
+  private selectVRAM(sel: 0 | 1 | 2 | 3): void {
+    this.vramSel = sel;
+    if (sel === 3) {
+      // 0x5F: hide GVRAM, expose main RAM at 0xC000-0xEFFF. Plane
+      // index is meaningless in this mode but we leave the latched
+      // _gvramPlane alone so a follow-up 0x5C/D/E restores the same
+      // plane the BIOS was last working with.
+      this.memoryMap.setVRAMEnabled(false);
       return;
     }
-    this.memoryMap.setGVRAMPlane(idx);
+    this.memoryMap.setGVRAMPlane(sel);
+    this.memoryMap.setVRAMEnabled(true);
   }
 }
