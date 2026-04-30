@@ -403,6 +403,43 @@ values work too. CLI wins over env when both are set.
 `IOBus.tracer` (null in normal use, so the hot path stays
 branch-cheap).
 
+## Interactive debugger
+
+`yarn pc88 --debug` (or `-d`) drops into a REPL before any code
+runs. Commands: `step` / `next` (step over) / `continue` /
+`break <addr>` / `unbreak <addr>` / `breaks` / `regs` / `chips` /
+`peek <addr> [count]` / `peekw <addr>` / `poke <addr> <val>` /
+`quit` / `help`. Initial breakpoints can be installed up-front
+with `--break=ADDR` (repeatable). Addresses accept `0xff`, `ff`,
+or decimal; out-of-range values are masked to u16.
+
+The debugger and the headless runner share a single VBL pump
+(`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so
+timing-sensitive code sees IRQs at the same instruction
+boundaries regardless of which loop is driving. Step-over scans
+the byte at PC; if it's CALL / conditional-CALL / RST it sets a
+post-call target PC and runs until that's hit (capped at 5M ops
+to avoid runaway).
+
+## Snapshots / savestate foundation
+
+Every stateful chip exposes `snapshot()` returning a
+JSON-friendly state object plus `fromSnapshot(s)` to restore it.
+`PC88Machine.snapshot()` aggregates them all into a `MachineSnapshot`
+covering the CPU registers + flags + IFFs, the bank state of the
+memory map, and every I/O chip's persistent fields. Heavy buffers
+(TVRAM / mainRam / GVRAM planes) are intentionally NOT in the
+top-level snapshot — a savestate writer will copy those separately
+because they're base64-encoded for size reasons. The debugger's
+`chips` command renders state via `machine.snapshot()`, so the
+same plumbing that powers debug display is the foundation for
+disk savestates whenever they land.
+
+Snapshot tests in `tests/machines/pc88-snapshot.test.ts` lock
+in the round-trip property: any per-chip mutation captured via
+`snapshot()` is recoverable via `fromSnapshot()` and survives a
+JSON round-trip.
+
 ## DIP-switch defaults
 
 Per-variant DIP-switch state lives on `PC88Config.dipSwitches`

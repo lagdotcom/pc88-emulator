@@ -16,6 +16,16 @@ const log = logLib.get("dmac");
 // for the address (port 2*ch + 0) and count (port 2*ch + 1). Mode is
 // at 0x68. We track the byte-pair flip-flop because real BIOS resets
 // it between writes; without that, the second byte is misread.
+export interface DmacSnapshot {
+  addressLow: u8[]; // length 4
+  addressHigh: u8[];
+  countLow: u8[];
+  countHigh: u8[];
+  toggle: boolean;
+  mode: u8;
+  status: u8;
+}
+
 export class μPD8257 {
   private addressLow: u8[] = [0, 0, 0, 0];
   private addressHigh: u8[] = [0, 0, 0, 0];
@@ -36,6 +46,28 @@ export class μPD8257 {
   channelByteCount(ch: number): u16 {
     const raw = ((this.countHigh[ch]! << 8) | this.countLow[ch]!) & 0x3fff;
     return raw + 1;
+  }
+
+  snapshot(): DmacSnapshot {
+    return {
+      addressLow: this.addressLow.slice(),
+      addressHigh: this.addressHigh.slice(),
+      countLow: this.countLow.slice(),
+      countHigh: this.countHigh.slice(),
+      toggle: this.toggle,
+      mode: this.mode,
+      status: this.status,
+    };
+  }
+
+  fromSnapshot(s: DmacSnapshot): void {
+    this.addressLow = s.addressLow.slice();
+    this.addressHigh = s.addressHigh.slice();
+    this.countLow = s.countLow.slice();
+    this.countHigh = s.countHigh.slice();
+    this.toggle = s.toggle;
+    this.mode = s.mode;
+    this.status = s.status;
   }
 
   register(bus: IOBus): void {

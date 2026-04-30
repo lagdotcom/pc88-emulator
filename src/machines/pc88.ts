@@ -122,7 +122,55 @@ export class PC88Machine {
     this.memoryMap.setEromSlot(0);
     this.memoryMap.setVramEnabled(false);
   }
+
+  // Aggregate every chip's persistent state into a single
+  // JSON-friendly object. Used by the debugger today to render the
+  // `chips` command, and intended as the foundation for savestates
+  // — the same shape can be JSON.stringify'd to disk and restored
+  // through chip.fromSnapshot() calls. Heavy buffers (TVRAM /
+  // mainRam / GVRAM planes) are intentionally NOT included here;
+  // a savestate writer will copy those separately because they're
+  // base64-encoded for size reasons.
+  snapshot() {
+    return {
+      cpu: {
+        PC: this.cpu.regs.PC,
+        SP: this.cpu.regs.SP,
+        AF: this.cpu.regs.AF,
+        BC: this.cpu.regs.BC,
+        DE: this.cpu.regs.DE,
+        HL: this.cpu.regs.HL,
+        IX: this.cpu.regs.IX,
+        IY: this.cpu.regs.IY,
+        AF_: this.cpu.regs.AF_,
+        BC_: this.cpu.regs.BC_,
+        DE_: this.cpu.regs.DE_,
+        HL_: this.cpu.regs.HL_,
+        I: this.cpu.regs.I,
+        R: this.cpu.regs.R,
+        iff1: this.cpu.iff1,
+        iff2: this.cpu.iff2,
+        im: this.cpu.im,
+        halted: this.cpu.halted,
+        cycles: this.cpu.cycles,
+      },
+      memoryMap: {
+        basicMode: this.memoryMap.basicMode,
+        basicRomEnabled: this.memoryMap.basicRomEnabled,
+        eromSlot: this.memoryMap.eromSlot,
+        vramEnabled: this.memoryMap.vramEnabled,
+      },
+      sysctrl: this.sysctrl.snapshot(),
+      crtc: this.crtc.snapshot(),
+      dmac: this.dmac.snapshot(),
+      irq: this.irq.snapshot(),
+      misc: this.misc.snapshot(),
+      beeper: this.beeper.snapshot(),
+    };
+  }
 }
+
+export type MachineSnapshot = ReturnType<PC88Machine["snapshot"]>;
 
 export interface RunOptions {
   // Hard cap on instructions executed.
@@ -161,6 +209,64 @@ export interface RunResult {
   vblIrqsMasked: number;
 }
 
+// VBL pump state shared between the headless runner and the
+// interactive debugger. Initialise via makeVblState(); tick it once
+// per CPU instruction by calling pumpVbl() — that handles both the
+// "raise" and "lower" edges of the pulse and the IRQ injection.
+export interface VblState {
+  nextVblOn: number;
+  nextVblOff: number;
+  vblActive: boolean;
+  vblIrqsRaised: number;
+  vblIrqsMasked: number;
+}
+
+export function makeVblState(): VblState {
+  return {
+    nextVblOn: VBL_PERIOD_CYCLES - VBL_PULSE_CYCLES,
+    nextVblOff: VBL_PERIOD_CYCLES,
+    vblActive: false,
+    vblIrqsRaised: 0,
+    vblIrqsMasked: 0,
+  };
+}
+
+export function pumpVbl(machine: PC88Machine, state: VblState): void {
+  const { cpu, sysctrl, crtc, irq } = machine;
+  if (!state.vblActive && cpu.cycles >= state.nextVblOn) {
+    sysctrl.setVBlank(true);
+    crtc.setVBlank(true);
+    if (!irq.vblMasked()) {
+      cpu.requestIrq(VBL_IRQ_VECTOR);
+      state.vblIrqsRaised++;
+    } else {
+      state.vblIrqsMasked++;
+    }
+    state.vblActive = true;
+  }
+  if (state.vblActive && cpu.cycles >= state.nextVblOff) {
+    sysctrl.setVBlank(false);
+    crtc.setVBlank(false);
+    state.vblActive = false;
+    state.nextVblOn += VBL_PERIOD_CYCLES;
+    state.nextVblOff += VBL_PERIOD_CYCLES;
+  }
+}
+
+// Step the CPU through one *logical* instruction — i.e. consume any
+// pending prefix bytes (CB / DD / ED / FD / DDCB / FDCB) so each
+// caller-visible step lands on the next instruction boundary, not
+// in the middle of a multi-byte op. Mirrors the loop pattern the
+// SingleStepTests harness uses.
+export function stepOneInstruction(machine: PC88Machine): void {
+  const { cpu } = machine;
+  let safety = 8;
+  do {
+    cpu.runOneOp();
+    safety--;
+  } while (cpu.prefix !== undefined && safety > 0);
+}
+
 // Run the machine, pumping a 60 Hz VBL onto the CPU's interrupt line.
 // Stops on max-ops / max-cycles. If the CPU is HALTed and interrupts
 // are disabled the runner aborts (otherwise it would loop forever
@@ -171,37 +277,16 @@ export function runMachine(
   machine: PC88Machine,
   opts: RunOptions = {},
 ): RunResult {
-  const { cpu, sysctrl, crtc, irq } = machine;
+  const { cpu } = machine;
   const maxOps = opts.maxOps ?? 50_000_000;
   const maxCycles = opts.maxCycles ?? Number.POSITIVE_INFINITY;
 
   let ops = 0;
-  let nextVblOn = VBL_PERIOD_CYCLES - VBL_PULSE_CYCLES;
-  let nextVblOff = VBL_PERIOD_CYCLES;
-  let vblActive = false;
-  let vblIrqsRaised = 0;
-  let vblIrqsMasked = 0;
+  const vbl = makeVblState();
   let stopReason: RunResult["reason"] | null = null;
 
   while (ops < maxOps && cpu.cycles < maxCycles) {
-    if (!vblActive && cpu.cycles >= nextVblOn) {
-      sysctrl.setVBlank(true);
-      crtc.setVBlank(true);
-      if (!irq.vblMasked()) {
-        cpu.requestIrq(VBL_IRQ_VECTOR);
-        vblIrqsRaised++;
-      } else {
-        vblIrqsMasked++;
-      }
-      vblActive = true;
-    }
-    if (vblActive && cpu.cycles >= nextVblOff) {
-      sysctrl.setVBlank(false);
-      crtc.setVBlank(false);
-      vblActive = false;
-      nextVblOn += VBL_PERIOD_CYCLES;
-      nextVblOff += VBL_PERIOD_CYCLES;
-    }
+    pumpVbl(machine, vbl);
     if (cpu.halted && !cpu.iff1) {
       stopReason = "halted-no-irq";
       break;
@@ -235,7 +320,7 @@ export function runMachine(
     halted: cpu.halted,
     im: cpu.im,
     iReg: cpu.regs.I,
-    vblIrqsRaised,
-    vblIrqsMasked,
+    vblIrqsRaised: vbl.vblIrqsRaised,
+    vblIrqsMasked: vbl.vblIrqsMasked,
   };
 }

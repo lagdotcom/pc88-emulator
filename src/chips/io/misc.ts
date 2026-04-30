@@ -17,11 +17,25 @@ const log = logLib.get("misc-io");
 // noisy-once default) so they don't pollute the diagnostics when the
 // BIOS is doing its routine init pokes. If a future model needs real
 // behaviour here, register a more specific stub before this one.
+export interface MiscPortsSnapshot {
+  lastE7: u8 | null;
+  lastF8: u8 | null;
+}
+
 export class MiscPorts {
   // Track whether each port has been touched, for end-of-run
   // diagnostics ("did the BIOS write to F8, and with what?").
   lastE7: u8 | null = null;
   lastF8: u8 | null = null;
+
+  snapshot(): MiscPortsSnapshot {
+    return { lastE7: this.lastE7, lastF8: this.lastF8 };
+  }
+
+  fromSnapshot(s: MiscPortsSnapshot): void {
+    this.lastE7 = s.lastE7;
+    this.lastF8 = s.lastF8;
+  }
 
   register(bus: IOBus): void {
     bus.register(0xe7, {

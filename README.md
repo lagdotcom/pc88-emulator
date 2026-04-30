@@ -66,14 +66,22 @@ yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
-`--rom-dir`, `--max-ops`, `--trace-io[=raw]`, `--raw-tvram`,
-`--log-file[=PATH]`. Each flag also has an env-var fallback
-(`PC88_ROM_DIR`, `PC88_MAX_OPS`, `PC88_TRACE_IO`, `PC88_RAW_TVRAM`,
-`LOG_TO_FILE`) so values you'd want to keep across runs can live in
-a `.env`. The required mkI ROM files are `mkI-n80.rom`,
-`mkI-n88.rom`, `mkI-e0.rom` with md5s declared in
+`-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`,
+`--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
+`-d`/`--debug`, `--break=ADDR`. Each non-debug flag has an env-var
+fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`, `PC88_TRACE_IO`,
+`PC88_RAW_TVRAM`, `LOG_TO_FILE`) so values you'd want to keep
+across runs can live in a `.env`. The required mkI ROM files are
+`mkI-n80.rom`, `mkI-n88.rom`, `mkI-e0.rom` with md5s declared in
 `src/machines/variants/mk1.ts`. The `roms/` directory is gitignored
 so dumps stay local.
+
+`yarn pc88 --debug` drops into an interactive REPL before any
+instructions execute: step / next (step-over) / continue / break /
+peek / poke / regs / chips. Initial breakpoints can be set with
+`--break=ADDR` (repeatable). The "chips" command renders a
+machine-wide snapshot — the same plumbing intended to feed disk
+savestates when those land.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the

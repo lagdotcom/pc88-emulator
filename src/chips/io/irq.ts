@@ -23,6 +23,12 @@ const log = logLib.get("irq");
 // default to "all enabled" because that matches what the existing
 // pc88-irq test expects, and the BIOS overwrites the mask with its
 // own value within the first few hundred ops anyway.
+export interface IrqSnapshot {
+  mask: u8;
+  priority: u8;
+  programmed: boolean;
+}
+
 export class IrqController {
   mask: u8 = 0xff;
   priority: u8 = 0xff;
@@ -30,6 +36,20 @@ export class IrqController {
   // by diagnostics to distinguish "default still in force" from
   // "ROM said all sources enabled".
   programmed = false;
+
+  snapshot(): IrqSnapshot {
+    return {
+      mask: this.mask,
+      priority: this.priority,
+      programmed: this.programmed,
+    };
+  }
+
+  fromSnapshot(s: IrqSnapshot): void {
+    this.mask = s.mask;
+    this.priority = s.priority;
+    this.programmed = s.programmed;
+  }
 
   vblMasked(): boolean {
     return (this.mask & 0x01) === 0;

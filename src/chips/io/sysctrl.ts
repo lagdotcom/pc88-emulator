@@ -23,6 +23,16 @@ const log = logLib.get("sysctrl");
 //
 // Anything outside this set falls through to the IOBus default
 // (noisy-once 0xff / no-op).
+
+// Persistent state surfaced via snapshot() — JSON-friendly so
+// future savestate code can serialise the chip without touching
+// implementation details. Restore via fromSnapshot().
+export interface SystemControllerSnapshot {
+  dipSwitch1: u8;
+  dipSwitch2: u8;
+  systemStatus: u8;
+}
+
 export class SystemController {
   // Live DIP-switch bytes returned by reads at 0x30 / 0x31. Mutable
   // because the BIOS can OUT to these ports too — that overwrites
@@ -40,6 +50,20 @@ export class SystemController {
   setVBlank(active: boolean): void {
     if (active) this.systemStatus |= 0x20;
     else this.systemStatus &= ~0x20;
+  }
+
+  snapshot(): SystemControllerSnapshot {
+    return {
+      dipSwitch1: this.dipSwitch1,
+      dipSwitch2: this.dipSwitch2,
+      systemStatus: this.systemStatus,
+    };
+  }
+
+  fromSnapshot(s: SystemControllerSnapshot): void {
+    this.dipSwitch1 = s.dipSwitch1;
+    this.dipSwitch2 = s.dipSwitch2;
+    this.systemStatus = s.systemStatus;
   }
 
   constructor(

@@ -7,6 +7,7 @@ import emitter from "log/lib/emitter";
 import startNodeLogging from "log-node";
 
 import type { PC88Config } from "./machines/config.js";
+import { runDebug } from "./machines/debug.js";
 import {
   PC88Machine,
   runMachine,
@@ -40,6 +41,11 @@ interface CliFlags {
   // variant's factory default in place.
   basicOverride: "n80" | "n88" | null;
   help: boolean;
+  // Drop into the interactive debugger before running anything;
+  // user drives execution via step/continue/break/etc.
+  debug: boolean;
+  // Initial breakpoints to install when --debug is set.
+  initialBreakpoints: number[];
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -59,6 +65,8 @@ function parseCliFlags(argv: string[]): CliFlags {
       "trace-io": { type: "string" },
       "raw-tvram": { type: "boolean" },
       "log-file": { type: "string" },
+      debug: { type: "boolean", short: "d" },
+      break: { type: "string", multiple: true },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -102,6 +110,17 @@ function parseCliFlags(argv: string[]): CliFlags {
     basicOverride = basicArg;
   }
 
+  // Parse --break=ADDR (repeatable) into a list of u16 addresses.
+  // Accepts "0xff", "ff", or decimal. Fails fast on bad input so
+  // the user notices typos instead of silently dropping a breakpoint.
+  const initialBreakpoints: number[] = [];
+  const breakArgs = (values["break"] as string[] | undefined) ?? [];
+  for (const arg of breakArgs) {
+    const a = parseAddrFlag(arg);
+    if (a === null) throw new Error(`--break: bad address ${arg}`);
+    initialBreakpoints.push(a);
+  }
+
   return {
     romDir,
     maxOps,
@@ -110,8 +129,23 @@ function parseCliFlags(argv: string[]): CliFlags {
     logFile,
     basicOverride,
     help: !!values.help,
+    debug: !!values["debug"],
+    initialBreakpoints,
     config: config ?? MKI,
   };
+}
+
+function parseAddrFlag(raw: string): number | null {
+  const s = raw.trim().toLowerCase();
+  if (s.startsWith("0x")) {
+    const n = parseInt(s.slice(2), 16);
+    return Number.isFinite(n) ? n & 0xffff : null;
+  }
+  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
+    return parseInt(s, 16) & 0xffff;
+  }
+  const dec = parseInt(s, 10);
+  return Number.isFinite(dec) ? dec & 0xffff : null;
 }
 
 const HELP = `\
@@ -130,6 +164,11 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       screen (env: PC88_RAW_TVRAM=1)
   --log-file[=PATH]   tee log output to PATH (default: main.log)
                       (env: LOG_TO_FILE=anything → main.log)
+  -d, --debug         drop into the interactive debugger before
+                      running anything (step / next / continue /
+                      break / peek / poke / regs / chips / quit)
+  --break=ADDR        install an initial breakpoint at ADDR (hex
+                      or decimal); repeatable
   -h, --help          show this help
 `;
 
@@ -285,6 +324,15 @@ async function main(): Promise<void> {
       lastCount = 1;
     };
     process.on("exit", flush);
+  }
+
+  if (flags.debug) {
+    // Hands off control to the REPL. When the user quits we just
+    // return — skipping the diagnostics dump that the headless run
+    // emits, since the user's been watching state interactively
+    // anyway.
+    await runDebug(machine, { initialBreakpoints: flags.initialBreakpoints });
+    return;
   }
 
   const opts: RunOptions = { maxOps: flags.maxOps };

@@ -32,6 +32,20 @@ function paramCount(cmd: u8) {
   }
 }
 
+export interface CrtcSnapshot {
+  status: u8;
+  charsPerRow: number;
+  rowsPerScreen: number;
+  attrPairsPerRow: number;
+  charHeightLines: number;
+  displayOn: boolean;
+  // Pending-parameter state, so a savestate captured mid-command
+  // resumes correctly.
+  command: u8 | null;
+  paramsLeft: number;
+  params: number[];
+}
+
 export class μPD3301 {
   // Status bits surfaced by reads at 0x50 / 0x51. Bit 4 is VBL, set
   // by the runner's VBL pump. Other bits report "ready" (real chip
@@ -61,6 +75,32 @@ export class μPD3301 {
   setVBlank(active: boolean): void {
     if (active) this.status |= 0x10;
     else this.status &= ~0x10;
+  }
+
+  snapshot(): CrtcSnapshot {
+    return {
+      status: this.status,
+      charsPerRow: this.charsPerRow,
+      rowsPerScreen: this.rowsPerScreen,
+      attrPairsPerRow: this.attrPairsPerRow,
+      charHeightLines: this.charHeightLines,
+      displayOn: this.displayOn,
+      command: this.command,
+      paramsLeft: this.paramsLeft,
+      params: this.params.slice(),
+    };
+  }
+
+  fromSnapshot(s: CrtcSnapshot): void {
+    this.status = s.status;
+    this.charsPerRow = s.charsPerRow;
+    this.rowsPerScreen = s.rowsPerScreen;
+    this.attrPairsPerRow = s.attrPairsPerRow;
+    this.charHeightLines = s.charHeightLines;
+    this.displayOn = s.displayOn;
+    this.command = s.command;
+    this.paramsLeft = s.paramsLeft;
+    this.params = s.params.slice();
   }
 
   register(bus: IOBus): void {
