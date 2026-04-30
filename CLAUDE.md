@@ -30,7 +30,7 @@ sound) is mostly unbuilt.
 - `src/chips/` — silicon-level emulation. Each chip module knows about
   itself only; chips never reach across to each other. The Z80 lives
   under `chips/z80/`; the PC-88 I/O surface chips
-  (`sysctrl`/`ppi-8255`/`crtc-3301`/`dmac-8257`/`calendar`/`beeper`)
+  (`sysctrl`/`i8255`/`μPD3301`/`μPD8257`/`calendar`/`beeper`/`irq`/`misc`)
   live under `chips/io/`. The I/O chips are still mostly stubs at
   first-light scope — they accept the BASIC ROM init writes and
   return idle status reads, no rendering or audio yet.
@@ -42,7 +42,7 @@ sound) is mostly unbuilt.
   decoded on the low 8 bits of the port; chip stubs ignore the upper
   byte that `IN A,(n)` / `OUT (C),r` put on the bus.
 - `src/machines/` — wiring. `pc88.ts` exports `PC88Machine` (a real
-  factory consuming `PC88Config` + `LoadedRoms` and instantiating
+  factory consuming `PC88Config` + `LoadedROMs` and instantiating
   the Z80, memory map, IOBus, and chip stubs) plus `runMachine()`,
   which pumps a 60 Hz VBL onto `Z80.requestIrq()` while running.
   `pc88-memory.ts` is the bank-switched memory map (paged at 4 KB
@@ -110,7 +110,7 @@ records (`{type, tStates, process}`). `Z80.runOneOp()`:
 
 Seven opcode tables are declared and exported from
 `src/chips/z80/ops.ts`: `opCodes`, `edOpCodes`, `cbOpCodes`,
-`ddOpCodes`, `fdOpCodes`, `ddcbOpCodes`, `fdcbOpCodes`. All seven
+`ddOpCodes`, `fdOpCodes`, `ddCbOpCodes`, `fdCbOpCodes`. All seven
 are populated by factory functions in the same file.
 
 ### RegSet pattern
@@ -241,12 +241,13 @@ Measured rates (Windows V8):
 The vitest `test:zex` path captures the same output but only
 surfaces it on completion.
 
-The 3 Mops/s figure is the next obvious perf lever: the M-cycle list
-dispatcher allocates closure objects per cycle and walks an array per
-opcode. Switching to a giant per-opcode switch with inline code (the
-common pattern in fast Z80 emulators) typically gets to 50-100 Mops/s
-in V8. Worth doing before the user is sitting waiting for a real
-PC-88 BIOS to boot, but not while the focus is correctness.
+The dispatcher we landed (`ops2.ts`, six per-prefix giant
+switches) is now default and pulls ~36 Mops/s on Windows V8 vs
+~8 Mops/s on the legacy table path. The legacy `ops.ts` MCycle
+table is still in the tree as the A/B fallback
+(`useDispatchBase=false` or `DISPATCH=table` in tests) and as the
+home of the shared ALU helpers ops2 imports. Slated for retirement
+once a real BIOS boot validates ops2 end-to-end (see TODO).
 
 ## Test status (as of last commit)
 
@@ -278,6 +279,127 @@ run to a clean exit on the ops2 dispatcher (the default).
   X/Y source, BIT b,(HL) X/Y from W, SCF/CCF Q register), drop a one-line
   comment citing Sean Young or the test name.
 
+## Conventions to follow first time
+
+These are patterns the user has had to fix in repeated cleanup commits
+(`82b124e`, `c1d222a`, `0828a76`). Get them right up front to keep
+those commits from being necessary.
+
+### Branded types over raw `number` / `string`
+
+`src/flavours.ts` defines `Flavour<T, Tag>` aliases for everything
+non-trivial. **Use them on every signature, struct field, and return
+type** — don't leave a public API in raw `number`. The aliases land
+in three families:
+
+- **CPU widths**: `u8`, `u16`, `s8`, `s16`. A function reading from
+  the bus takes `u16`, returns `u8`. A signed displacement is `s8`.
+  The Z80 CPU + bus surface (`MemoryBus`, `IOBus`, `PC88MemoryMap`)
+  are now u8/u16-typed end to end; new code on those surfaces must
+  follow.
+- **Counts**: `Bytes`, `Kilobytes`, `Operations`, `Cycles`, `Chars`,
+  `Pixels`. A function counting instructions returns `Operations`,
+  not `number`. ROM size is `Kilobytes`. Disassembly length is
+  `Bytes`.
+- **Time / freq**: `Milliseconds`, `Seconds`, `Minutes`, `Hours`,
+  `Hertz`. `Date.now()` returns `Milliseconds`. Clock rates are
+  `Hertz`.
+- **Strings**: `FilesystemPath`, `WebURI`, `MD5Sum`, `ROMID`. Anywhere
+  the value is a *kind of string* — the path argument to `readFile`,
+  the URL fed to `fetch`, the md5 in a symbol-file header, the ROM
+  id from `ROMDescriptor` — it gets the appropriate alias rather
+  than `string`.
+
+The compiler accepts a raw number where a `Flavour<number, …>` is
+expected (the brand is structural-but-private), so adopting them is
+a no-cost refactor at the call site, but it documents intent and
+catches mistakes the moment a same-shape value is passed for the
+wrong purpose.
+
+### Use the makers in `flavour.makers.ts` for magic numbers
+
+Don't write `4_000_000` or `15 * 60_000` inline; import the matching
+maker from `src/flavour.makers.ts`:
+
+```ts
+import { kOps, mOps, bOps, mCycles, mHz, minutesToMs } from "./flavour.makers.js";
+
+const DEFAULT_MAX_OPS = kOps(15);          // not 15_000
+const Z80_HZ = mHz(4);                      // not 4_000_000
+const ZEX_TIMEOUT = minutesToMs(15);        // not 15 * 60_000
+const APPROX_TOTAL = bOps(5.8);             // not 5_800_000_000
+```
+
+This makes the units visible and keeps test/runner thresholds in a
+shape that reads as English. New units go in this file — don't
+inline a new conversion.
+
+### Acronym capitalisation
+
+PC-88 is full of three-letter acronyms. Use **all-caps for acronyms
+inside otherwise-camelCase identifiers**. The user has had to rename
+each of these at least once:
+
+- `PC88MemoryMap`, not `Pc88MemoryMap`
+- `LoadedROMs`, not `LoadedRoms`
+- `DIPSwitchState`, not `DipSwitchState`
+- `RAM64k`, not `Ram64K`
+- `TestIO`, not `TestIo`
+- `formatHMS`, not `formatHms`
+- `toASCIIDump` / `rawTVRAMDump`, not `toAsciiDump` / `rawTvramDump`
+- `ROMID`, `MD5Sum`, `WebURI`
+
+Same rule applies to chip filenames: silicon part numbers stay in
+their canonical form (`i8255.ts`, `μPD3301.ts`, `μPD8257.ts` — not
+`ppi-8255.ts` / `crtc-3301.ts` / `dmac-8257.ts`).
+
+When in doubt, search the codebase for an existing case-form before
+introducing a new one.
+
+### Don't duplicate small utilities
+
+Per-test file copies of the same RAM/IO stubs got extracted to
+`tests/tools.ts`. The hex/byte/word formatters live in `src/tools.ts`.
+**Before writing a 5-line helper, grep for its name** — chances are
+the same shape exists already:
+
+```
+src/tools.ts          hex(), byte(), word(), isDefined()
+src/flavour.makers.ts kOps/mOps/bOps/mCycles/mHz/minutesToMs
+tests/tools.ts        RAM64k, TestIO, filledROM, formatHMS
+```
+
+If you write a helper that two files need, hoist it to the matching
+shared module in the same commit; don't leave a duplicate as a TODO.
+The same applies to inline helpers like `formatDuration` /
+`formatHms` — those went straight to `tests/tools.ts` as `formatHMS`.
+
+### Import ordering (matches prettier-plugin-organize-imports)
+
+Imports are alphabetised within each group, with a blank line
+between `node:`-prefixed builtins, third-party, and relative imports.
+Within a `import { … }` block, named items are alphabetised too —
+`import { OpCode, opCodes } from "./ops.js"` (types and values
+co-mingled, just sorted). Don't fight the formatter.
+
+### Prettier escape hatch for table-style code
+
+Some files are intentionally dense (one row per opcode in
+`ops2.ts`'s giant switches, one line per accessor in
+`regs.ts`'s typed-array class, byte arrays commented as Z80
+assembly in `tests/programs/`). Prettier's default reformatting
+turns those into walls of wrapped statements. Use
+`// prettier-ignore` on the AST node prettier can target — the
+switch statement, the class declaration, the `const program = …`
+declaration. If you need to add an inner ignore, hoist the inner
+node into a named const so the ignore can attach.
+
+### No dead `eslint-disable` comments
+
+When you fix the underlying issue, remove the disable. Don't leave
+`// eslint-disable-next-line no-console` above a `console.error`
+call after we've decided the call is fine.
+
 ## PC88 machine wiring
 
 Memory layout (mkI). All 16 addresses dispatch through `PC88MemoryMap`
@@ -293,12 +415,17 @@ at 4 KB page granularity, which keeps `read(addr)` to one array load
 ```
 
 `PC88MemoryMap.setEromSlot(0|1|2|3)` selects which extension-ROM
-image is mapped at 0x6000-0x7FFF. If `roms[`e0..e3`]` is undefined
-for the active slot, the page falls through to the BASIC ROM
-continuation (BASIC ROM bytes 0x6000-0x7FFF). mkI ships only E0;
-mkII SR ships E0-E3. Earlier code hardcoded a boolean
-`setE0RomEnabled` which broke the moment N88-BASIC tried to
-swap to E1.
+image is mapped at 0x6000-0x7FFF, and `setEromEnabled(bool)`
+toggles whether the slot is exposed at all (separate flag because
+"slot 0" and "E-ROM disabled" are distinct hardware states — at
+reset E-ROM is disabled even though the slot index is 0). If the
+slot is enabled but `roms[`e0..e3`]` is undefined for the active
+slot, the page falls through to the BASIC ROM continuation
+(BASIC ROM bytes 0x6000-0x7FFF). mkI ships only E0; mkII SR ships
+E0-E3. Earlier code hardcoded a boolean `setE0RomEnabled` which
+broke the moment N88-BASIC tried to swap to E1; folding "slot
+selected" and "slot enabled" into a single integer also regressed
+N-BASIC boot, hence the separate flags.
 
 TVRAM is **not** bank-switchable on mkI: CPU reads/writes always hit
 the 4 KB TVRAM array. The CRTC controls whether the contents are
@@ -316,7 +443,7 @@ I/O port surface (the chip-stub-fed slots — anything else is a
 noisy-once 0xff read / no-op write):
 
 ```
-0x00-0x03    PPI #1                  (ppi-8255.ts: keyboard, idle)
+0x00-0x03    PPI #1                  (i8255.ts: keyboard, idle)
 0x09         hardware probe           (misc.ts: returns 0xff)
 0x10         calendar / cassette     (calendar.ts)
 0x30         system DIP 1 / ROM bank (sysctrl.ts)
@@ -326,7 +453,7 @@ noisy-once 0xff read / no-op write):
 0x50         CRTC data / status      (μPD3301.ts: param + status)
 0x51         CRTC command            (μPD3301.ts: cmd, status read)
 0x5C         GVRAM plane select      (sysctrl.ts)
-0x60-0x68    DMAC 8257               (dmac-8257.ts: param eater)
+0x60-0x68    DMAC 8257               (μPD8257.ts: param eater)
 0x71         secondary ROM bank      (sysctrl.ts: noop)
 0xE4         IRQ priority             (irq.ts: latched, no behaviour)
 0xE6         IRQ mask                 (irq.ts: bit 0 = VBL — runner honours)
@@ -382,21 +509,24 @@ Per-row stride = `charsPerRow + 40` bytes (cell run + pair area),
 confirmed by the DMAC channel-2 count BASIC programs (2400 / 20
 rows = 120 bytes/row).
 
-`PC88TextDisplay.toAsciiDump()` honours all three: it reads only
+`PC88TextDisplay.toASCIIDump()` honours all three: it reads only
 the bytes the DMAC is configured to fetch, and only the rows × cols
 the CRTC was told to show. **Anything else in TVRAM is BASIC scratch
 that never reaches the screen** — token tables (`auto`, `go to`,
 `list`, `run`), line buffers, attribute pair tables, etc.
-`rawTvramDump()` ignores the CRTC config and lays out the full 4 KB
+`rawTVRAMDump()` ignores the CRTC config and lays out the full 4 KB
 as 25 × 80 cells; useful for spotting what the BIOS is using
 TVRAM for outside the visible area.
 
 `yarn pc88` exposes its options as CLI flags (`yarn pc88 --help`
-for the full list): `--rom-dir=PATH`, `--max-ops=N`,
-`--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`. Every flag
-also has an env-var fallback with the same name uppercased and
-`PC88_`-prefixed (or `LOG_TO_FILE` for the file logger), so .env
-values work too. CLI wins over env when both are set.
+for the full list): `-m`/`--machine=NAME`,
+`--basic=n80|n88` (overrides DIP bit 2 for the run only),
+`--rom-dir=PATH`, `--max-ops=N`, `--trace-io[=raw]`, `--raw-tvram`,
+`--log-file[=PATH]`, `-d`/`--debug`, `--break=ADDR` (repeatable).
+Each non-debug flag has an env-var fallback with the same name
+uppercased and `PC88_`-prefixed (or `LOG_TO_FILE` for the file
+logger), so .env values work too. CLI wins over env when both are
+set.
 
 `--trace-io` (bare) dedupes consecutive identical IO lines; the
 `=raw` form prints them all. The tracer hooks in via
@@ -546,7 +676,7 @@ chip stubs. `SystemController` consumes the bytes via constructor
 injection and surfaces them at port reads. To add a new model,
 copy the shape from `MKI` in `src/machines/variants/mk1.ts` and
 adjust the bits per the model's hardware manual. Bit assignments
-are documented inline on `DipSwitchState` in `config.ts`.
+are documented inline on `DIPSwitchState` in `config.ts`.
 
 ## Branch / pushing
 

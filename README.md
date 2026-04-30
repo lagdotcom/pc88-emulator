@@ -41,15 +41,25 @@ Working enough for first-light boot:
   wires the Z80, memory map, and I/O port stubs from `PC88Config`.
 - Pre-resolved 256-slot `IOBus` (replaces `MemoryBus` for the I/O
   side; the per-port dispatch is one array load + one call).
-- `PC88MemoryMap` with bank-switched 4 KB pages: BASIC ROM,
-  E0 extension, TVRAM window at 0xF000, GVRAM plane window at 0xC000.
-- Chip stubs (`SystemController`, `Ppi8255`, `Crtc3301`, `Dmac8257`,
-  `Calendar`, `Beeper`) with just enough state-machine to keep the
-  BIOS init path advancing.
+- `PC88MemoryMap` with bank-switched 4 KB pages: BASIC ROM (n80/n88),
+  E-ROM slot 0..3 at 0x6000-0x7FFF, TVRAM permanently mapped at 0xF000,
+  GVRAM plane window at 0xC000.
+- Chip stubs (`SystemController`, `i8255` PPI, `μPD3301` CRTC,
+  `μPD8257` DMAC, `Calendar`, `Beeper`, IRQ-mask, misc-port) with just
+  enough state-machine to keep the BIOS init path advancing.
 - ROM loader with size + md5 validation against the descriptors in
   `src/machines/variants/`.
-- Display capture (`PC88TextDisplay.toAsciiDump()`) so headless tests
+- Display capture (`PC88TextDisplay.toASCIIDump()`) so headless tests
   can assert against TVRAM contents.
+- Interactive debugger (`yarn pc88 -d` / `--debug`): step / next /
+  continue / break / regs / chips / screen / dis / peek / poke /
+  label / portlabel / quit. Per-ROM, per-variant-RAM, and per-variant
+  port symbol files (`syms/<rom-id>.sym`, `syms/<variant>.ram.sym`,
+  `syms/<variant>.port.sym`) feed both the debugger disassembly and
+  the standalone `yarn dis` tool.
+- Standalone `yarn dis` CLI: disassembles any raw ROM file with
+  optional `--base=ADDR` mount point, `--syms`/`--ram-syms`/
+  `--port-syms` for label substitution, no machine emulation needed.
 
 ## Build / run / test
 
@@ -63,6 +73,7 @@ yarn test:zex            # zexdoc.com via vitest (slow; sets ZEX=1)
 yarn zex zexdoc          # standalone zex runner with streamed output
 yarn zex zexall          # same, all-behaviour variant
 yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
+yarn dis <file>          # disassemble any raw ROM file (no emulation)
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
@@ -77,11 +88,15 @@ across runs can live in a `.env`. The required mkI ROM files are
 so dumps stay local.
 
 `yarn pc88 --debug` drops into an interactive REPL before any
-instructions execute: step / next (step-over) / continue / break /
-peek / poke / regs / chips. Initial breakpoints can be set with
-`--break=ADDR` (repeatable). The "chips" command renders a
+instructions execute. Commands: step / next (step-over) /
+continue [cycles] / break / unbreak / breaks / regs / chips /
+screen (renders the live CRTC+DMAC visible region) / dis [count] /
+peek / peekw / poke / label / unlabel / labels / portlabel /
+unportlabel / quit / help. Initial breakpoints can be set with
+`--break=ADDR` (repeatable). The `chips` command renders a
 machine-wide snapshot — the same plumbing intended to feed disk
-savestates when those land.
+savestates when those land. Disassembly + label/portlabel commands
+read and write the per-ROM / RAM / port symbol files under `syms/`.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the
@@ -92,9 +107,10 @@ same pattern.
 ```
 src/
   chips/            silicon-level emulation, no cross-knowledge
-    z80/              CPU, register file, opcode tables
-    io/               sysctrl, ppi-8255, crtc-3301, dmac-8257,
-                      calendar, beeper (mostly stubs at first light)
+    z80/              CPU, register file, opcode tables, disasm,
+                      symbol-file parser
+    io/               sysctrl, i8255, μPD3301, μPD8257, calendar,
+                      beeper, irq, misc (mostly stubs at first light)
   core/             buses + shared infrastructure
     MemoryBus.ts      providers + fast-path single-array memory bus
     IOBus.ts          pre-resolved 256-slot port bus (PC-88 I/O)
@@ -104,6 +120,8 @@ src/
     pc88.ts           PC88Machine factory + runMachine() VBL pump
     pc88-memory.ts    PC88MemoryMap, paged ROM/RAM/VRAM banking
     pc88-display.ts   text-frame capture + ASCII dump
+    debug.ts          interactive REPL debugger
+    debug-symbols.ts  per-variant symbol-file routing
     rom-loader.ts     md5-validating fs ROM resolver
 tests/
   z80/              SingleStepTests harness
@@ -269,18 +287,23 @@ Roughly ordered by what's blocking what.
   PC-8001 BASIC Ver 1.2", "Copyright 1979 (C) by Microsoft", "Ok")
   is now visible in the TVRAM dump.
 - [x] **PC88TextDisplay reads the right layout**. The actual mkI
-  layout is 25 rows × 160 bytes, each cell 2 bytes (char at even
-  offset, attribute at odd). The earlier "stride 120, 80 chars
-  contiguous" theory was wrong — reading the attribute as a char
-  produced the "char NUL char NUL" pattern in the dump. Display
-  now reads chars at `row*160 + col*2` and attrs at `+col*2 + 1`.
+  layout is 20 rows × 120 bytes, where each row is an 80-byte
+  cell run (2-byte cells: char at even offset, attribute at odd)
+  followed by a 40-byte attribute-pair area (20 slots × 2 bytes
+  for skip-zone attribute changes within the row). 80-byte run
+  ÷ 2 = 40 visible cols, matching the `cols=40` reading off
+  sysctrl port 0x30. The DMAC channel-2 byte count (2400 = 20 ×
+  120) confirms the stride. The earlier "stride 120, 80 chars
+  contiguous" theory and the briefly-tried "stride 160 interleaved"
+  theory were both wrong.
 - [x] **Visible region driven by CRTC + DMAC**. The on-screen image
   is whatever the μPD3301 (rows × cols, programmed via SET MODE
-  cmd 0x80–0x9F) tells it to lay out from the address the μPD8257
-  channel 2 streams in. `toAsciiDump()` now respects both, so it
+  cmd `0x00`-`0x1F` — top 3 bits dispatch the command, low 5 bits
+  are flags) tells it to lay out from the address the μPD8257
+  channel 2 streams in. `toASCIIDump()` now respects both, so it
   shows only the visible region — not BASIC's TVRAM scratch
   (token tables, line buffers, attribute pair tables). The full
-  4 KB is still dumped via `rawTvramDump()` for diagnostics.
+  4 KB is still dumped via `rawTVRAMDump()` for diagnostics.
 - [x] **Stub IRQ mask register (0xE6)**. VBL pulses now respect the
   per-bit mask — when the BIOS clears bit 0 during init, the runner
   flips the status bit but doesn't assert /INT.
