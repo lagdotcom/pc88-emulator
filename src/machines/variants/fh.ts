@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 import { MH_E1, MH_E3, MH_N80, MH_N88 } from "./mh.js";
 import { MKI_KANJI1 } from "./mk1.js";
 import { FR_DISK } from "./mk2fr.js";
@@ -26,22 +26,28 @@ export const FH: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
-    hasExtendedRam: false,
   },
   video: {
     modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2608" },
   // No built-in floppy drive on FH; sub-CPU is still present in
   // case external drives are connected via the FDD interface card.
   disk: { count: 0, model: "μPD765a", hasSubCpu: true },
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
   },
   roms: {
     disk: FR_DISK,

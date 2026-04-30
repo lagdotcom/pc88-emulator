@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 import { MKI_DISK, MKI_KANJI1 } from "./mk1.js";
 
 export const SR_N80 = makeROM("sr-n80", 32, "2ff07b8769367321128e03924af668a0");
@@ -27,9 +27,6 @@ export const MKII_SR: PC88Config = {
     mainRam: 64,
     textVram: 4,
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
-    hasExtendedRam: false,
   },
   video: {
     // SR introduces V2 mode (640×200 8-colour analogue) alongside
@@ -38,7 +35,6 @@ export const MKII_SR: PC88Config = {
     // First model with the analogue palette + the YM2203 sound
     // chip — pre-SR is digital + beeper.
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2203" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
@@ -46,8 +42,18 @@ export const MKII_SR: PC88Config = {
   // port31 indicates V2 mode availability. For first-light we mirror
   // the mkI defaults — refine when an SR-specific boot is wired up.
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
   },
   roms: {
     disk: MKI_DISK,

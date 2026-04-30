@@ -47,6 +47,42 @@ export interface DIPSwitchState {
   readonly port31: u8;
 }
 
+// Symbolic constants for the DIP-switch (and matching system-register)
+// bit positions. Variant configs OR these together to construct the
+// `port30` / `port31` bytes; SystemController re-uses them when
+// interpreting port writes. Same physical bits in both directions —
+// e.g. setting PORT30.COLS_80 in the DIP byte makes port-0x30 reads
+// return that bit, which the BIOS interprets as "80-column mode".
+//
+// Active-high in this convention: a 1 bit means the named state. For
+// fields that don't have a clean "on/off" sense (USART rate, screen-
+// output mode), the constant is the bit *pattern* and a `_MASK`
+// companion gives the field's full bit window.
+//
+// All values match MAME's pc8801.cpp `port30_w` / `port31_w` block
+// comments and the NEC PC-8801 mkII Hardware Manual where it's been
+// transcribed.
+export const PORT30 = {
+  COLS_80: 1 << 0, // 1 = 80 col, 0 = 40 col
+  MONO: 1 << 1, // 1 = monochrome, 0 = colour
+  CARRIER_MARK: 1 << 2, // 1 = mark, 0 = space
+  CASSETTE_MOTOR: 1 << 3, // 1 = on, 0 = off
+  USART_MASK: 0b0011_0000, // bits 4-5 — USART rate selector
+  USART_CMT600: 0x00,
+  USART_CMT1200: 0x10,
+  USART_RS232: 0x20, // bit pattern 10 (also matches 11)
+  USART_RS232_HIGH: 0x30, // alternate RS-232C; same chip, different wiring
+} as const;
+
+export const PORT31 = {
+  LINES_200: 1 << 0, // 1 = 200 lines, 0 = 400 lines (V1/V2)
+  MMODE_RAM: 1 << 1, // 1 = RAM at 0x0000-0x7FFF, 0 = ROM
+  RMODE_N80: 1 << 2, // 1 = N-BASIC, 0 = N88-BASIC
+  GRPH: 1 << 3, // 1 = graphics enabled
+  HCOLOR: 1 << 4, // 1 = high-res colour
+  HIGHRES: 1 << 5, // 1 = high-res mode
+} as const;
+
 // Variant lineup we plan to support. Excludes:
 //   - mkII TR (no public ROM dump)
 //   - PC-88 VA / VA2 / VA3 (μPD9002 hybrid CPU; needs MAME's
@@ -76,6 +112,11 @@ export interface CPUConfig {
 }
 
 export interface MemoryConfig {
+  // Total addressable RAM in KB. 64 on mkI / mkII / SR / FR / FA / FE
+  // / FE2 / FH; 192 on MR / MH / MA / MA2 (the latter ship with
+  // 64 KB main + 128 KB extended RAM bank-switched via ports
+  // 0xE2/0xE3). The "has extended RAM" boolean is derivable from
+  // `mainRam > 64`, so it's not a separate field.
   readonly mainRam: Kilobytes;
   readonly textVram: Kilobytes;
   // True iff TVRAM is a physically separate 4 KB chip (SR onwards).
@@ -85,15 +126,21 @@ export interface MemoryConfig {
   // appear in mainRam. SR introduces a separate text VRAM chip so
   // that the CRTC reads it without contending for main-RAM access.
   readonly tvramSeparate: boolean;
-  readonly graphicsVramPlanes: number;
-  readonly graphicsVramPerPlane: Kilobytes;
-  readonly hasExtendedRam: boolean;
+  // GVRAM is universally 3 × 16 KB across every PC-8801 variant we
+  // model (mkI through MA2). PC88MemoryMap allocates that shape
+  // unconditionally; if a future variant ever differs, add specific
+  // fields here.
 }
 
 export interface VideoConfig {
   readonly modes: VideoMode[];
+  // True from mkII SR onwards; mkI and mkII hardwire the 8-colour
+  // digital palette. Selectable at runtime via port 0x32 bit 5
+  // (PMODE_ANALOG) on the variants that have it.
   readonly hasAnaloguePalette: boolean;
-  readonly hasKanjiRom: boolean;
+  // (Whether a kanji ROM is fitted is derivable from
+  //  `roms.kanji1 !== undefined` — every variant we model has one,
+  //  so it isn't a separate field.)
 }
 
 export type VideoMode = "N" | "V1" | "V2" | "V3";

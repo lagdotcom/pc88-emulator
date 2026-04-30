@@ -1,4 +1,4 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 import { MKI_KANJI1 } from "./mk1.js";
 import { FR_E1, FR_E3 } from "./mk2fr.js";
 import { SR_E0 } from "./mk2sr.js";
@@ -21,24 +21,28 @@ export const MKII_MR: PC88Config = {
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 192,
-    // MR/MH/MA/MA2 ship with 64 KB main + 128 KB extended
-    // RAM (port 0xE2/0xE3 bank-switch). Total addressable 192 KB.
-    hasExtendedRam: true,
     textVram: 4,
     tvramSeparate: true,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
   },
   video: {
     modes: ["N", "V1", "V2"],
     hasAnaloguePalette: true,
-    hasKanjiRom: true,
   },
   sound: { psg: "YM2203" },
   disk: { count: 2, model: "μPD765a", hasSubCpu: true },
   dipSwitches: {
-    port30: 0b1111_1011,
-    port31: 0b1110_1101,
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
   },
   roms: {
     disk: MR_DISK,
