@@ -239,11 +239,32 @@ Roughly ordered by what's blocking what.
   tighten the assertion to require the N88 banner once sub-CPU
   emulation lands). ROMs go in `roms/` (gitignored) — see
   `src/machines/variants/mk1.ts` for filenames + md5s.
-- [ ] **Sub-CPU PPI handshake** for N88-BASIC. N88 init programs
-  the CRTC + DMAC, sets IRQ mask = 0x00 (everything masked), then
-  busy-waits for the sub-CPU on PPI ports 0x00-0x03. Without
-  replies it never reaches the banner. N-BASIC doesn't need this
-  because its boot path doesn't depend on the sub-CPU.
+- [ ] **N88-BASIC banner reaches TVRAM**. Boot now runs to the
+  banner-print code path. Diagnosis via `yarn dis` against the
+  N88 ROM:
+  - The N88 banner / "Bytes free" / "Copyright" strings live at
+    ROM 0x79B2-0x79FA. Print code is at 0x7968 (`LD HL,0x79BE` /
+    `CALL 0x5550`).
+  - The print routine at 0x5550 touches port 0x71 (secondary ROM
+    bank — our handler is a logging no-op, may need real
+    behaviour) and dispatches char output via `RST 18h`.
+  - `RST 18h` jumps through `CALL (0xED42)` (a RAM-resident hook
+    the BIOS installs during init) and `JP 0x5925` (ROM print
+    handler). 0x5925 in turn checks `(0xEC88)` and may take an
+    alternate "console redirected" path at 0x4B52.
+  - Net: the print path depends on multiple RAM hooks that the
+    BIOS installs early, plus possibly the sub-CPU PPI for actual
+    cell delivery. Diagnosing further means tracing what the BIOS
+    writes to those RAM cells (0xEC88 / 0xED42 / 0xED99 / 0xE64C)
+    and at what point 0x5925 takes the "actual print to TVRAM"
+    branch (jump-target 0x59A5) vs the alternate.
+  Plumbing for switching BASICs is solid; what remains is the
+  sub-CPU + RAM-hook init.
+
+- [x] **`yarn dis` standalone disassembler**. Reads any raw ROM
+  file, optionally with a `--base=ADDR` mount point so JR/CALL
+  targets render in the right address space. Used to drive the
+  N88 diagnosis above.
 - [x] **mkI BASIC banner reaches TVRAM**. The N-BASIC banner ("NEC
   PC-8001 BASIC Ver 1.2", "Copyright 1979 (C) by Microsoft", "Ok")
   is now visible in the TVRAM dump.

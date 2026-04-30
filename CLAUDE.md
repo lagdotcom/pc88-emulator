@@ -425,6 +425,14 @@ with the bytes read at PC. New opcodes added to `ops.ts` get
 disassembly for free as long as the mnemonic uses those
 placeholders. Tests in `tests/z80/disasm.test.ts`.
 
+`yarn dis <file> [<addr> [<count>]]` is a standalone CLI
+disassembler that operates on a raw binary file — no variant /
+machine emulation needed. `--base=ADDR` sets the address the file
+is "loaded at" so JR / JP / CALL targets render in the right
+address space (e.g. `--base=0x6000 e0.rom` for an E-ROM image).
+Uses the same disassemble() that powers the debugger; same output
+format. Useful for poking at a ROM dump without booting anything.
+
 The debugger and the headless runner share a single VBL pump
 (`makeVblState()` + `pumpVbl(machine, state)` in `pc88.ts`) so
 timing-sensitive code sees IRQs at the same instruction
