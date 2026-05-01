@@ -96,6 +96,11 @@ export class DisasmPanel {
     const bps = new Set(breakpoints);
     const out: string[] = [];
     for (const ln of lines) {
+      // Per-row label header: only emitted on exact matches, no
+      // fuzzy `name+N` fall-through (that belongs in operand
+      // resolution, not row headers — otherwise every mid-function
+      // instruction would print its own header).
+      if (ln.label !== undefined) out.push(`   ${ln.label}:`);
       // Two-character marker column: a red bullet for an active
       // breakpoint, then a play-head arrow for the current PC. Both
       // independent so a breakpoint at PC shows both glyphs.

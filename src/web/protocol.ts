@@ -61,6 +61,11 @@ export interface DisasmLine {
   pc: u16;
   bytes: u8[];
   mnemonic: string;
+  // Exact-only label for this PC, when one is defined. The CLI
+  // debugger prints `<label>:` above the row; the web panel does
+  // the same. Only emitted on exact matches — fuzzy `name+N`
+  // fall-through belongs to operand resolution, not row headers.
+  label?: string;
 }
 
 // Watch entries shipped on every tick so the Watches panel can

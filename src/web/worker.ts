@@ -131,7 +131,12 @@ function disasmAround(
   let addr: u16 = pc & 0xffff;
   for (let i = 0; i < lines; i++) {
     const r = disassemble(read, addr, opts);
-    out.push({ pc: addr, bytes: r.bytes, mnemonic: r.mnemonic });
+    const label = syms?.exactResolver(addr);
+    out.push(
+      label !== undefined
+        ? { pc: addr, bytes: r.bytes, mnemonic: r.mnemonic, label }
+        : { pc: addr, bytes: r.bytes, mnemonic: r.mnemonic },
+    );
     addr = (addr + r.length) & 0xffff;
   }
   return out;
