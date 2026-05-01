@@ -17,6 +17,66 @@ import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
 import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { loadRoms } from "../../src/machines/rom-loader.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
+import { PC88_SHIFT_ROW_COL, pc88KeyFor } from "../tools.js";
+
+// Run the machine until row `row` has been read `count` times. The
+// BIOS debounces: a single scan with a key held isn't always
+// registered as a press; tests need the key visible across two or
+// more consecutive scans of that row. `count = 2` is enough for the
+// mkI N-BASIC ROM. Times out after `maxOps`.
+function runUntilRowReadCount(
+  machine: PC88Machine,
+  row: number,
+  count: number,
+  maxOps: number,
+): void {
+  let seen = 0;
+  const prev = machine.ioBus.tracer;
+  machine.ioBus.tracer = (kind, port, value) => {
+    if (kind === "r" && (port & 0xff) === row) seen++;
+    prev?.(kind, port, value);
+  };
+  try {
+    runMachine(machine, {
+      maxOps,
+      onProgress: () => (seen >= count ? true : undefined),
+    });
+  } finally {
+    machine.ioBus.tracer = prev;
+  }
+  if (seen < count) {
+    throw new Error(
+      `runUntilRowReadCount: row 0x${row.toString(16)} read ${seen}/${count} within ${maxOps} ops`,
+    );
+  }
+}
+
+// Headless type-a-character: press, wait for the BIOS scan to visit
+// the pressed row twice (debounce window), release, wait twice more
+// (so the key is observed as released, not still held). For shifted
+// chars, hold SHIFT around the inner press so both bits are present
+// in the same scan window.
+function typeChar(machine: PC88Machine, ch: string): void {
+  const cap = kOps(40);
+  const debounce = 2;
+  const k = pc88KeyFor(ch);
+  if (k.shift) {
+    machine.keyboard.pressKey(PC88_SHIFT_ROW_COL[0], PC88_SHIFT_ROW_COL[1]);
+    runUntilRowReadCount(machine, PC88_SHIFT_ROW_COL[0], debounce, cap);
+  }
+  machine.keyboard.pressKey(k.row, k.col);
+  runUntilRowReadCount(machine, k.row, debounce, cap);
+  machine.keyboard.releaseKey(k.row, k.col);
+  runUntilRowReadCount(machine, k.row, debounce, cap);
+  if (k.shift) {
+    machine.keyboard.releaseKey(PC88_SHIFT_ROW_COL[0], PC88_SHIFT_ROW_COL[1]);
+    runUntilRowReadCount(machine, PC88_SHIFT_ROW_COL[0], debounce, cap);
+  }
+}
+
+function typeLine(machine: PC88Machine, s: string): void {
+  for (const ch of s) typeChar(machine, ch);
+}
 
 const REAL = process.env.PC88_REAL_ROMS === "1";
 const ROM_DIR = process.env.PC88_ROM_DIR ?? "roms";
@@ -47,6 +107,39 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     expect(dump).toContain("NEC PC-8001 BASIC Ver 1.2");
     expect(dump).toContain("Copyright 1979 (C) by Microsoft");
     expect(dump).toContain("Ok");
+  });
+
+  it("N-BASIC: types a hello world program, lists it, runs it", async () => {
+    // From the "Ok" prompt we feed the full BASIC dialogue through
+    // the keyboard matrix:
+    //   10 print "hello world"<CR>
+    //   list<CR>                  -> BIOS echoes line + canonical "10 PRINT ..."
+    //   run<CR>                   -> BIOS echoes "run" + program output
+    //
+    // typeChar synchronises with the BIOS scan via the IOBus tracer
+    // (waits for the pressed row to be re-read) — no fragile op-count
+    // timing. After each line we run a fixed budget for the BIOS to
+    // tokenise / interpret / render before the next assertion.
+    const loaded = await loadRoms(MKI, { dir: ROM_DIR });
+    if (!loaded.n80 || !loaded.n88) return;
+    const machine = new PC88Machine(MKI, loaded as LoadedROMs);
+    machine.reset();
+    runMachine(machine, { maxOps: kOps(150) });
+
+    typeLine(machine, '10 print "hello world"\r');
+    runMachine(machine, { maxOps: kOps(40) });
+    typeLine(machine, "list\r");
+    runMachine(machine, { maxOps: kOps(80) });
+    typeLine(machine, "run\r");
+    runMachine(machine, { maxOps: kOps(120) });
+
+    const dump = machine.display.toASCIIDump();
+    expect(dump).toContain('10 print "hello world"');
+    // LIST canonicalises the keyword to uppercase but leaves the
+    // string literal alone.
+    expect(dump).toContain('10 PRINT "hello world"');
+    expect(dump).toContain("run");
+    expect(dump).toContain("hello world");
   });
 
   it("--basic=n88 path: BIOS reaches the disk-files prompt", async () => {

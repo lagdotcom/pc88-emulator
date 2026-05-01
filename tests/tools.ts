@@ -114,6 +114,54 @@ export function buildTestDisk(
 // IPC round-trip without a real disk-board ROM.
 export const SUBCPU_ECHO_PLUS_ONE: u8[] = [0xdb, 0xfd, 0x3c, 0xd3, 0xfc, 0x76];
 
+// PC-88 keyboard matrix for ASCII characters. Coordinates derived
+// from `PC88Key` (`row * 8 + col`, counting from `NUMPAD_0 = 0`):
+//   row 1 — RETURN at col 7
+//   row 2 — AT, A..G        (A at col 1)
+//   row 3 — H..O            (H at col 0)
+//   row 4 — P..W            (P at col 0)
+//   row 5 — X..Z + symbols
+//   row 6 — NUM_0..NUM_7
+//   row 7 — NUM_8/9 + ; , . / _ :
+//   row 8 — modifiers       (SHIFT at col 6, CTRL at col 7)
+//   row 9 — STOP, F1..F5, SPACE (col 6), ESC
+const PC88_KEY_MAP: { readonly [c: string]: readonly [number, number] } = {
+  "0": [6, 0], "1": [6, 1], "2": [6, 2], "3": [6, 3],
+  "4": [6, 4], "5": [6, 5], "6": [6, 6], "7": [6, 7],
+  "8": [7, 0], "9": [7, 1],
+  " ": [9, 6],
+  a: [2, 1], b: [2, 2], c: [2, 3], d: [2, 4], e: [2, 5], f: [2, 6], g: [2, 7],
+  h: [3, 0], i: [3, 1], j: [3, 2], k: [3, 3], l: [3, 4], m: [3, 5], n: [3, 6], o: [3, 7],
+  p: [4, 0], q: [4, 1], r: [4, 2], s: [4, 3], t: [4, 4], u: [4, 5], v: [4, 6], w: [4, 7],
+  x: [5, 0], y: [5, 1], z: [5, 2],
+  "\r": [1, 7],
+};
+
+const PC88_SHIFT_KEY: readonly [number, number] = [8, 6];
+
+// Shifted-character map: PC-88 JIS-style layout puts " on SHIFT+2.
+// Extend as more shifted chars are needed by tests.
+const PC88_SHIFT_MAP: { readonly [c: string]: readonly [number, number] } = {
+  '"': PC88_KEY_MAP["2"]!,
+};
+
+// Look up a character's matrix coordinates. Returns the unshifted
+// key plus a "needs SHIFT held" flag; the caller drives the SHIFT
+// row separately.
+export function pc88KeyFor(ch: string): {
+  row: number;
+  col: number;
+  shift: boolean;
+} {
+  const shifted = PC88_SHIFT_MAP[ch];
+  if (shifted) return { row: shifted[0], col: shifted[1], shift: true };
+  const k = PC88_KEY_MAP[ch];
+  if (!k) throw new Error(`pc88KeyFor: no key map for ${JSON.stringify(ch)}`);
+  return { row: k[0], col: k[1], shift: false };
+}
+
+export const PC88_SHIFT_ROW_COL = PC88_SHIFT_KEY;
+
 export function formatHMS(time: Seconds): string {
   if (!isFinite(time) || time < 0) return "?";
   const h: Hours = Math.floor(time / 3600);

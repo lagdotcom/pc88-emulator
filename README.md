@@ -367,18 +367,21 @@ Roughly ordered by what's blocking what.
   - [ ] `localStorage` for breakpoint / watch persistence + panel
     layout preferences across reloads.
 - [x] **End-to-end real-ROM smoke test**. `tests/machines/pc88-real-rom.test.ts`
-  is gated on `PC88_REAL_ROMS=1` and runs the mkI N-BASIC boot
-  against the real ROM image, asserting the banner ("NEC PC-8001
-  BASIC", "Copyright 1979 (C) by Microsoft", "Ok") appears in the
-  CRTC+DMAC visible region. A second case runs `--basic=n88` to the
-  "How many files(0-15)?" disk-config prompt and asserts the prompt
-  string in the visible region; boot stalls past that on keyboard
-  input — `Keyboard.pressKey(row, col)` is wired now (the web UI
-  uses it via `src/web/keymap.ts`), but the headless test doesn't
-  drive the matrix yet. Once it does, tighten the assertion to
-  require the N88 banner past the prompt. ROMs go in `roms/`
-  (gitignored) — see `src/machines/variants/mk1.ts` for filenames
-  + md5s.
+  is gated on `PC88_REAL_ROMS=1` and runs four cases against the
+  real mkI ROM image: (1) N-BASIC boots to the banner; (2) N-BASIC
+  accepts a typed program — `10 print "hello world"` / `LIST` /
+  `RUN` — through the keyboard matrix and produces the expected
+  output; (3) N88-BASIC reaches the disk-files prompt; (4) N88
+  answers the prompt (via mailbox poke; see below) and reaches the
+  BASIC banner. ROMs go in `roms/` (gitignored) — see
+  `src/machines/variants/mk1.ts` for filenames + md5s.
+- [x] **Headless keyboard input via the matrix (N-BASIC path)**.
+  Tests drive `Keyboard.pressKey(row, col)` and synchronise with
+  the BIOS scan via the `IOBus.tracer` — `runUntilRowReadCount(row,
+  N)` waits for the BIOS to read row N times so a key is observed
+  across the debounce window. ASCII → matrix-position map +
+  `pc88KeyFor(ch)` live in `tests/tools.ts`. Replaces the earlier
+  fragile op-count timing.
 - [x] **N88 disk-files prompt — past it via mailbox poke**. The
   real-ROM smoke test now answers the prompt and asserts the BASIC
   banner ("NEC N-88 BASIC Version 1.0", copyright, "Ok"). The full
