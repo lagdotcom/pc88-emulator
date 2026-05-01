@@ -657,12 +657,31 @@ export function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
 //   k = value just read/written.
 //   For IN family:  base = ((C ± 1) & 0xff) + k
 //   For OUT family: base = L + k
-//   N = bit 7 of k; H = C = (base > 0xff);
+// I/O block flag computation. Singles (INI/IND/OUTI/OUTD) and the
+// terminating iteration of repeats (B == 0) follow Sean Young's
+// "Undocumented Z80":
+//   N = bit 7 of value; H = C = (base > 0xff);
 //   PV = parity((base & 7) ^ B); S/Z from B.
-//   Non-repeat / last iteration: X/Y from B.
-//   Repeating iteration: X/Y from (PC+1).high.
-//   The H/PV behaviour during repeat follows additional silicon-level quirks
-//   not yet captured here (see TODO note above buildEdTable).
+//   X/Y from B (or from PC.high+1 on a repeating non-final iteration).
+//
+// On a repeating non-final iteration (INIR/INDR/OTIR/OTDR with
+// B != 0 after decrement) the 5 T-state PC-decrement M-cycle adds
+// a "fix-up" that overrides H and toggles PF. Per David Banks's
+// analysis (https://github.com/hoglet67/Z80Decoder/wiki/Undocumented-Flags)
+// and MAME's `block_io_interrupted_flags()`:
+//
+//   if (CF) {
+//     if (value & 0x80) { seed = (B-1) & 7; HF = (B & 0x0F) == 0x00; }
+//     else              { seed = (B+1) & 7; HF = (B & 0x0F) == 0x0F; }
+//   } else {
+//     seed = B & 7;     // HF stays at the singles value
+//   }
+//   PF = PF_singles XNOR parity(seed)
+//
+// where B is the post-decrement value, value is the byte transferred,
+// and CF is the singles-step carry (= H = (base > 0xff)). The XNOR
+// matches MAME's `pv_val = (pv_old ^ pv_new) & PF` once you decode
+// MAME's seed-table indirection.
 export function do_io_block_flags(
   cpu: Z80,
   value: u8,
@@ -673,18 +692,47 @@ export function do_io_block_flags(
   let x: number;
   let y: number;
   if (repeating) {
-    const pcHi = ((cpu.regs.PC + 1) >> 8) & 0xff;
+    // PC has already been decremented to PC-2 by the caller; the
+    // 5-tstate fix-up uses that post-decrement PC.high directly
+    // (MAME `m_f.yx_val = PC >> 8`). The previous `(PC+1).high`
+    // here was off-by-one — only visible on cases that cross a
+    // page boundary at the wrap point, which is why low sample
+    // sizes missed it.
+    const pcHi = (cpu.regs.PC >> 8) & 0xff;
     x = pcHi & FLAG_X;
     y = pcHi & FLAG_Y;
   } else {
     x = b & FLAG_X;
     y = b & FLAG_Y;
   }
+
+  const cFlag = base > 0xff;
+  const singlesPv = parity(((base & 7) ^ b) & 0xff);
+  let h: number | boolean = cFlag;
+  let pv: boolean = singlesPv;
+
+  if (repeating) {
+    let seed: number;
+    if (cFlag) {
+      if (value & 0x80) {
+        seed = (b - 1) & 7;
+        h = (b & 0x0f) === 0x00;
+      } else {
+        seed = (b + 1) & 7;
+        h = (b & 0x0f) === 0x0f;
+      }
+    } else {
+      seed = b & 7;
+      // HF unchanged from singles.
+    }
+    pv = singlesPv === parity(seed);
+  }
+
   cpu.updateFlags({
     n: value & 0x80,
-    pv: parity(((base & 7) ^ b) & 0xff),
-    h: base > 0xff,
-    c: base > 0xff,
+    pv,
+    h,
+    c: cFlag,
     z: b === 0,
     s: b & 0x80,
     x,

@@ -16,9 +16,11 @@ Working:
   register tracking for SCF/CCF; R register half-increment;
   EI one-instruction grace period; HALT.
 - SingleStepTests/z80 harness running 1604 opcodes × 25 sample cases
-  = 40,100 hardware-traced test cases per `yarn test:z80`. 40,023
-  currently pass; the 77 failures are all in the undocumented H/PV
-  flags during INIR/INDR/OTIR/OTDR repeating iterations.
+  = 40,132 hardware-traced test cases per `yarn test:z80`. **All pass
+  on both dispatcher paths.** The previously-failing INIR/INDR/OTIR/
+  OTDR repeat-iteration undocumented H/PV bits were resolved by
+  applying the Banks / MAME `block_io_interrupted_flags` formula in
+  `do_io_block_flags`.
 - Hand-assembled program-level tests (`yarn test:programs`) covering
   fib, sort, LDIR, CALL/RET stacks, BCD, IX/IY, CPIR, CB on (HL).
 - Frank Cringle's zexdoc/zexall via `yarn zex zexdoc` / `yarn zex
@@ -209,13 +211,17 @@ Roughly ordered by what's blocking what.
   somewhere in the MCycle composition or closure layer rather than
   the underlying flag math the helpers compute. Reproduce with
   `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` (or
-  `Z80_SAMPLE=200`); they appear in CPIR/CPDR/INIR/OTIR/INDR/OTDR
-  too. Diagnosing the table path is no longer urgent now that ops2
-  is correct end-to-end.
+  `Z80_SAMPLE=200`). The block-IO repeat-iteration flag failures
+  the table path used to share with this list were fixed by the
+  Banks/MAME formula and now pass cleanly on both dispatchers.
+  Diagnosing the table path is no longer urgent now that ops2 is
+  correct end-to-end.
 
-- [x] **Block-instruction repeat-iteration flags** — fixed when
-  running through ops2; remaining 77 SingleStepTests failures on
-  the table path are documented above.
+- [x] **Block-instruction repeat-iteration flags** — fully resolved
+  on both dispatchers. INIR/INDR/OTIR/OTDR now apply the 5 T-state
+  PC-decrement fix-up to H and PF per David Banks's analysis
+  (matching MAME's `block_io_interrupted_flags`). 40132/40132
+  SingleStepTests cases pass.
 - [x] **IM 2 acceptance**. `requestIrq(vector)` carries the data-bus
   byte; on accept the CPU reads PC from `(I << 8) | (vector & 0xFE)`.
   The runner asserts vector 0x00 for VBL. PC-88 BIOS programs IM 2

@@ -268,22 +268,24 @@ once a real BIOS boot validates ops2 end-to-end (see TODO).
 
 ## Test status (as of last commit)
 
-SingleStepTests sample size 25 per opcode → 40100 total cases run by
-`yarn test:z80` (1604 ops × 25, covering base + CB + DD + FD + ED +
-DDCB + FDCB). **40023 / 40100** pass on either dispatcher path. The
-77 remaining failures are all in the SingleStepTests harness's
-shared helpers (do_io_block_flags) — they appear via both ops2 and
-the legacy table — and concern undocumented H/PV bits during
-INIR/INDR/OTIR/OTDR repeating iterations. Empirical fitting against
-the test data gets to 941/995 with a `(C ? bp_lo == 0 : bp_lo ==
-0xf)` rule for H, but the remaining ~5% don't fit any simple formula
-over `(B_post, C_flag, base, value)`. Fixing them needs a
-known-correct reference (FUSE / mame / Patrik Rak's z80core).
+SingleStepTests sample size 25 per opcode → 40132 total cases run
+by `yarn test:z80` (1604 ops × 25 + a handful of multi-prefix
+fixtures, covering base + CB + DD + FD + ED + DDCB + FDCB).
+**40132 / 40132 pass on both dispatcher paths.**
 
-All non-repeat INI/IND/OUTI/OUTD pass, every base/CB/DD/FD opcode
-passes, and DDCB/FDCB pass cleanly. The `tests/programs/`
-hand-assembled suite passes 18/18. Both **zexdoc** and **zexall**
-run to a clean exit on the ops2 dispatcher (the default).
+The previous 77-case INIR/INDR/OTIR/OTDR repeat-iteration
+failures were resolved by applying David Banks's analysis
+(`hoglet67/Z80Decoder/wiki/Undocumented-Flags`, also implemented
+as `block_io_interrupted_flags()` in MAME's `z80.cpp`): the 5
+T-state PC-decrement M-cycle on a repeating non-final iteration
+applies a fix-up that overrides H and XNOR-toggles PF with the
+parity of a small seed table, branching on `CF` and `value & 0x80`.
+The `do_io_block_flags` helper in `ops.ts` carries the formula
+inline. Y/X come from the post-decrement `PC.high` (not `PC+1`).
+
+The `tests/programs/` hand-assembled suite passes 23/23
+(programs + IRQ acceptance). Both **zexdoc** and **zexall** run to
+a clean exit on the ops2 dispatcher (the default).
 
 ## Style
 
