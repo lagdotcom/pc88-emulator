@@ -83,6 +83,9 @@ const opfsBackend: SymbolBackend = {
   md5(bytes) {
     return md5sum(bytes);
   },
+  warn(message) {
+    if (typeof console !== "undefined" && console.warn) console.warn(message);
+  },
 };
 
 export type { DebugSymbols, ImportResult } from "./debug-symbols-core.js";

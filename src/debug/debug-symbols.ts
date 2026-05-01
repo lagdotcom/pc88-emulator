@@ -31,6 +31,9 @@ const fsBackend: SymbolBackend = {
   md5(bytes) {
     return createHash("md5").update(bytes).digest("hex") as MD5Sum;
   },
+  warn(message) {
+    process.stderr.write(`warning: ${message}\n`);
+  },
 };
 
 export type { DebugSymbols, ImportResult } from "./debug-symbols-core.js";

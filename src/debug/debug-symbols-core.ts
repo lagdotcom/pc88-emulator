@@ -43,6 +43,9 @@ export interface SymbolBackend {
   // I/O so the same backend abstraction works for both node:crypto
   // and js-md5.
   md5(bytes: Uint8Array): MD5Sum;
+  // Emit a non-fatal warning. Node routes through process.stderr so
+  // tests can capture it; browser routes to console.warn.
+  warn(message: string): void;
 }
 
 interface DebugSymbolEntry {
@@ -187,15 +190,10 @@ export async function loadDebugSymbols(
     if (file.md5) {
       const got = backend.md5(bytes);
       if (got !== file.md5) {
-        // The CLI driver historically wrote this to stderr; the
-        // browser stays silent. The mismatch is a warning, not a
-        // hard error — symbols still load.
-
-        if (typeof console !== "undefined" && console.warn) {
-          console.warn(
-            `${file.path} declares md5=${file.md5} but ROM is ${got}`,
-          );
-        }
+        // Mismatch is a warning, not a hard error — symbols still
+        // load. Each backend picks its own sink (CLI → stderr,
+        // browser → console.warn).
+        backend.warn(`${file.path} declares md5=${file.md5} but ROM is ${got}`);
       }
     }
     byRomId.set(id, { romId: id, romBytes: bytes, file });
