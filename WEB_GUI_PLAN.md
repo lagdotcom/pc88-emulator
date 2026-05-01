@@ -191,13 +191,27 @@ also works in the browser.
   bounded line cap so a long `continue` with chatty watch logs
   doesn't blow up the DOM.
 
-### Phase 4c: Dedicated breakpoints / watches / stack panels
+### Phase 4c: Dedicated breakpoints / watches / stack panels ✓ (committed)
 
-Still TODO. The state lives in `DebugState`; the typed `tick`
-payload just needs `breakpoints: u16[]`, `ramWatches: WatchSlot[]`,
-`portWatches: WatchSlot[]`, `callStack: CallFrame[]`. The panels
-are click-to-remove + form-to-add and post the corresponding
-`break` / `bw` / `bp` REPL command. Stack is read-only.
+Done. Each panel renders straight off a typed `DebugSnapshot`
+shipped on every `tick` / `stopped`, and add/remove buttons post
+the matching REPL command (`break`, `bd`, `bw`, `unbw`, `bp`,
+`unbp`) so panel actions and typed REPL commands hit the same
+code path.
+
+- `protocol.ts`: `DebugSnapshot { breakpoints, ramWatches,
+  portWatches, callStack }` ridden on every tick. New typed
+  `RamWatch` / `PortWatch` / `CallFrameSnapshot` carry the
+  `WatchMode` / `WatchAction` / `CallVia` literal unions.
+- `worker.ts`: `snapshotDebug(s)` enumerates the live `Map`s in
+  `state.debug.{ramWatches,portWatches}` into plain object arrays
+  and defensively copies `state.debug.callStack` (it's mutated in
+  place by `trackedStep`).
+- `panels.ts`:
+  - `BreakpointsPanel`: addr form + sorted list with `×` removers.
+  - `WatchesPanel`: dual RAM/port forms with `mode` (rw/r/w) +
+    `action` (break/log) selectors; sorted lists with `×`.
+  - `StackPanel`: read-only `<pre>`, deepest frame first.
 
 | Panel | Source | Update cadence |
 |-------|--------|----------------|
@@ -206,8 +220,8 @@ are click-to-remove + form-to-add and post the corresponding
 | Disassembly | `disasmAround(pc, 16)` in worker; ships strings | every tick (4a) |
 | Memory hex | `peek` messages | on submit (4a) |
 | REPL | `<input>` → `command`; `<pre>` mirrors `out` | on submit / chunk (4b) |
-| Breakpoints / watches | List from `DebugState`; `dispatch("break 0x1234")` etc. | on change (4c) |
-| Stack | `state.callStack` | on pause/step (4c) |
+| Breakpoints / Watches | `DebugSnapshot.{breakpoints,ramWatches,portWatches}`; add/remove posts the matching REPL line | every tick (4c) |
+| Stack | `DebugSnapshot.callStack` | every tick (4c) |
 
 ### Phase 5: Persistence
 

@@ -5,10 +5,13 @@ import { type BootRequest, renderBootScreen } from "./boot-screen.js";
 import { CanvasTextRenderer } from "./canvas-renderer.js";
 import { openStore } from "./opfs.js";
 import {
+  BreakpointsPanel,
   DisasmPanel,
   MemoryPanel,
   RegistersPanel,
   ReplPanel,
+  StackPanel,
+  WatchesPanel,
 } from "./panels.js";
 import type { WorkerInbound, WorkerOutbound } from "./protocol.js";
 
@@ -44,6 +47,9 @@ interface RunningUI {
   registers: RegistersPanel;
   disasm: DisasmPanel;
   memory: MemoryPanel;
+  breakpoints: BreakpointsPanel;
+  watches: WatchesPanel;
+  stack: StackPanel;
   repl: ReplPanel;
 }
 
@@ -66,14 +72,20 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
       case "tick":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm, msg.breakpoints);
+        ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
+        ui.breakpoints.render(msg.debug.breakpoints);
+        ui.watches.render(msg.debug.ramWatches, msg.debug.portWatches);
+        ui.stack.render(msg.debug.callStack);
         ui.status.textContent = `${msg.running ? "running" : "paused"} pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}${msg.halted ? " halted" : ""}`;
         setRunUi(ui, msg.running);
         break;
       case "stopped":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm, msg.breakpoints);
+        ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
+        ui.breakpoints.render(msg.debug.breakpoints);
+        ui.watches.render(msg.debug.ramWatches, msg.debug.portWatches);
+        ui.stack.render(msg.debug.callStack);
         ui.status.textContent = `stopped (${msg.reason}) pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}`;
         setRunUi(ui, false);
         break;
@@ -179,12 +191,17 @@ function renderRunningView(
   const memory = new MemoryPanel((req) => {
     send(worker, { type: "peek", addr: req.addr & 0xffff, count: req.count });
   });
-  const repl = new ReplPanel((line) => {
-    send(worker, { type: "command", line });
-  });
+  const sendCommand = (line: string) => send(worker, { type: "command", line });
+  const breakpoints = new BreakpointsPanel(sendCommand);
+  const watches = new WatchesPanel(sendCommand);
+  const stack = new StackPanel();
+  const repl = new ReplPanel(sendCommand);
   panels.appendChild(registers.element);
   panels.appendChild(disasm.element);
   panels.appendChild(memory.element);
+  panels.appendChild(breakpoints.element);
+  panels.appendChild(watches.element);
+  panels.appendChild(stack.element);
   panels.appendChild(repl.element);
   root.appendChild(panels);
 
@@ -212,6 +229,9 @@ function renderRunningView(
     registers,
     disasm,
     memory,
+    breakpoints,
+    watches,
+    stack,
     repl,
   };
 }

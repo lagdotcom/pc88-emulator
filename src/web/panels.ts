@@ -1,4 +1,10 @@
-import type { CPUSnapshot, DisasmLine } from "./protocol.js";
+import type {
+  CallFrameSnapshot,
+  CPUSnapshot,
+  DisasmLine,
+  PortWatch,
+  RamWatch,
+} from "./protocol.js";
 
 // Hex helpers — duplicated from src/tools.ts since the web bundle
 // already pays for this small format work and importing the Node-
@@ -282,4 +288,254 @@ export class ReplPanel {
   focus(): void {
     this.input.focus();
   }
+}
+
+// Panels 4c — breakpoints / watches / stack — share the same shape:
+// a heading + a list rendered into a scrollable region, optionally
+// with an "add" form. Each list row exposes a × button that posts
+// the appropriate REPL command back through the worker channel so
+// state stays in lockstep with what the dispatcher would do via the
+// REPL pane.
+
+export interface PanelCommandSink {
+  (line: string): void;
+}
+
+export class BreakpointsPanel {
+  readonly element: HTMLElement;
+  private readonly list: HTMLElement;
+  private readonly addrInput: HTMLInputElement;
+
+  constructor(private readonly send: PanelCommandSink) {
+    this.element = document.createElement("section");
+    this.element.className = "panel breakpoints-panel";
+
+    const heading = document.createElement("h2");
+    heading.textContent = "Breakpoints";
+    this.element.appendChild(heading);
+
+    const form = document.createElement("form");
+    form.className = "panel-add-form";
+    this.addrInput = document.createElement("input");
+    this.addrInput.type = "text";
+    this.addrInput.placeholder = "addr (e.g. 0x5550)";
+    this.addrInput.size = 12;
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "+";
+    form.appendChild(this.addrInput);
+    form.appendChild(submit);
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const addr = parseAddr(this.addrInput.value);
+      if (addr === null) return;
+      this.send(`break ${w(addr)}`);
+      this.addrInput.value = "";
+    });
+    this.element.appendChild(form);
+
+    this.list = document.createElement("ul");
+    this.list.className = "watch-list";
+    this.element.appendChild(this.list);
+  }
+
+  render(breakpoints: number[]): void {
+    this.list.textContent = "";
+    if (breakpoints.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "watch-empty";
+      empty.textContent = "(no breakpoints)";
+      this.list.appendChild(empty);
+      return;
+    }
+    const sorted = [...breakpoints].sort((a, b) => a - b);
+    for (const addr of sorted) {
+      const li = document.createElement("li");
+      const text = document.createElement("span");
+      text.textContent = `0x${w(addr)}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.title = "Remove breakpoint";
+      remove.addEventListener("click", () => this.send(`bd ${w(addr)}`));
+      li.appendChild(text);
+      li.appendChild(remove);
+      this.list.appendChild(li);
+    }
+  }
+}
+
+export class WatchesPanel {
+  readonly element: HTMLElement;
+  private readonly ramList: HTMLElement;
+  private readonly portList: HTMLElement;
+  private readonly ramAddr: HTMLInputElement;
+  private readonly ramMode: HTMLSelectElement;
+  private readonly ramAction: HTMLSelectElement;
+  private readonly portAddr: HTMLInputElement;
+  private readonly portMode: HTMLSelectElement;
+  private readonly portAction: HTMLSelectElement;
+
+  constructor(private readonly send: PanelCommandSink) {
+    this.element = document.createElement("section");
+    this.element.className = "panel watches-panel";
+
+    const heading = document.createElement("h2");
+    heading.textContent = "Watches";
+    this.element.appendChild(heading);
+
+    const ramHeading = document.createElement("h3");
+    ramHeading.textContent = "RAM";
+    this.element.appendChild(ramHeading);
+    const ramForm = document.createElement("form");
+    ramForm.className = "panel-add-form";
+    this.ramAddr = document.createElement("input");
+    this.ramAddr.type = "text";
+    this.ramAddr.placeholder = "addr";
+    this.ramAddr.size = 8;
+    this.ramMode = makeSelect(["rw", "r", "w"]);
+    this.ramAction = makeSelect(["break", "log"]);
+    const ramSubmit = document.createElement("button");
+    ramSubmit.type = "submit";
+    ramSubmit.textContent = "+";
+    ramForm.appendChild(this.ramAddr);
+    ramForm.appendChild(this.ramMode);
+    ramForm.appendChild(this.ramAction);
+    ramForm.appendChild(ramSubmit);
+    ramForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const addr = parseAddr(this.ramAddr.value);
+      if (addr === null) return;
+      this.send(`bw ${w(addr)} ${this.ramMode.value} ${this.ramAction.value}`);
+      this.ramAddr.value = "";
+    });
+    this.element.appendChild(ramForm);
+    this.ramList = document.createElement("ul");
+    this.ramList.className = "watch-list";
+    this.element.appendChild(this.ramList);
+
+    const portHeading = document.createElement("h3");
+    portHeading.textContent = "Ports";
+    this.element.appendChild(portHeading);
+    const portForm = document.createElement("form");
+    portForm.className = "panel-add-form";
+    this.portAddr = document.createElement("input");
+    this.portAddr.type = "text";
+    this.portAddr.placeholder = "port";
+    this.portAddr.size = 6;
+    this.portMode = makeSelect(["rw", "r", "w"]);
+    this.portAction = makeSelect(["break", "log"]);
+    const portSubmit = document.createElement("button");
+    portSubmit.type = "submit";
+    portSubmit.textContent = "+";
+    portForm.appendChild(this.portAddr);
+    portForm.appendChild(this.portMode);
+    portForm.appendChild(this.portAction);
+    portForm.appendChild(portSubmit);
+    portForm.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const port = parseAddr(this.portAddr.value);
+      if (port === null) return;
+      this.send(
+        `bp ${b(port & 0xff)} ${this.portMode.value} ${this.portAction.value}`,
+      );
+      this.portAddr.value = "";
+    });
+    this.element.appendChild(portForm);
+    this.portList = document.createElement("ul");
+    this.portList.className = "watch-list";
+    this.element.appendChild(this.portList);
+  }
+
+  render(ram: RamWatch[], ports: PortWatch[]): void {
+    this.ramList.textContent = "";
+    if (ram.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "watch-empty";
+      empty.textContent = "(no RAM watches)";
+      this.ramList.appendChild(empty);
+    } else {
+      const sorted = [...ram].sort((a, b) => a.addr - b.addr);
+      for (const w_ of sorted) {
+        const li = document.createElement("li");
+        const text = document.createElement("span");
+        text.textContent = `0x${w(w_.addr)} ${w_.mode} ${w_.action}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "×";
+        remove.title = "Remove RAM watch";
+        remove.addEventListener("click", () => this.send(`unbw ${w(w_.addr)}`));
+        li.appendChild(text);
+        li.appendChild(remove);
+        this.ramList.appendChild(li);
+      }
+    }
+
+    this.portList.textContent = "";
+    if (ports.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "watch-empty";
+      empty.textContent = "(no port watches)";
+      this.portList.appendChild(empty);
+    } else {
+      const sorted = [...ports].sort((a, b) => a.port - b.port);
+      for (const p of sorted) {
+        const li = document.createElement("li");
+        const text = document.createElement("span");
+        text.textContent = `0x${b(p.port)} ${p.mode} ${p.action}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "×";
+        remove.title = "Remove port watch";
+        remove.addEventListener("click", () => this.send(`unbp ${b(p.port)}`));
+        li.appendChild(text);
+        li.appendChild(remove);
+        this.portList.appendChild(li);
+      }
+    }
+  }
+}
+
+export class StackPanel {
+  readonly element: HTMLElement;
+  private readonly pre: HTMLPreElement;
+
+  constructor() {
+    this.element = document.createElement("section");
+    this.element.className = "panel stack-panel";
+    const heading = document.createElement("h2");
+    heading.textContent = "Call stack";
+    this.element.appendChild(heading);
+    this.pre = document.createElement("pre");
+    this.pre.className = "stack-pre";
+    this.element.appendChild(this.pre);
+  }
+
+  render(frames: CallFrameSnapshot[]): void {
+    if (frames.length === 0) {
+      this.pre.textContent = "(empty)";
+      return;
+    }
+    const lines: string[] = [];
+    // Render top-of-stack first (most recent call is at the end of
+    // the array; the user wants to see the deepest frame at the top).
+    for (let i = frames.length - 1; i >= 0; i--) {
+      const f = frames[i]!;
+      lines.push(
+        `${f.via.padEnd(4)} ${w(f.fromPC)} → ${w(f.target)}  ret=${w(f.expectedReturn)}  sp=${w(f.spAtCall)}`,
+      );
+    }
+    this.pre.textContent = lines.join("\n");
+  }
+}
+
+function makeSelect(options: string[]): HTMLSelectElement {
+  const sel = document.createElement("select");
+  for (const opt of options) {
+    const o = document.createElement("option");
+    o.value = opt;
+    o.textContent = opt;
+    sel.appendChild(o);
+  }
+  return sel;
 }

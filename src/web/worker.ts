@@ -15,6 +15,7 @@ import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
 import { md5 } from "./md5.js";
 import type {
   CPUSnapshot,
+  DebugSnapshot,
   DisasmLine,
   WorkerInbound,
   WorkerOutbound,
@@ -80,6 +81,26 @@ function snapshotCpu(machine: PC88Machine): CPUSnapshot {
   };
 }
 
+function snapshotDebug(s: State): DebugSnapshot {
+  const ramWatches = [...s.debug.ramWatches.entries()].map(([addr, spec]) => ({
+    addr,
+    mode: spec.mode,
+    action: spec.action,
+  }));
+  const portWatches = [...s.debug.portWatches.entries()].map(
+    ([port, spec]) => ({ port, mode: spec.mode, action: spec.action }),
+  );
+  return {
+    breakpoints: [...s.debug.breakpoints],
+    ramWatches,
+    portWatches,
+    // Defensive copy — the worker's state.debug.callStack is mutated
+    // in place by trackedStep, so structured cloning the live array
+    // would race with the next instruction's push/pop.
+    callStack: s.debug.callStack.map((f) => ({ ...f })),
+  };
+}
+
 function disasmAround(
   machine: PC88Machine,
   pc: u16,
@@ -115,7 +136,7 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     halted: s.machine.cpu.halted,
     cpu: snapshotCpu(s.machine),
     disasm: disasmAround(s.machine, s.machine.cpu.regs.PC, DISASM_LINES),
-    breakpoints: [...s.debug.breakpoints],
+    debug: snapshotDebug(s),
   };
   const msg: WorkerOutbound =
     type === "stopped"

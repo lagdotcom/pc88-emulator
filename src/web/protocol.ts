@@ -50,6 +50,45 @@ export interface DisasmLine {
   mnemonic: string;
 }
 
+// Watch entries shipped on every tick so the Watches panel can
+// render the live RAM + port watch sets without round-tripping. Mode
+// + action mirror the debug.ts WatchSpec; we re-define the literal
+// unions here so protocol stays self-contained.
+export type WatchMode = "r" | "w" | "rw";
+export type WatchAction = "break" | "log";
+
+export interface RamWatch {
+  addr: u16;
+  mode: WatchMode;
+  action: WatchAction;
+}
+
+export interface PortWatch {
+  port: u8;
+  mode: WatchMode;
+  action: WatchAction;
+}
+
+export type CallVia = "CALL" | "RST" | "IRQ";
+
+export interface CallFrameSnapshot {
+  fromPC: u16;
+  target: u16;
+  expectedReturn: u16;
+  spAtCall: u16;
+  via: CallVia;
+}
+
+// State payload that rides on every tick / stopped frame so the
+// debugger panels rerender without round-tripping. Bundled into a
+// named type because the same fields appear on both message kinds.
+export interface DebugSnapshot {
+  breakpoints: u16[];
+  ramWatches: RamWatch[];
+  portWatches: PortWatch[];
+  callStack: CallFrameSnapshot[];
+}
+
 export type WorkerOutbound =
   | { type: "ready" }
   | {
@@ -69,9 +108,7 @@ export type WorkerOutbound =
       halted: boolean;
       cpu: CPUSnapshot;
       disasm: DisasmLine[];
-      // Active code breakpoints — let the UI mark disassembly rows.
-      // Sorted-not-required; the disasm panel does a Set lookup.
-      breakpoints: u16[];
+      debug: DebugSnapshot;
     }
   | {
       type: "stopped";
@@ -86,7 +123,7 @@ export type WorkerOutbound =
       halted: boolean;
       cpu: CPUSnapshot;
       disasm: DisasmLine[];
-      breakpoints: u16[];
+      debug: DebugSnapshot;
     }
   | {
       type: "memory";

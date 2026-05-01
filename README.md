@@ -296,7 +296,7 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
-- [ ] **Web UI** — phases 1-4b landed. `yarn build:web` produces
+- [ ] **Web UI** — phases 1-4c landed. `yarn build:web` produces
   `web/app.js` + `web/worker.js` (UI bundle + emulator Worker
   bundle) referenced from `web/index.html`. The boot screen
   reads/writes OPFS for ROM storage (content-addressed by md5) +
@@ -306,17 +306,22 @@ Roughly ordered by what's blocking what.
   Worker that owns the CPU loop and emits `tick` snapshots at
   60 Hz; each tick ships the CRTC `chars` buffer (transferable
   ArrayBuffer), the ASCII fallback string, a typed `CPUSnapshot`,
-  and 16 lines of disassembly around PC. The UI thread paints
-  the chars into an 8×16 cell `<canvas>` (CSS-scaled to 960 px,
-  pixel-aligned), renders Registers / Disassembly / Memory / REPL
-  panels, and drives Run / Pause / Step / Reset buttons. The REPL
-  pane flows through the same `dispatch()` the CLI debugger uses —
-  `debug.ts` writes through an injectable `setDebugWriter` callback
-  so the worker captures stdout into `out` envelopes; Node-only
-  bits (runDebug, runScript) live in `debug-cli.ts`, and an
-  esbuild plugin redirects `debug-symbols.js` to a browser stub.
-  Native monospace font for now; phase 7 swaps to a CG-ROM glyph
-  atlas. See `WEB_GUI_PLAN.md` for phasing.
+  16 lines of disassembly around PC, and a `DebugSnapshot`
+  (breakpoints + RAM/port watches + synthesised call stack). The
+  UI paints the chars into an 8×16 cell `<canvas>` (height-driven
+  480 px, pixel-aligned) and renders Registers / Disassembly
+  (with ● breakpoint + ► PC markers) / Memory / Breakpoints /
+  Watches / Stack / REPL panels. The REPL pane flows through the
+  same `dispatch()` the CLI debugger uses — `debug.ts` writes
+  through an injectable `setDebugWriter` callback so the worker
+  captures stdout into `out` envelopes; Node-only bits (runDebug,
+  runScript) live in `debug-cli.ts`, and an esbuild plugin
+  redirects `debug-symbols.js` to a browser stub. The Breakpoints
+  / Watches panels post the matching REPL command (`break`, `bd`,
+  `bw`, `unbw`, `bp`, `unbp`) on add/remove so panel actions and
+  typed REPL commands hit the same code path. Native monospace
+  font for now; phase 7 swaps to a CG-ROM glyph atlas. See
+  `WEB_GUI_PLAN.md` for phasing.
   Sub-items still open:
   - [x] Move emulator into a Web Worker; 60 Hz frame pump.
   - [x] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
@@ -324,9 +329,8 @@ Roughly ordered by what's blocking what.
     typed snapshot in `tick` / `stopped` messages.
   - [x] On-page REPL pane wired through the same `dispatch()` the
     CLI debugger uses, via a writer-callback split of `debug.ts`.
-  - [ ] Dedicated Breakpoints / watches / Stack panels (state
-    already lives in `DebugState`; just needs typed snapshot fields
-    on `tick` / `stopped` and matching DOM panels).
+  - [x] Dedicated Breakpoints / Watches / Stack panels driven
+    from typed `DebugSnapshot` on `tick` / `stopped`.
   - [ ] OPFS-backed symbol-file persistence so `label` / `unlabel`
     work in the browser (currently no-ops via the browser stub).
   - [ ] Keyboard input wired through `Keyboard` matrix.
