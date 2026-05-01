@@ -11,7 +11,7 @@ import { μPD765a } from "../chips/io/μPD765a.js";
 import { μPD8251 } from "../chips/io/μPD8251.js";
 import { μPD8255 } from "../chips/io/μPD8255.js";
 import { μPD8257 } from "../chips/io/μPD8257.js";
-import { Z80 } from "../chips/z80/cpu.js";
+import { resetZ80, snapshotZ80, Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
 import { mHz, mOps } from "../flavour.makers.js";
@@ -168,50 +168,13 @@ export class PC88Machine {
     }
   }
 
-  // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.
-  // Initial BASIC selection comes from DIP port31 bit 2 (the same
-  // bit the BIOS reads to decide which BASIC banner to print). On
-  // real hardware the BASIC ROMs share a common entry that branches
-  // on the DIP; modelling the choice up-front avoids needing the
-  // shared entry to do a runtime ROM swap before printing anything.
+  // Reset to power-on state. Initial BASIC selection comes from DIP
+  // port31 bit 2 (the bit the BIOS reads to decide which banner to
+  // print). On real hardware the BASIC ROMs share a common entry that
+  // branches on the DIP; modelling the choice up-front avoids needing
+  // the shared entry to do a runtime ROM swap before printing.
   reset(): void {
-    // Z80 user manual RESET behaviour: PC, I, R, IFF1, IFF2, IM all
-    // clear to 0; SP, AF, BC, DE, HL, IX, IY, AF', BC', DE', HL' are
-    // formally undefined on real silicon but most emulators zero them
-    // for determinism — and tests that observe register state across
-    // a reset assume zeros, not whatever the previous run left
-    // behind.
-    this.cpu.regs.PC = 0;
-    this.cpu.regs.SP = 0;
-    this.cpu.regs.AF = 0;
-    this.cpu.regs.BC = 0;
-    this.cpu.regs.DE = 0;
-    this.cpu.regs.HL = 0;
-    this.cpu.regs.IX = 0;
-    this.cpu.regs.IY = 0;
-    this.cpu.regs.AF_ = 0;
-    this.cpu.regs.BC_ = 0;
-    this.cpu.regs.DE_ = 0;
-    this.cpu.regs.HL_ = 0;
-    this.cpu.regs.I = 0;
-    this.cpu.regs.R = 0;
-    // WZ (MEMPTR) is a real architectural latch — clear it. OP /
-    // OP2 / OPx are dispatcher scratch slots; zero them so a leaked
-    // value from a previous run can't be observed across reset.
-    this.cpu.regs.WZ = 0;
-    this.cpu.regs.OP = 0;
-    this.cpu.regs.OP2 = 0;
-    this.cpu.regs.OPx = 0;
-    this.cpu.iff1 = false;
-    this.cpu.iff2 = false;
-    this.cpu.im = 0;
-    this.cpu.eiDelay = false;
-    this.cpu.halted = false;
-    this.cpu.irqLine = false;
-    this.cpu.cycles = 0;
-    this.cpu.q = 0;
-    this.cpu.qWritten = false;
-    this.cpu.prefix = undefined;
+    resetZ80(this.cpu);
     this.memoryMap.setBasicRomEnabled(true);
     this.memoryMap.setBasicMode(
       this.config.dipSwitches.port31 & 0x04 ? "n80" : "n88",
@@ -235,27 +198,7 @@ export class PC88Machine {
   // base64-encoded for size reasons.
   snapshot() {
     return {
-      cpu: {
-        PC: this.cpu.regs.PC,
-        SP: this.cpu.regs.SP,
-        AF: this.cpu.regs.AF,
-        BC: this.cpu.regs.BC,
-        DE: this.cpu.regs.DE,
-        HL: this.cpu.regs.HL,
-        IX: this.cpu.regs.IX,
-        IY: this.cpu.regs.IY,
-        AF_: this.cpu.regs.AF_,
-        BC_: this.cpu.regs.BC_,
-        DE_: this.cpu.regs.DE_,
-        HL_: this.cpu.regs.HL_,
-        I: this.cpu.regs.I,
-        R: this.cpu.regs.R,
-        iff1: this.cpu.iff1,
-        iff2: this.cpu.iff2,
-        im: this.cpu.im,
-        halted: this.cpu.halted,
-        cycles: this.cpu.cycles,
-      },
+      cpu: snapshotZ80(this.cpu),
       memoryMap: {
         basicMode: this.memoryMap.basicMode,
         basicRomEnabled: this.memoryMap.basicROMEnabled,

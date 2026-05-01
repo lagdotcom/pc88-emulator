@@ -1,49 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { D88Disk, makeSector } from "../../src/disk/d88.js";
+import { makeSector } from "../../src/disk/d88.js";
 import { FloppyDrive } from "../../src/disk/drive.js";
-import { WriteProtectedError, type Sector } from "../../src/disk/types.js";
-import type {
-  Cylinder,
-  Head,
-  Record,
-  SectorIndex,
-  SizeCode,
-} from "../../src/flavours.js";
+import { WriteProtectedError } from "../../src/disk/types.js";
+import {
+  buildTestDisk,
+  C,
+  fillSectorData as fillData,
+  H,
+  N,
+  R,
+  S,
+} from "../tools.js";
 
-const C = (n: number) => n as Cylinder;
-const H = (n: number) => n as Head;
-const R = (n: number) => n as Record;
-const N = (n: number) => n as SizeCode;
-const S = (n: number) => n as SectorIndex;
-
-function fillData(seed: number, len: number): Uint8Array {
-  const out = new Uint8Array(len);
-  for (let i = 0; i < len; i++) out[i] = (seed + i) & 0xff;
-  return out;
-}
-
-function buildDisk(opts: { writeProtect?: boolean } = {}): D88Disk {
-  const tracks: ({ cylinder: Cylinder; head: Head; sectors: Sector[] } | undefined)[] = [];
-  for (let c = 0; c < 3; c++) {
-    for (let h = 0; h < 2; h++) {
-      const sectors: Sector[] = [];
-      for (let r = 1; r <= 4; r++) {
-        sectors.push(
-          makeSector(C(c), H(h), R(r), N(1), fillData(c * 100 + h * 10 + r, 256)),
-        );
-      }
-      tracks[c * 2 + h] = { cylinder: C(c), head: H(h), sectors };
-    }
-  }
-  return new D88Disk({
-    name: "DRIVETEST",
-    mediaType: "2D",
-    cylinders: 3,
-    writeProtected: opts.writeProtect ?? false,
-    tracks,
-  });
-}
+const buildDisk = (opts: { writeProtect?: boolean } = {}) =>
+  buildTestDisk({ name: "DRIVETEST", writeProtected: opts.writeProtect ?? false });
 
 describe("FloppyDrive insert / eject / ready", () => {
   it("starts empty + not ready", () => {

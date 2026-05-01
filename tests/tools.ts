@@ -1,5 +1,18 @@
 import type { MemoryProvider } from "../src/core/MemoryBus.js";
-import type { Hours, Minutes, Seconds, u8, u16 } from "../src/flavours.js";
+import { D88Disk, makeSector } from "../src/disk/d88.js";
+import type { Sector } from "../src/disk/types.js";
+import type {
+  Cylinder,
+  Head,
+  Hours,
+  Minutes,
+  Record,
+  SectorIndex,
+  Seconds,
+  SizeCode,
+  u8,
+  u16,
+} from "../src/flavours.js";
 
 export function filledROM(size: number, fill: u8) {
   return new Uint8Array(size).fill(fill);
@@ -44,6 +57,62 @@ export class TestIO {
     this.writes.push([port, value]);
   };
 }
+
+// Brand-cast helpers for hand-built disk fixtures. The values are
+// plain numbers in the test source; the casts make them carry the
+// right phantom type at the call site without polluting every line.
+export const C = (n: number) => n as Cylinder;
+export const H = (n: number) => n as Head;
+export const R = (n: number) => n as Record;
+export const N = (n: number) => n as SizeCode;
+export const S = (n: number) => n as SectorIndex;
+
+// Reproducible 0..255-range data for a sector, seeded so different
+// (c,h,r) triples don't accidentally produce the same bytes.
+export function fillSectorData(seed: number, len: number): Uint8Array {
+  const out = new Uint8Array(len);
+  for (let i = 0; i < len; i++) out[i] = (seed + i) & 0xff;
+  return out;
+}
+
+// Build a small in-memory D88 disk: `cylinders` × 2 heads, each track
+// with `sectorsPerTrack` 256-byte MFM sectors. Per-sector data uses a
+// distinct seed so failures point at the wrong sector.
+export function buildTestDisk(
+  opts: {
+    cylinders?: number;
+    sectorsPerTrack?: number;
+    name?: string;
+    writeProtected?: boolean;
+  } = {},
+): D88Disk {
+  const cylinders = opts.cylinders ?? 3;
+  const sectorsPerTrack = opts.sectorsPerTrack ?? 4;
+  const tracks: ({ cylinder: Cylinder; head: Head; sectors: Sector[] } | undefined)[] = [];
+  for (let c = 0; c < cylinders; c++) {
+    for (let h = 0; h < 2; h++) {
+      const sectors: Sector[] = [];
+      for (let r = 1; r <= sectorsPerTrack; r++) {
+        sectors.push(
+          makeSector(C(c), H(h), R(r), N(1), fillSectorData(c * 100 + h * 10 + r, 256)),
+        );
+      }
+      tracks[c * 2 + h] = { cylinder: C(c), head: H(h), sectors };
+    }
+  }
+  return new D88Disk({
+    name: opts.name ?? "TESTDISK",
+    mediaType: "2D",
+    cylinders,
+    writeProtected: opts.writeProtected ?? false,
+    tracks,
+  });
+}
+
+// 6-byte sub-CPU stub program: read incoming PPI byte, increment,
+// write back, HALT. Used by every test that exercises the sub-CPU
+// IPC round-trip without a real disk-board ROM.
+export const SUBCPU_ECHO_PLUS_ONE: u8[] = [0xdb, 0xfd, 0x3c, 0xd3, 0xfc, 0x76];
 
 export function formatHMS(time: Seconds): string {
   if (!isFinite(time) || time < 0) return "?";

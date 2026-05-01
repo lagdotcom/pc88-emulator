@@ -1,56 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { CMD, MSR, ST0, ST3, μPD765a } from "../../../src/chips/io/μPD765a.js";
+import {
+  CMD,
+  CMD_FLAGS,
+  MSR,
+  ST0,
+  ST3,
+  μPD765a,
+} from "../../../src/chips/io/μPD765a.js";
 import { IOBus } from "../../../src/core/IOBus.js";
-import { D88Disk, makeSector } from "../../../src/disk/d88.js";
 import { FloppyDrive } from "../../../src/disk/drive.js";
-import type { Sector } from "../../../src/disk/types.js";
-import type {
-  Cylinder,
-  Head,
-  Record,
-  SizeCode,
-} from "../../../src/flavours.js";
-
-const C = (n: number) => n as Cylinder;
-const H = (n: number) => n as Head;
-const R = (n: number) => n as Record;
-const N = (n: number) => n as SizeCode;
-
-function fillData(seed: number, len: number): Uint8Array {
-  const out = new Uint8Array(len);
-  for (let i = 0; i < len; i++) out[i] = (seed + i) & 0xff;
-  return out;
-}
-
-function buildDisk(): D88Disk {
-  const tracks: ({ cylinder: Cylinder; head: Head; sectors: Sector[] } | undefined)[] = [];
-  for (let c = 0; c < 3; c++) {
-    for (let h = 0; h < 2; h++) {
-      const sectors: Sector[] = [];
-      for (let r = 1; r <= 4; r++) {
-        sectors.push(
-          makeSector(C(c), H(h), R(r), N(1), fillData(c * 100 + h * 10 + r, 256)),
-        );
-      }
-      tracks[c * 2 + h] = { cylinder: C(c), head: H(h), sectors };
-    }
-  }
-  return new D88Disk({
-    name: "FDCTEST",
-    mediaType: "2D",
-    cylinders: 3,
-    writeProtected: false,
-    tracks,
-  });
-}
+import type { Cylinder } from "../../../src/flavours.js";
+import { buildTestDisk, fillSectorData as fillData } from "../../tools.js";
 
 function setup() {
   const bus = new IOBus();
   const fdc = new μPD765a();
   fdc.register(bus);
   const drive0 = new FloppyDrive();
-  drive0.insert(buildDisk());
+  drive0.insert(buildTestDisk({ name: "FDCTEST" }));
   drive0.motorOn = true;
   fdc.attachDrive(0, drive0);
   return { bus, fdc, drive0 };
@@ -184,7 +152,7 @@ describe("μPD765a SEEK", () => {
 describe("μPD765a READ ID", () => {
   it("returns the next sector ID under the head", () => {
     const { bus } = setup();
-    writeCmd(bus, CMD.READ_ID | CMD.MF, 0x00); // drive 0, head 0, MFM
+    writeCmd(bus, CMD.READ_ID | CMD_FLAGS.MF, 0x00); // drive 0, head 0, MFM
     const [, , , c, h, r, n] = readResult(bus, 7);
     expect(c).toBe(0);
     expect(h).toBe(0);
@@ -195,7 +163,7 @@ describe("μPD765a READ ID", () => {
   it("flags ND/MA for an unformatted track", () => {
     const { bus, drive0 } = setup();
     drive0.cylinder = 60 as Cylinder;
-    writeCmd(bus, CMD.READ_ID | CMD.MF, 0x00);
+    writeCmd(bus, CMD.READ_ID | CMD_FLAGS.MF, 0x00);
     const r = readResult(bus, 7);
     expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
     expect(r[1]! & 0x05).not.toBe(0); // ST1.MA | ST1.ND
@@ -206,7 +174,7 @@ describe("μPD765a READ DATA", () => {
   it("streams one sector through the data register", () => {
     const { bus } = setup();
     // READ DATA, drive 0, head 0, C=0 H=0 R=1 N=1, EOT=1, GPL=0x1b, DTL=0xff
-    writeCmd(bus, CMD.READ_DATA | CMD.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
     const data: number[] = [];
     while (
       (bus.read(0xfa) & (MSR.RQM | MSR.DIO | MSR.CB)) ===
@@ -224,7 +192,7 @@ describe("μPD765a READ DATA", () => {
 
   it("flags ND when the sector ID is not on the track", () => {
     const { bus } = setup();
-    writeCmd(bus, CMD.READ_DATA | CMD.MF, 0x00, 0x00, 0x00, 0x99, 0x01, 0x01, 0x1b, 0xff);
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x99, 0x01, 0x01, 0x1b, 0xff);
     const r = readResult(bus, 7);
     expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
     expect(r[1]! & 0x04).toBe(0x04); // ST1.ND
@@ -236,7 +204,7 @@ describe("μPD765a READ DATA", () => {
     fdc.register(bus);
     const empty = new FloppyDrive();
     fdc.attachDrive(0, empty);
-    writeCmd(bus, CMD.READ_DATA | CMD.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
     const r = readResult(bus, 1);
     expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
     expect(r[0]! & ST0.NR).toBe(ST0.NR);

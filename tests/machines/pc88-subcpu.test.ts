@@ -6,14 +6,13 @@ import type { PC88Config } from "../../src/machines/config.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
 import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM } from "../tools.js";
+import { filledROM, SUBCPU_ECHO_PLUS_ONE } from "../tools.js";
 
-// Sub-CPU ROM: read incoming byte from main side, increment, write
-// back, then HALT. Padded out to 2 KB to match the variant
-// descriptor size.
+// Padded to the variant descriptor's 2 KB so SubCPU's ROM mirror
+// region behaves the same as it would with a real PC-8031 image.
 function echoPlusOneRom(): Uint8Array {
   const rom = new Uint8Array(2048).fill(0x00);
-  rom.set([0xdb, 0xfd, 0x3c, 0xd3, 0xfc, 0x76], 0);
+  rom.set(SUBCPU_ECHO_PLUS_ONE, 0);
   return rom;
 }
 

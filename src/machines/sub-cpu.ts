@@ -1,10 +1,17 @@
 import type { μPD765a } from "../chips/io/μPD765a.js";
 import type { μPD8255 } from "../chips/io/μPD8255.js";
-import { Z80 } from "../chips/z80/cpu.js";
+import {
+  resetZ80,
+  restoreZ80,
+  snapshotZ80,
+  Z80,
+  type Z80CPUSnapshot,
+} from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus, type MemoryProvider } from "../core/MemoryBus.js";
-import type { Cycles, Operations, u16, u8 } from "../flavours.js";
+import type { Cycles, Operations, u8 } from "../flavours.js";
 import { getLogger } from "../log.js";
+import { byte } from "../tools.js";
 
 const log = getLogger("subcpu");
 
@@ -37,27 +44,7 @@ const PORT_IRQ_VECTOR = 0xf0;
 const PORT_DRIVE_MODE = 0xf4;
 
 export interface SubCPUSnapshot {
-  readonly cpu: {
-    readonly PC: u16;
-    readonly SP: u16;
-    readonly AF: u16;
-    readonly BC: u16;
-    readonly DE: u16;
-    readonly HL: u16;
-    readonly IX: u16;
-    readonly IY: u16;
-    readonly AF_: u16;
-    readonly BC_: u16;
-    readonly DE_: u16;
-    readonly HL_: u16;
-    readonly I: u8;
-    readonly R: u8;
-    readonly iff1: boolean;
-    readonly iff2: boolean;
-    readonly im: number;
-    readonly halted: boolean;
-    readonly cycles: Cycles;
-  };
+  readonly cpu: Z80CPUSnapshot;
   readonly irqVector: u8;
   readonly driveMode: u8;
 }
@@ -105,14 +92,14 @@ export class SubCPU {
       name: "subcpu/irq-vec",
       write: (_p, value) => {
         this.irqVector = value;
-        log.info(`IRQ vector latched=0x${value.toString(16)}`);
+        log.info(`IRQ vector latched=0x${byte(value)}`);
       },
     });
     this.ioBus.register(PORT_DRIVE_MODE, {
       name: "subcpu/drive-mode",
       write: (_p, value) => {
         this.driveMode = value;
-        log.info(`drive mode=0x${value.toString(16)}`);
+        log.info(`drive mode=0x${byte(value)}`);
       },
     });
 
@@ -131,49 +118,17 @@ export class SubCPU {
   }
 
   reset(): void {
-    const r = this.cpu.regs;
-    r.PC = 0;
-    r.SP = 0;
-    r.AF = 0;
-    r.BC = 0;
-    r.DE = 0;
-    r.HL = 0;
-    r.IX = 0;
-    r.IY = 0;
-    r.AF_ = 0;
-    r.BC_ = 0;
-    r.DE_ = 0;
-    r.HL_ = 0;
-    r.I = 0;
-    r.R = 0;
-    r.WZ = 0;
-    r.OP = 0;
-    r.OP2 = 0;
-    r.OPx = 0;
-    this.cpu.iff1 = false;
-    this.cpu.iff2 = false;
-    this.cpu.im = 0;
-    this.cpu.halted = false;
-    this.cpu.cycles = 0;
-    this.cpu.prefix = undefined;
-    this.cpu.eiDelay = false;
-    this.cpu.q = 0;
-    this.cpu.qWritten = false;
-    this.cpu.irqLine = false;
+    resetZ80(this.cpu);
     this.ram.fill(0);
     this.irqVector = 0;
     this.driveMode = 0;
   }
 
-  // Run one full instruction (driven through prefix consumption — same
-  // termination rule the main runner uses).
   step(): void {
     this.cpu.runOneOp();
     while (this.cpu.prefix !== undefined) this.cpu.runOneOp();
   }
 
-  // Run up to `n` instructions, stopping early on HALT. Returns how
-  // many were actually executed.
   runOps(n: Operations): Operations {
     let count = 0;
     while (count < n && !this.cpu.halted) {
@@ -183,9 +138,8 @@ export class SubCPU {
     return count as Operations;
   }
 
-  // Run until the cycle delta reaches `n` or HALT, whichever comes
-  // first. Granularity is one Z80 instruction; the actual delta may
-  // overshoot by a few t-states.
+  // Granularity is one Z80 instruction; the actual delta may overshoot
+  // by a few t-states.
   runCycles(n: Cycles): Cycles {
     const start = this.cpu.cycles;
     while (this.cpu.cycles - start < n && !this.cpu.halted) {
@@ -196,53 +150,14 @@ export class SubCPU {
 
   snapshot(): SubCPUSnapshot {
     return {
-      cpu: {
-        PC: this.cpu.regs.PC,
-        SP: this.cpu.regs.SP,
-        AF: this.cpu.regs.AF,
-        BC: this.cpu.regs.BC,
-        DE: this.cpu.regs.DE,
-        HL: this.cpu.regs.HL,
-        IX: this.cpu.regs.IX,
-        IY: this.cpu.regs.IY,
-        AF_: this.cpu.regs.AF_,
-        BC_: this.cpu.regs.BC_,
-        DE_: this.cpu.regs.DE_,
-        HL_: this.cpu.regs.HL_,
-        I: this.cpu.regs.I,
-        R: this.cpu.regs.R,
-        iff1: this.cpu.iff1,
-        iff2: this.cpu.iff2,
-        im: this.cpu.im,
-        halted: this.cpu.halted,
-        cycles: this.cpu.cycles,
-      },
+      cpu: snapshotZ80(this.cpu),
       irqVector: this.irqVector,
       driveMode: this.driveMode,
     };
   }
 
   fromSnapshot(s: SubCPUSnapshot): void {
-    const r = this.cpu.regs;
-    r.PC = s.cpu.PC;
-    r.SP = s.cpu.SP;
-    r.AF = s.cpu.AF;
-    r.BC = s.cpu.BC;
-    r.DE = s.cpu.DE;
-    r.HL = s.cpu.HL;
-    r.IX = s.cpu.IX;
-    r.IY = s.cpu.IY;
-    r.AF_ = s.cpu.AF_;
-    r.BC_ = s.cpu.BC_;
-    r.DE_ = s.cpu.DE_;
-    r.HL_ = s.cpu.HL_;
-    r.I = s.cpu.I;
-    r.R = s.cpu.R;
-    this.cpu.iff1 = s.cpu.iff1;
-    this.cpu.iff2 = s.cpu.iff2;
-    this.cpu.im = s.cpu.im;
-    this.cpu.halted = s.cpu.halted;
-    this.cpu.cycles = s.cpu.cycles;
+    restoreZ80(this.cpu, s.cpu);
     this.irqVector = s.irqVector;
     this.driveMode = s.driveMode;
   }

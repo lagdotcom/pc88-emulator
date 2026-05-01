@@ -1,6 +1,6 @@
 import { IOBus } from "../../core/IOBus.js";
 import { MemoryBus } from "../../core/MemoryBus.js";
-import type { Cycles, s8, u8 } from "../../flavours.js";
+import type { Cycles, s8, u16, u8 } from "../../flavours.js";
 import { isDefined } from "../../tools.js";
 import {
   dispatchBase,
@@ -208,4 +208,70 @@ export class Z80 {
     const rest = (this.regs.R & 0x7f) + 1;
     this.regs.R = highBit | (rest & 0x7f);
   }
+}
+
+// Z80 user-manual RESET behaviour: PC, I, R, IFF1, IFF2, IM all clear
+// to 0; SP, AF, BC, DE, HL, IX, IY and shadows are formally undefined
+// on real silicon but we zero them for determinism (cross-reset
+// register-state tests rely on this). Cycle count + halt + prefix +
+// scratch slots + Q latch are also wiped — anything observable across
+// a reset.
+export function resetZ80(cpu: Z80): void {
+  const r = cpu.regs;
+  r.PC = 0; r.SP = 0;
+  r.AF = 0; r.BC = 0; r.DE = 0; r.HL = 0;
+  r.IX = 0; r.IY = 0;
+  r.AF_ = 0; r.BC_ = 0; r.DE_ = 0; r.HL_ = 0;
+  r.I = 0; r.R = 0;
+  r.WZ = 0; r.OP = 0; r.OP2 = 0; r.OPx = 0;
+  cpu.iff1 = false;
+  cpu.iff2 = false;
+  cpu.im = 0;
+  cpu.eiDelay = false;
+  cpu.halted = false;
+  cpu.irqLine = false;
+  cpu.cycles = 0;
+  cpu.q = 0;
+  cpu.qWritten = false;
+  cpu.prefix = undefined;
+}
+
+export interface Z80CPUSnapshot {
+  readonly PC: u16; readonly SP: u16;
+  readonly AF: u16; readonly BC: u16; readonly DE: u16; readonly HL: u16;
+  readonly IX: u16; readonly IY: u16;
+  readonly AF_: u16; readonly BC_: u16; readonly DE_: u16; readonly HL_: u16;
+  readonly I: u8; readonly R: u8;
+  readonly iff1: boolean; readonly iff2: boolean;
+  readonly im: number;
+  readonly halted: boolean;
+  readonly cycles: Cycles;
+}
+
+export function snapshotZ80(cpu: Z80): Z80CPUSnapshot {
+  return {
+    PC: cpu.regs.PC, SP: cpu.regs.SP,
+    AF: cpu.regs.AF, BC: cpu.regs.BC, DE: cpu.regs.DE, HL: cpu.regs.HL,
+    IX: cpu.regs.IX, IY: cpu.regs.IY,
+    AF_: cpu.regs.AF_, BC_: cpu.regs.BC_, DE_: cpu.regs.DE_, HL_: cpu.regs.HL_,
+    I: cpu.regs.I, R: cpu.regs.R,
+    iff1: cpu.iff1, iff2: cpu.iff2,
+    im: cpu.im,
+    halted: cpu.halted,
+    cycles: cpu.cycles,
+  };
+}
+
+export function restoreZ80(cpu: Z80, s: Z80CPUSnapshot): void {
+  const r = cpu.regs;
+  r.PC = s.PC; r.SP = s.SP;
+  r.AF = s.AF; r.BC = s.BC; r.DE = s.DE; r.HL = s.HL;
+  r.IX = s.IX; r.IY = s.IY;
+  r.AF_ = s.AF_; r.BC_ = s.BC_; r.DE_ = s.DE_; r.HL_ = s.HL_;
+  r.I = s.I; r.R = s.R;
+  cpu.iff1 = s.iff1;
+  cpu.iff2 = s.iff2;
+  cpu.im = s.im;
+  cpu.halted = s.halted;
+  cpu.cycles = s.cycles;
 }

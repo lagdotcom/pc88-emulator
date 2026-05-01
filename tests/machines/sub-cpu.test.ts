@@ -3,15 +3,9 @@ import { describe, expect, it } from "vitest";
 import { μPD8255 } from "../../src/chips/io/μPD8255.js";
 import { IOBus } from "../../src/core/IOBus.js";
 import { SubCPU } from "../../src/machines/sub-cpu.js";
+import { SUBCPU_ECHO_PLUS_ONE } from "../tools.js";
 
-// Sub-CPU test ROM: echo + 1.
-//   IN  A,(0xFD)   ; read incoming byte from main side
-//   INC A
-//   OUT (0xFC),A   ; write outgoing byte back
-//   HALT
-const ECHO_PLUS_ONE = new Uint8Array([
-  0xdb, 0xfd, 0x3c, 0xd3, 0xfc, 0x76,
-]);
+const ECHO_PLUS_ONE = new Uint8Array(SUBCPU_ECHO_PLUS_ONE);
 
 function setup(rom: Uint8Array = ECHO_PLUS_ONE) {
   const ppi = new μPD8255();
