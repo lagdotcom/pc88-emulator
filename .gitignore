@@ -6,6 +6,7 @@
 /web/app.js.map
 /web/worker.js
 /web/worker.js.map
+/web/.well-known/
 /coverage
 /.env
 /tests/z80/data
