@@ -188,8 +188,8 @@ src/
                     (split out from machines/ — see "Web UI architecture"
                     below for the full file list)
   disk/             format-agnostic Disk interface + D88 parser /
-                    serialiser (FDC will consume this; never sees D88
-                    directly)
+                    serialiser + FloppyDrive (motor / cylinder /
+                    rotation cursor; FDC will own a FloppyDrive[N])
 refs/             references for chip behaviour cross-referenced
                   during reverse-engineering — D88 format,
                   Z80 undocumented, MAME PC-8801 port handlers,
@@ -237,10 +237,15 @@ Roughly ordered by what's blocking what.
   data-field length for copy-protected sectors, multi-image D88
   concatenation. D88Disk round-trips byte-for-byte against the
   Rogue (1986 ASCII) fixture.
-- [ ] **`FloppyDrive` layer** — owns inserted disk + motor / cylinder /
-  head / rotation cursor. The FDC will hold a `FloppyDrive[4]` and
-  never touch a `Disk` directly; this seam is where seek time, step
-  rate, and motor spin-up live.
+- [x] **`FloppyDrive` layer** in `src/disk/drive.ts` — owns inserted
+  disk + motor + current cylinder + rotation cursor. `scanForSector`
+  simulates "scan IDs as the head spins past, advance cursor past
+  the matched sector, report whether the index hole was crossed";
+  `readNextSectorID` covers the FDC READ ID command; snapshot only
+  carries position state (the disk is reattached at savestate-load
+  time). The FDC will own `FloppyDrive[N]` and never touch `Disk`
+  directly. Step rate / motor spin-up belong to the FDC's timing
+  model; the drive only tracks position.
 - [ ] **`ROMManifest.disk` is still optional** — once at least one
   chip needs the disk ROM at runtime, lift the field to required.
 - [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80
