@@ -329,7 +329,7 @@ export class BreakpointsPanel {
       ev.preventDefault();
       const addr = parseAddr(this.addrInput.value);
       if (addr === null) return;
-      this.send(`break ${w(addr)}`);
+      this.send(`break 0x${w(addr)}`);
       this.addrInput.value = "";
     });
     this.element.appendChild(form);
@@ -357,7 +357,7 @@ export class BreakpointsPanel {
       remove.type = "button";
       remove.textContent = "×";
       remove.title = "Remove breakpoint";
-      remove.addEventListener("click", () => this.send(`bd ${w(addr)}`));
+      remove.addEventListener("click", () => this.send(`bd 0x${w(addr)}`));
       li.appendChild(text);
       li.appendChild(remove);
       this.list.appendChild(li);
@@ -406,7 +406,13 @@ export class WatchesPanel {
       ev.preventDefault();
       const addr = parseAddr(this.ramAddr.value);
       if (addr === null) return;
-      this.send(`bw ${w(addr)} ${this.ramMode.value} ${this.ramAction.value}`);
+      // Always emit 0x-prefixed hex so debug.ts's parseAddr can't
+      // re-interpret an all-digit address as decimal — `bw 0100 …`
+      // means 0x0100 to the UI but 100-decimal to dispatch, and the
+      // mismatch leaves the × button removing the wrong entry.
+      this.send(
+        `bw 0x${w(addr)} ${this.ramMode.value} ${this.ramAction.value}`,
+      );
       this.ramAddr.value = "";
     });
     this.element.appendChild(ramForm);
@@ -437,7 +443,7 @@ export class WatchesPanel {
       const port = parseAddr(this.portAddr.value);
       if (port === null) return;
       this.send(
-        `bp ${b(port & 0xff)} ${this.portMode.value} ${this.portAction.value}`,
+        `bp 0x${b(port & 0xff)} ${this.portMode.value} ${this.portAction.value}`,
       );
       this.portAddr.value = "";
     });
@@ -464,7 +470,9 @@ export class WatchesPanel {
         remove.type = "button";
         remove.textContent = "×";
         remove.title = "Remove RAM watch";
-        remove.addEventListener("click", () => this.send(`unbw ${w(w_.addr)}`));
+        remove.addEventListener("click", () =>
+          this.send(`unbw 0x${w(w_.addr)}`),
+        );
         li.appendChild(text);
         li.appendChild(remove);
         this.ramList.appendChild(li);
@@ -487,7 +495,9 @@ export class WatchesPanel {
         remove.type = "button";
         remove.textContent = "×";
         remove.title = "Remove port watch";
-        remove.addEventListener("click", () => this.send(`unbp ${b(p.port)}`));
+        remove.addEventListener("click", () =>
+          this.send(`unbp 0x${b(p.port)}`),
+        );
         li.appendChild(text);
         li.appendChild(remove);
         this.portList.appendChild(li);
