@@ -1,8 +1,8 @@
 // Z80 ALU + flag/control helpers shared by the dispatcher in
-// `ops2.ts`. Pure functions over a `Z80` instance — no MCycle, no
-// closures, no opcode tables. Each helper carries a brief comment
-// for the non-obvious flag rules; canonical references are Sean
-// Young's "Undocumented Z80 Documented" and David Banks's
+// `ops.ts`. Pure functions over a `Z80` instance — no opcode
+// tables, no MCycle infrastructure. Each helper carries a brief
+// comment for the non-obvious flag rules; canonical references are
+// Sean Young's "Undocumented Z80 Documented" and David Banks's
 // hoglet67/Z80Decoder Undocumented-Flags wiki.
 
 import { parity } from "../../numbers.js";

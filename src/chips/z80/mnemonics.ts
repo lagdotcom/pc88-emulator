@@ -1,14 +1,13 @@
 // Z80 mnemonic-only tables for the disassembler and the test
-// harness. The execution path lives in `ops2.ts`'s giant-switch
+// harness. The execution path lives in `ops.ts`'s giant-switch
 // dispatchers and the `alu.ts` helpers; this file is purely a
 // `code → mnemonic` lookup, kept in table form because the
 // HL/IX/IY substitutions (Sean Young's H/L rule for the indexed
 // variants) are non-trivial to hand-write 1604 times.
 //
-// The tables match the mnemonics the legacy ops.ts table dispatcher
-// used. New entries here need to keep operand placeholders the
-// disassembler recognises (`n`, `nn`, `d`, `(IX+d)`, `(IY+d)`, the
-// flag mnemonics `nz`/`z`/`nc`/...).
+// New opcodes added to `ops.ts` need a matching entry here, with
+// operand placeholders the disassembler recognises (`n`, `nn`,
+// `d`, `(IX+d)`, `(IY+d)`, the flag mnemonics `nz`/`z`/`nc`/...).
 
 import type { u8 } from "../../flavours.js";
 

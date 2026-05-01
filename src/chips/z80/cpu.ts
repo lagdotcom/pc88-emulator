@@ -9,7 +9,7 @@ import {
   dispatchED,
   dispatchFD,
   dispatchIndexedCB,
-} from "./ops2.js";
+} from "./ops.js";
 import {
   FLAG_C,
   FLAG_H,

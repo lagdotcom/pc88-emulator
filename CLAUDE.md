@@ -117,7 +117,7 @@ session transcripts; they're worth re-using rather than rewriting.
 ## Z80 emulation model
 
 The dispatcher is six per-prefix giant `switch` blocks in
-`src/chips/z80/ops2.ts` — one each for unprefixed, ED, CB, DD, FD,
+`src/chips/z80/ops.ts` — one each for unprefixed, ED, CB, DD, FD,
 and DDCB/FDCB. Each case inlines the per-opcode work directly
 against the `Z80` instance: register and memory accesses are direct
 property loads, no closure-per-MCycle layer, no `inst.execute(this)`
@@ -259,10 +259,10 @@ vitest `test:zex` path captures the same output but only surfaces
 it on completion.
 
 The legacy MCycle table dispatcher and `ops.ts` were retired once
-SingleStepTests, zexdoc, and zexall all ran clean on `ops2.ts`.
-ALU helpers ops2 imports moved to `alu.ts`; mnemonic tables for
+SingleStepTests, zexdoc, and zexall all ran clean on `ops.ts`.
+ALU helpers ops.ts imports moved to `alu.ts`; mnemonic tables for
 the disassembler / test harness moved to `mnemonics.ts`. There is
-no fallback dispatcher anymore — `ops2.ts` is the only path.
+no fallback dispatcher anymore — `ops.ts` is the only path.
 
 ## Test status (as of last commit)
 
@@ -293,7 +293,7 @@ the same off-by-one was also fixed in `do_cp_block` (CPIR/CPDR).
 
 The `tests/programs/` hand-assembled suite passes 23/23
 (programs + IRQ acceptance). Both **zexdoc** and **zexall** run to
-a clean exit on the ops2 dispatcher (the default).
+a clean exit on the dispatcher in ops.ts (the default).
 
 ## Style
 
@@ -417,7 +417,7 @@ co-mingled, just sorted). Don't fight the formatter.
 ### Prettier escape hatch for table-style code
 
 Some files are intentionally dense (one row per opcode in
-`ops2.ts`'s giant switches, one line per accessor in
+`ops.ts`'s giant switches, one line per accessor in
 `regs.ts`'s typed-array class, byte arrays commented as Z80
 assembly in `tests/programs/`). Prettier's default reformatting
 turns those into walls of wrapped statements. Use

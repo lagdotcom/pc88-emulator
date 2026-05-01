@@ -223,17 +223,19 @@ Roughly ordered by what's blocking what.
   mkI but the FDD-IF on later models can drive it.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [x] **Per-opcode switch dispatcher** — landed as `ops2.ts`, six
-  dispatchers (`dispatchBase` / `dispatchED` / `dispatchCB` /
-  `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`). Throughput
-  ~36 Mops/s on Windows V8; full zexdoc/zexall ~2.5 min each, both
-  CRC-clean (incl. undocumented X/Y).
-- [x] **Retire the MCycle table system in `ops.ts`** — done.
-  `ops.ts` is deleted; ALU/flag/control helpers live in `alu.ts`,
-  mnemonic tables for the disassembler / test harness live in
-  `mnemonics.ts`, and `ops2.ts` is the only dispatcher. The
-  `useDispatchBase` kill-switch and the `DISPATCH=table` harness
-  override are gone.
+- [x] **Per-opcode switch dispatcher** — `ops.ts` is six giant
+  switches (`dispatchBase` / `dispatchED` / `dispatchCB` /
+  `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`), one per
+  prefix table. Throughput ~36 Mops/s on Windows V8; full
+  zexdoc/zexall ~2.5 min each, both CRC-clean (incl. undocumented
+  X/Y).
+- [x] **Retire the MCycle table system** — done. The legacy
+  closure-per-MCycle dispatcher and its compile / OpCode.execute /
+  buildOpTable / buildCbTable / buildIndexedCbTable machinery are
+  gone. ALU/flag/control helpers live in `alu.ts`, mnemonic tables
+  for the disassembler / test harness in `mnemonics.ts`, and
+  `ops.ts` is the only dispatcher. The `useDispatchBase`
+  kill-switch and the `DISPATCH=table` harness override are gone.
 
 ### Machine layer
 

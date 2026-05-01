@@ -1,27 +1,24 @@
-// Demonstration of the giant-switch dispatcher pattern for the base
-// (unprefixed) opcode table. Single function, one case per opcode,
-// register and memory accesses inlined directly. No MCycle objects, no
-// closures, no execute() indirect call. Built to compare against
-// ops.ts's table-driven dispatch and to serve as the template for
-// extending the same pattern to ED/CB/DD/FD/DDCB/FDCB.
+// Z80 instruction dispatcher. One giant `switch` per prefix table
+// (unprefixed / ED / CB / DD / FD / DDCB+FDCB), one case per opcode,
+// register and memory accesses inlined directly against the `Z80`
+// instance — no closure-per-MCycle layer, no `inst.execute(this)`
+// indirect call. ALU + flag helpers (`do_add_a`, `inc8`,
+// `do_io_block_flags`, …) live in `alu.ts`; mnemonic strings for
+// the disassembler / test harness live in `mnemonics.ts`.
 //
-// runOneOp() in cpu.ts already handles the universal M1 work (fetch
-// OP, advance PC, incR, charge 4 t-states) before invoking the
-// dispatcher, so cases here only do the per-opcode work and add the
-// remaining t-states.
-//
-// Helpers (do_add_a, inc8, etc.) are imported from ops.ts so the flag
-// behaviour stays in one place. The factor of speedup over the table
-// path comes from the absence of:
-//
-//   - the `inst.execute(this)` indirect call,
-//   - the closure layer wrapping each MCycle's process function, and
-//   - the per-cycle abort check in the abortable variants.
+// `runOneOp()` in cpu.ts handles the universal M1 work (fetch OP,
+// advance PC, incR, charge 4 t-states) before dispatching here, so
+// cases below only do the per-opcode work and add the remaining
+// t-states. DDCB/FDCB are the exception — by the time
+// `dispatchIndexedCB` is called the prefix has already been
+// resolved and the displacement parked in WZ; the op byte itself is
+// MR-not-M1, so the dispatcher handles its own R/cycles.
 //
 // Switch density matters: V8 compiles a 256-case switch on a small
 // integer to a jump table (one indirect branch + computed goto),
-// which is faster than the chain of comparisons it would emit for
-// the peephole switch in cpu.ts.
+// which is faster than a chain of comparisons. Measured throughput
+// is ~36 Mops/s on Windows V8; full zexdoc/zexall ~2.5 min each,
+// CRC-clean.
 //
 // The conditional jump/call/return cases (JP cc, CALL cc, RET cc,
 // JR cc) read the F flag inline. JR-not-taken still has to fetch
@@ -977,9 +974,10 @@ export function dispatchED(cpu: Z80): void {
 // appropriate operation, and writes back; the operation switch is on the
 // top 5 bits and the target switch is on the bottom 3.
 //
-// Flag-setting on shift/rotate ops mirrors `setShiftFlags` from ops.ts.
-// BIT's flag rule for BIT b,(HL) takes X/Y from W (the high half of WZ
-// at the time of the read), per Sean Young.
+// Flag-setting on shift/rotate ops follows Sean Young's rules:
+// X/Y/S come from the result; PV is parity; H = 0; N = 0; C is the
+// shifted-out bit. BIT b,(HL) takes X/Y from W (the high half of WZ
+// at the time of the read).
 
 function setShiftFlags(cpu: Z80, result: u8, carryOut: number): void {
   cpu.updateFlags({
