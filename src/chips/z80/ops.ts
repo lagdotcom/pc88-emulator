@@ -624,8 +624,10 @@ export function do_ld_block(cpu: Z80, value: u8, repeating: boolean) {
 //   PV = (BC != 0); C unchanged.
 //   Non-repeat (or last iteration of CPIR/CPDR):
 //     X = bit 3 of (result - H), Y = bit 1.
-//   Repeating (BC != 0 AND no match, PC has been pulled back):
-//     X = bit 3 of (PC+1).high; Y = bit 5 of (PC+1).high.
+//   Repeating non-final iteration (BC != 0 AND no match, caller has
+//   already pulled PC back by 2): X/Y from PC.high — the
+//   post-decrement PC, NOT (PC+1) (off-by-one only visible on cases
+//   that wrap a page boundary at the decrement).
 export function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
   const a = cpu.regs.A;
   const result = (a - value) & 0xff;
@@ -633,7 +635,7 @@ export function do_cp_block(cpu: Z80, value: u8, repeating: boolean) {
   let x: number;
   let y: number;
   if (repeating) {
-    const pcHi = ((cpu.regs.PC + 1) >> 8) & 0xff;
+    const pcHi = (cpu.regs.PC >> 8) & 0xff;
     x = pcHi & FLAG_X;
     y = pcHi & FLAG_Y;
   } else {

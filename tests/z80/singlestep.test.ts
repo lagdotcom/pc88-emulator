@@ -5,7 +5,7 @@
 //   Z80_PREFIX=ed      run only this prefix (base|cb|dd|ed|fd)
 //   Z80_SAMPLE=N|full  cases per opcode (default 25, "full" = all 1000)
 //   Z80_IGNORE_REGS=r,ei  comma list of register keys to skip
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   cbOpCodes,
@@ -114,20 +114,6 @@ const groups = gatherOps().filter((g) => {
   return true;
 });
 
-// Eagerly load tests so describe.each can build per-case sub-tests.
-const loaded: { group: OpGroup; cases: TestCase[] | Error }[] = [];
-for (const group of groups) {
-  try {
-    const cases = await loadTests(group.filename);
-    loaded.push({
-      group,
-      cases: SAMPLE === Infinity ? cases : cases.slice(0, SAMPLE),
-    });
-  } catch (err) {
-    loaded.push({ group, cases: err as Error });
-  }
-}
-
 function diffMessage(
   diffs: ReturnType<typeof diffState>,
   expected: TestCase["final"],
@@ -155,26 +141,64 @@ function diffMessage(
     .join("; ");
 }
 
-for (const { group, cases } of loaded) {
-  describe(group.description, () => {
-    if (cases instanceof Error) {
-      it("failed to load test data", () => {
-        throw cases;
-      });
-      return;
-    }
-    if (cases.length === 0) {
-      it.skip("no cases", () => {});
-      return;
-    }
+// At full sample (1000 cases × 1604 opcodes ≈ 1.6 M test fixtures),
+// eagerly loading every opcode's JSON and registering one
+// `it.each` per case OOMed V8: ~1.1 GB of raw JSON parses to ~4 GB
+// in V8, plus vitest's per-fixture metadata. Switched to one
+// `it()` per opcode group with internal iteration; cases load in
+// `beforeAll` and are released in `afterAll` so only one group's
+// data lives in the heap at a time. Failures are aggregated (up
+// to FAILURES_REPORTED examples per group) so a regression that
+// hits multiple cases surfaces meaningfully.
+const FAILURES_REPORTED = 10;
 
-    it.each(cases.map((c) => [c.name, c] as const))("%s", (_name, tc) => {
-      const h = makeHarness();
-      loadState(h, tc.initial);
-      seedPorts(h, tc);
-      step(h);
-      const diffs = diffState(h, tc.final, { skipRegs });
-      if (diffs.length) expect.fail(diffMessage(diffs, tc.final));
+for (const group of groups) {
+  describe(group.description, () => {
+    let cases: TestCase[] | null = null;
+    let loadError: Error | null = null;
+
+    beforeAll(async () => {
+      try {
+        const all = await loadTests(group.filename);
+        cases = SAMPLE === Infinity ? all : all.slice(0, SAMPLE);
+      } catch (err) {
+        loadError = err as Error;
+      }
+    });
+
+    afterAll(() => {
+      // Drop the parsed-JSON reference so the next describe's
+      // beforeAll doesn't sit on top of the previous one.
+      cases = null;
+    });
+
+    it("all cases pass", () => {
+      if (loadError) throw loadError;
+      const tcs = cases;
+      if (!tcs || tcs.length === 0) return;
+
+      const failures: string[] = [];
+      let truncated = false;
+      for (const tc of tcs) {
+        const h = makeHarness();
+        loadState(h, tc.initial);
+        seedPorts(h, tc);
+        step(h);
+        const diffs = diffState(h, tc.final, { skipRegs });
+        if (diffs.length) {
+          if (failures.length < FAILURES_REPORTED) {
+            failures.push(`${tc.name}: ${diffMessage(diffs, tc.final)}`);
+          } else {
+            truncated = true;
+          }
+        }
+      }
+      if (failures.length > 0) {
+        const tail = truncated ? " (more elided)" : "";
+        expect.fail(
+          `${failures.length}${tail} of ${tcs.length} cases failed:\n  ${failures.join("\n  ")}`,
+        );
+      }
     });
   });
 }

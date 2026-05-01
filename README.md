@@ -15,12 +15,15 @@ Working:
 - MEMPTR (WZ) tracking on every instruction that touches it; Q
   register tracking for SCF/CCF; R register half-increment;
   EI one-instruction grace period; HALT.
-- SingleStepTests/z80 harness running 1604 opcodes × 25 sample cases
-  = 40,132 hardware-traced test cases per `yarn test:z80`. **All pass
-  on both dispatcher paths.** The previously-failing INIR/INDR/OTIR/
-  OTDR repeat-iteration undocumented H/PV bits were resolved by
-  applying the Banks / MAME `block_io_interrupted_flags` formula in
-  `do_io_block_flags`.
+- SingleStepTests/z80 harness covering 1604 opcodes via `yarn
+  test:z80` (default 25 cases per op, ~20 s). `Z80_SAMPLE=full`
+  switches to the full 1,604,000-case run (~72 s, no OOM — cases
+  lazy-load per opcode and are released between groups). **All
+  pass on both dispatcher paths.** The previously-failing
+  INIR/INDR/OTIR/OTDR repeat-iteration undocumented H/PV bits were
+  resolved by applying the Banks / MAME `block_io_interrupted_flags`
+  formula in `do_io_block_flags`; CPIR/CPDR shared the same
+  PC-high-off-by-one and is now also clean at full sample.
 - Hand-assembled program-level tests (`yarn test:programs`) covering
   fib, sort, LDIR, CALL/RET stacks, BCD, IX/IY, CPIR, CB on (HL).
 - Frank Cringle's zexdoc/zexall via `yarn zex zexdoc` / `yarn zex

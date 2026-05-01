@@ -268,12 +268,21 @@ once a real BIOS boot validates ops2 end-to-end (see TODO).
 
 ## Test status (as of last commit)
 
-SingleStepTests sample size 25 per opcode → 40132 total cases run
-by `yarn test:z80` (1604 ops × 25 + a handful of multi-prefix
-fixtures, covering base + CB + DD + FD + ED + DDCB + FDCB).
-**40132 / 40132 pass on both dispatcher paths.**
+SingleStepTests has 1604 opcode files × 1000 cases each (1.6 M
+machine-traced cases). The harness registers **one vitest fixture
+per opcode group** (1604 fixtures, plus the disasm/symbol files
+on top); inside each fixture the loop iterates the SAMPLE-truncated
+case list and aggregates failures (up to 10 per group, with a
+"more elided" tail). Cases load lazily via `beforeAll` and are
+dropped via `afterAll` so only one group's parsed JSON sits in the
+heap at a time — eagerly loading all 1604 files top-level OOM'd V8
+at full sample (~4 GB of parsed JSON + per-case fixture metadata).
 
-The previous 77-case INIR/INDR/OTIR/OTDR repeat-iteration
+`yarn test:z80` runs the default sample (25 cases × 1604 ops)
+in ~20 s; `Z80_SAMPLE=full yarn test:z80` runs the full 1000 ×
+1604 in ~72 s, no OOM. **All cases pass on both dispatcher paths.**
+
+The previously-failing INIR/INDR/OTIR/OTDR repeat-iteration
 failures were resolved by applying David Banks's analysis
 (`hoglet67/Z80Decoder/wiki/Undocumented-Flags`, also implemented
 as `block_io_interrupted_flags()` in MAME's `z80.cpp`): the 5
@@ -281,7 +290,8 @@ T-state PC-decrement M-cycle on a repeating non-final iteration
 applies a fix-up that overrides H and XNOR-toggles PF with the
 parity of a small seed table, branching on `CF` and `value & 0x80`.
 The `do_io_block_flags` helper in `ops.ts` carries the formula
-inline. Y/X come from the post-decrement `PC.high` (not `PC+1`).
+inline. Y/X come from the post-decrement `PC.high` (not `PC+1`) —
+the same off-by-one was also fixed in `do_cp_block` (CPIR/CPDR).
 
 The `tests/programs/` hand-assembled suite passes 23/23
 (programs + IRQ acceptance). Both **zexdoc** and **zexall** run to
