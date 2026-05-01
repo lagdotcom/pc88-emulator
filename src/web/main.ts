@@ -8,6 +8,7 @@ import { openStore } from "./opfs.js";
 import {
   BreakpointsPanel,
   DisasmPanel,
+  ImportSymsPanel,
   MemoryPanel,
   RegistersPanel,
   ReplPanel,
@@ -51,6 +52,7 @@ interface RunningUI {
   breakpoints: BreakpointsPanel;
   watches: WatchesPanel;
   stack: StackPanel;
+  importSyms: ImportSymsPanel;
   repl: ReplPanel;
 }
 
@@ -95,6 +97,9 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
         break;
       case "out":
         ui.repl.appendOutput(msg.text);
+        break;
+      case "importSymsResult":
+        ui.importSyms.render(msg.results);
         break;
       case "error":
         ui.status.textContent = `worker error: ${msg.message}`;
@@ -198,6 +203,9 @@ function renderRunningView(
   const breakpoints = new BreakpointsPanel(sendCommand);
   const watches = new WatchesPanel(sendCommand);
   const stack = new StackPanel();
+  const importSyms = new ImportSymsPanel((files) => {
+    send(worker, { type: "importSyms", files });
+  });
   const repl = new ReplPanel(sendCommand);
   panels.appendChild(registers.element);
   panels.appendChild(disasm.element);
@@ -205,6 +213,7 @@ function renderRunningView(
   panels.appendChild(breakpoints.element);
   panels.appendChild(watches.element);
   panels.appendChild(stack.element);
+  panels.appendChild(importSyms.element);
   panels.appendChild(repl.element);
   root.appendChild(panels);
 
@@ -235,6 +244,7 @@ function renderRunningView(
     breakpoints,
     watches,
     stack,
+    importSyms,
     repl,
   };
 }

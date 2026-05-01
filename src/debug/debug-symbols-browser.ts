@@ -85,8 +85,15 @@ const opfsBackend: SymbolBackend = {
   },
 };
 
-export type { DebugSymbols } from "./debug-symbols-core.js";
+export type { DebugSymbols, ImportResult } from "./debug-symbols-core.js";
 export { renderLabelList, romIdAt } from "./debug-symbols-core.js";
+
+export const importSymbols = (
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  files: { name: string; text: string; scope?: string }[],
+): Promise<core.ImportResult[]> =>
+  core.importSymbols(opfsBackend, machine, syms, files);
 
 export const loadDebugSymbols = (
   machine: PC88Machine,

@@ -337,6 +337,130 @@ export async function deleteLabel(
   return null;
 }
 
+// One-file import result. The UI surfaces this so the user can see
+// where each uploaded file landed and whether anything went wrong.
+export interface ImportResult {
+  // Original filename the user uploaded.
+  fileName: string;
+  // Where the symbols ended up: ROM id ("mkI-n88"), "ram", "port",
+  // or null if no destination could be matched.
+  scope: string | null;
+  // How the destination was picked. "md5" beats "filename" beats
+  // "explicit" (the user's manual override) beats "none".
+  matchedBy: "md5" | "filename" | "explicit" | "none";
+  // Number of symbol entries merged on success; 0 on no-match.
+  merged: number;
+  // Optional human-readable detail when scope is null or merged is 0.
+  reason?: string;
+}
+
+// Import (or merge) a parsed `.sym` file into the active
+// `DebugSymbols`. For each input file the destination is picked by
+// (in order):
+//
+//   1. The file's `# md5: <hash>` header, if it matches one of the
+//      loaded ROM bytes — most precise, can't be wrong.
+//   2. The filename stem matching either a loaded ROM id, or
+//      `<currentVariantSlug>.{ram,port}`.
+//   3. An explicit `scope` override the caller passes in (used when
+//      the UI asks the user to disambiguate).
+//
+// Symbols that already exist at the same address are overwritten
+// (matches `setSymbol`'s rename semantics — one address = one name).
+// Files with no resolvable destination are returned with scope=null
+// and merged=0 so the caller can surface the failure.
+export async function importSymbols(
+  backend: SymbolBackend,
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  files: { name: string; text: string; scope?: string }[],
+): Promise<ImportResult[]> {
+  const slug = variantSlug(machine);
+  const out: ImportResult[] = [];
+
+  for (const f of files) {
+    const stem = f.name.replace(/^.*[\\/]/, "").replace(/\.sym$/i, "");
+    const parsed = parseSymbolFile(f.text, `(uploaded:${f.name})`);
+    const entries = [...parsed.byAddr.values()];
+
+    let target: SymbolFile | null = null;
+    let matchedBy: ImportResult["matchedBy"] = "none";
+    let scope: string | null = null;
+
+    // 1. md5 header match — most reliable.
+    if (parsed.md5) {
+      for (const entry of syms.byRomId.values()) {
+        if (backend.md5(entry.romBytes) === parsed.md5) {
+          target = entry.file;
+          matchedBy = "md5";
+          scope = entry.romId;
+          break;
+        }
+      }
+    }
+    // 2. Filename match: <rom-id>.sym, <slug>.ram.sym, <slug>.port.sym.
+    if (!target) {
+      const romEntry = syms.byRomId.get(stem);
+      if (romEntry) {
+        target = romEntry.file;
+        matchedBy = "filename";
+        scope = romEntry.romId;
+      } else if (stem === `${slug}.ram`) {
+        target = syms.ramFile;
+        matchedBy = "filename";
+        scope = "ram";
+      } else if (stem === `${slug}.port`) {
+        target = syms.portFile;
+        matchedBy = "filename";
+        scope = "port";
+      }
+    }
+    // 3. Explicit scope override (UI manual selector).
+    if (!target && f.scope) {
+      const romEntry = syms.byRomId.get(f.scope);
+      if (romEntry) {
+        target = romEntry.file;
+        matchedBy = "explicit";
+        scope = romEntry.romId;
+      } else if (f.scope === "ram") {
+        target = syms.ramFile;
+        matchedBy = "explicit";
+        scope = "ram";
+      } else if (f.scope === "port") {
+        target = syms.portFile;
+        matchedBy = "explicit";
+        scope = "port";
+      }
+    }
+
+    if (!target) {
+      out.push({
+        fileName: f.name,
+        scope: null,
+        matchedBy: "none",
+        merged: 0,
+        reason: "no md5 / filename match — pick a destination",
+      });
+      continue;
+    }
+    if (entries.length === 0) {
+      out.push({
+        fileName: f.name,
+        scope,
+        matchedBy,
+        merged: 0,
+        reason: "file contains no symbol lines",
+      });
+      continue;
+    }
+
+    for (const e of entries) setSymbol(target, e.addr, e.name, e.comment);
+    await save(backend, target);
+    out.push({ fileName: f.name, scope, matchedBy, merged: entries.length });
+  }
+  return out;
+}
+
 // renderLabelList is pure — no backend needed.
 export function renderLabelList(syms: DebugSymbols): string {
   const out: string[] = [];

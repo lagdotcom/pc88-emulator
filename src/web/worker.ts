@@ -8,7 +8,11 @@ import {
   setDebugWriter,
   trackedStep,
 } from "../debug/debug.js";
-import { type DebugSymbols, loadDebugSymbols } from "../debug/debug-symbols.js";
+import {
+  type DebugSymbols,
+  importSymbols,
+  loadDebugSymbols,
+} from "../debug/debug-symbols.js";
 import type { ROMID, u16 } from "../flavours.js";
 import { getLogger } from "../log.js";
 import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
@@ -410,6 +414,22 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
         break;
       case "keysAllUp":
         if (state) state.machine.keyboard.releaseAll();
+        break;
+      case "importSyms":
+        if (state && state.syms) {
+          const s = state;
+          const syms = state.syms;
+          void importSymbols(s.machine, syms, msg.files)
+            .then((results) => {
+              post({ type: "importSymsResult", results });
+              postTick(s, "tick");
+            })
+            .catch((err: unknown) => {
+              const message = err instanceof Error ? err.message : String(err);
+              log.error(`importSyms failed: ${message}`);
+              post({ type: "error", message });
+            });
+        }
         break;
       case "command":
         if (state) {

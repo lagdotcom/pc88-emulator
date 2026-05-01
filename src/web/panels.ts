@@ -545,3 +545,68 @@ function makeSelect(options: string[]): HTMLSelectElement {
   }
   return sel;
 }
+
+// Upload + merge `.sym` files. Reads each picked file as text, posts
+// to the worker as a single `importSyms` request (the worker handles
+// destination matching by md5 → filename → explicit scope), and
+// renders the per-file result.
+
+export interface ImportSymsResult {
+  fileName: string;
+  scope: string | null;
+  matchedBy: "md5" | "filename" | "explicit" | "none";
+  merged: number;
+  reason?: string;
+}
+
+export class ImportSymsPanel {
+  readonly element: HTMLElement;
+  private readonly out: HTMLPreElement;
+
+  constructor(
+    onUpload: (files: { name: string; text: string; scope?: string }[]) => void,
+  ) {
+    this.element = document.createElement("section");
+    this.element.className = "panel import-syms-panel";
+
+    const heading = document.createElement("h2");
+    heading.textContent = "Import labels (.sym)";
+    this.element.appendChild(heading);
+
+    const form = document.createElement("form");
+    form.className = "panel-add-form";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".sym,text/plain";
+    form.appendChild(input);
+    input.addEventListener("change", () => {
+      const files = Array.from(input.files ?? []);
+      input.value = "";
+      if (files.length === 0) return;
+      void Promise.all(
+        files.map(async (f) => ({ name: f.name, text: await f.text() })),
+      ).then((payload) => onUpload(payload));
+    });
+    this.element.appendChild(form);
+
+    this.out = document.createElement("pre");
+    this.out.className = "import-syms-out";
+    this.element.appendChild(this.out);
+  }
+
+  render(results: ImportSymsResult[]): void {
+    if (results.length === 0) {
+      this.out.textContent = "";
+      return;
+    }
+    const lines = results.map((r) => {
+      if (r.scope === null) {
+        return `✗ ${r.fileName}: ${r.reason ?? "no destination"}`;
+      }
+      const tag = r.matchedBy === "md5" ? "(md5)" : `(${r.matchedBy})`;
+      return `✓ ${r.fileName} → ${r.scope} ${tag}: ${r.merged} symbol${r.merged === 1 ? "" : "s"}${r.merged === 0 && r.reason ? ` — ${r.reason}` : ""}`;
+    });
+    this.out.textContent = lines.join("\n");
+  }
+}

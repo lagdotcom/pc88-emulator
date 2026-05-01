@@ -30,7 +30,14 @@ export type WorkerInbound =
   // "Drop all currently-held keys" — fired when the canvas loses
   // focus or the page is hidden, so a key that was being held when
   // focus left doesn't stay logically pressed in the matrix.
-  | { type: "keysAllUp" };
+  | { type: "keysAllUp" }
+  // Upload (and merge) one or more parsed `.sym` files. The worker
+  // resolves each file's destination by md5-header → filename →
+  // explicit scope override, then merges via setSymbol.
+  | {
+      type: "importSyms";
+      files: { name: string; text: string; scope?: string }[];
+    };
 
 // CPU state snapshot. Subset of PC88Machine.snapshot().cpu — the same
 // shape but extracted into its own type so the UI panels can refer
@@ -153,4 +160,17 @@ export type WorkerOutbound =
   // Buffered stdout from the worker's debugger dispatch — flushed in
   // chunks so the REPL pane can append plain text.
   | { type: "out"; text: string }
+  // Per-file result of an `importSyms` request — the UI surfaces this
+  // so the user can see what got matched, what merged, and what
+  // needs a manual destination override.
+  | {
+      type: "importSymsResult";
+      results: Array<{
+        fileName: string;
+        scope: string | null;
+        matchedBy: "md5" | "filename" | "explicit" | "none";
+        merged: number;
+        reason?: string;
+      }>;
+    }
   | { type: "error"; message: string };

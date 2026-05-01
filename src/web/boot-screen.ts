@@ -115,10 +115,37 @@ export async function renderBootScreen(
   const romHeading = document.createElement("h2");
   romHeading.textContent = "ROMs";
   romSection.appendChild(romHeading);
+
+  // Multi-upload picker — one input that accepts many files at once
+  // and routes each by descriptor md5 (preferred) or filename stem
+  // (fallback). Per-row inputs stay below for the "I want THIS file
+  // in THIS slot" override case.
+  const multiUploadRow = document.createElement("div");
+  multiUploadRow.className = "rom-multi-upload";
+  const multiUploadLabel = document.createElement("label");
+  multiUploadLabel.textContent = "Upload ROMs (auto-match): ";
+  const multiUploadInput = document.createElement("input");
+  multiUploadInput.type = "file";
+  multiUploadInput.multiple = true;
+  multiUploadInput.accept = ".rom,application/octet-stream";
+  multiUploadLabel.appendChild(multiUploadInput);
+  multiUploadRow.appendChild(multiUploadLabel);
+  const multiUploadStatus = document.createElement("pre");
+  multiUploadStatus.className = "multi-upload-status";
+  multiUploadRow.appendChild(multiUploadStatus);
+  romSection.appendChild(multiUploadRow);
+
   const romList = document.createElement("ul");
   romList.className = "rom-list";
   romSection.appendChild(romList);
   container.appendChild(romSection);
+
+  multiUploadInput.addEventListener("change", () => {
+    const files = Array.from(multiUploadInput.files ?? []);
+    multiUploadInput.value = "";
+    if (files.length === 0) return;
+    void handleMultiUpload(files);
+  });
 
   // --- DIP switches --------------------------------------------------
   const dipSection = document.createElement("section");
@@ -206,6 +233,68 @@ export async function renderBootScreen(
     await deps.store.writeJSON("settings", next);
   }
 
+  // Acceptance helper shared by per-row uploads and the multi-upload
+  // picker. Validates size + md5 against the descriptor, writes to
+  // OPFS, and updates the per-variant index.
+  async function acceptRomFile(
+    bytes: Uint8Array,
+    state: RomState,
+    index: RomIndex,
+  ): Promise<{ ok: true; md5: MD5Sum } | { ok: false; reason: string }> {
+    if (bytes.length !== state.descriptor.size * 1024) {
+      return { ok: false, reason: `wrong size: ${bytes.length}` };
+    }
+    const hash = md5(bytes);
+    if (hash !== state.descriptor.md5) {
+      return { ok: false, reason: `md5 mismatch: ${hash}` };
+    }
+    state.uploaded = { bytes, md5: hash };
+    await deps.store.writeRom(hash, bytes);
+    index[state.descriptor.id] = hash;
+    await deps.store.writeJSON(`index-${variantSlug(currentVariant)}`, index);
+    return { ok: true, md5: hash };
+  }
+
+  // Find the descriptor that this file belongs in. Prefer md5 (an
+  // exact ROM-image match) over filename, and fall back to filename
+  // stem matching the descriptor id ("mkI-n88.rom" → "mkI-n88").
+  function findRomTarget(fileName: string, fileMd5: MD5Sum): RomState | null {
+    for (const state of romState.values()) {
+      if (state.descriptor.md5 === fileMd5) return state;
+    }
+    const stem = fileName.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
+    for (const state of romState.values()) {
+      if (state.descriptor.id === stem) return state;
+    }
+    return null;
+  }
+
+  async function handleMultiUpload(files: File[]): Promise<void> {
+    const indexKey = `index-${variantSlug(currentVariant)}`;
+    const index =
+      (await deps.store.readJSON<RomIndex>(indexKey)) ?? ({} as RomIndex);
+    const lines: string[] = [];
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const hash = md5(bytes);
+      const target = findRomTarget(file.name, hash);
+      if (!target) {
+        lines.push(`✗ ${file.name}: no descriptor matches md5 or filename`);
+        continue;
+      }
+      const result = await acceptRomFile(bytes, target, index);
+      lines.push(
+        result.ok
+          ? `✓ ${file.name} → ${target.descriptor.id}`
+          : `✗ ${file.name} → ${target.descriptor.id}: ${result.reason}`,
+      );
+    }
+    multiUploadStatus.textContent = lines.join("\n");
+    // Re-read OPFS so the per-row checklist reflects the newly
+    // uploaded set as `[cached]`.
+    await rebuildRomList();
+  }
+
   async function rebuildRomList(): Promise<void> {
     romState.clear();
     romList.innerHTML = "";
@@ -281,21 +370,12 @@ export async function renderBootScreen(
       const file = fileInput.files?.[0];
       if (!file) return;
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const hash = md5(bytes);
-      if (bytes.length !== state.descriptor.size * 1024) {
-        status.textContent = `wrong size: ${bytes.length}`;
+      const result = await acceptRomFile(bytes, state, index);
+      if (!result.ok) {
+        status.textContent = result.reason;
         status.className = "rom-status err";
         return;
       }
-      if (hash !== state.descriptor.md5) {
-        status.textContent = `md5 mismatch: ${hash}`;
-        status.className = "rom-status err";
-        return;
-      }
-      state.uploaded = { bytes, md5: hash };
-      await deps.store.writeRom(hash, bytes);
-      index[state.descriptor.id] = hash;
-      await deps.store.writeJSON(`index-${variantSlug(currentVariant)}`, index);
       updateRowStatus(status, state);
       refreshBootButton();
     });
