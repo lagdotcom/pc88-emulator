@@ -64,6 +64,16 @@ async function buildWebBundle() {
       log: shimPath,
       "log/lib/emitter": shimPath,
     },
+    // pc88.ts has a dev-only `process.env.LOG_CPU` guard that
+    // survives tree-shaking; substitute it for `false` so the
+    // conditional dead-code-eliminates instead of throwing
+    // ReferenceError on `process` at runtime in the browser.
+    // esbuild's `define` only accepts identifiers / JSON literals,
+    // hence the per-key form rather than a wholesale `process.env`
+    // replacement.
+    define: {
+      "process.env.LOG_CPU": "false",
+    },
   });
   if (webProd) {
     await ctx.rebuild();
