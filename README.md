@@ -337,10 +337,18 @@ Roughly ordered by what's blocking what.
     when no form element has focus, with `keysAllUp` on blur /
     visibility-change so a key held when focus leaves doesn't
     stay logically pressed.
-  - [ ] OPFS-backed symbol-file persistence so `label` / `unlabel`
-    work in the browser (currently no-ops via the browser stub).
-  - [ ] Symbol-file resolution in disassembly (decide: fetch
-    `syms/*.sym` as static assets, or inline at build time).
+  - [x] OPFS-backed symbol-file persistence — `debug-symbols-browser.ts`
+    is a real implementation that loads `syms/*.sym` from OPFS,
+    parses via `chips/z80/symbols.ts` pure helpers, and writes
+    mutations back through `navigator.storage.getDirectory()`.
+    `symbols.ts` split: pure parse / serialise / setSymbol /
+    removeSymbol stay there; node-fs `loadSymbolFile` /
+    `saveSymbolFile` moved to `chips/z80/symbols-fs.ts`.
+  - [x] Symbol-file resolution in disassembly — once
+    `loadDebugSymbols` resolves, the worker passes the
+    `resolver` / `portResolver` into `disassemble()` so JR / CALL
+    / `LD HL,nn` operands and `IN A,(n)` / `OUT (n),A` ports
+    render as labels in the Disassembly panel.
 - [x] **`build` script type-checks `src/machines/` errors** — the
   `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
   that compile cleanly. They still need real shapes (see machine layer

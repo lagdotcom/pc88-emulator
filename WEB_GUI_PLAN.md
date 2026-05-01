@@ -257,12 +257,37 @@ when no form element has focus.
   `visibilitychange` post `keysAllUp` so a key held when focus
   leaves doesn't stay logically pressed in the matrix.
 
-### Phase 7: Polish
+### Phase 7: OPFS-backed symbol files ✓ (committed)
 
-- Symbol files: `syms/*.sym` are read from disk by
-  `debug-symbols.ts`. Either fetch them as static assets at boot
-  or inline the per-variant set into the bundle. Inline is
-  lighter; the files are small text.
+Symbol files now persist in OPFS instead of being shipped as
+static assets. The browser stub for `debug-symbols.ts` is a real
+implementation that reads / writes `syms/*.sym` text files via
+`navigator.storage.getDirectory()`.
+
+- `chips/z80/symbols.ts` split: the pure helpers (parse,
+  serialise, setSymbol, removeSymbol, emptySymbolFile,
+  symbolTable, mergeSymbolTables, fuzzySymbolTable) stay there.
+  Node-fs `loadSymbolFile` / `saveSymbolFile` moved to
+  `chips/z80/symbols-fs.ts`. `dis.ts` and `debug-symbols.ts`
+  updated to import from there.
+- `machines/debug-symbols-browser.ts` mirrors the Node module's
+  surface: `loadDebugSymbols(machine, loaded)` reads each
+  per-ROM file + the `<variant>.{ram,port}.sym` files from
+  OPFS; `addLabel` / `addPortLabel` / `deleteLabel` /
+  `deletePortLabel` mutate the in-memory `SymbolFile` and write
+  it back. md5 header seeding on first mutation uses the same
+  RFC-1321 implementation the boot screen uses for ROM
+  validation.
+- `web/worker.ts` kicks off `loadDebugSymbols` after boot, then
+  passes `resolver` / `portResolver` into `disassemble()` so the
+  Disassembly panel renders JR / CALL / `LD HL,nn` operands and
+  `IN A,(n)` / `OUT (n),A` ports as labels.
+- The esbuild plugin in `esbuild.config.mjs` still redirects
+  `./debug-symbols.js` to the browser implementation so the
+  worker's `import` resolves correctly.
+
+### Phase 8: Polish (still open)
+
 - Kanji font from kanji ROM once renderer is real.
 - Layout tidy.
 
@@ -335,15 +360,18 @@ when no form element has focus.
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 6
+## File index after phase 7
 
 ```
 src/
+  chips/z80/
+    symbols.ts                     # pure parse / serialise / mutate
+    symbols-fs.ts                  # node:fs load / save (Node-only)
   machines/
     debug.ts                       # dispatch + DebugState (browser-safe)
     debug-cli.ts                   # runDebug + runScript (Node-only)
     debug-symbols.ts               # syms file I/O (Node-only)
-    debug-symbols-browser.ts       # browser stub (no-op writes)
+    debug-symbols-browser.ts       # OPFS-backed browser version
     rom-validate.ts                # pure validate (size + md5)
     rom-loader.ts                  # Node fs path
     rom-loader-browser.ts          # in-memory map path

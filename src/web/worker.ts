@@ -10,6 +10,10 @@ import {
   setDebugWriter,
   trackedStep,
 } from "../machines/debug.js";
+import {
+  type DebugSymbols,
+  loadDebugSymbols,
+} from "../machines/debug-symbols.js";
 import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
 import { md5 } from "./md5.js";
@@ -37,7 +41,19 @@ interface State {
   running: boolean;
   loopHandle: ReturnType<typeof setTimeout> | null;
   debug: DebugState;
+  // Lazily resolved by the OPFS-backed loadDebugSymbols. Null until
+  // the async load completes; dispatch's label commands degrade
+  // gracefully ("symbols not loaded") in the brief window between
+  // boot and the syms promise resolving.
+  syms: DebugSymbols | null;
+  // Held alongside `syms` because the `label` command needs the
+  // ROM bytes to compute md5s for first-mutation file seeding.
+  loadedRoms: LoadedROMsLike | null;
 }
+
+// Minimal alias of LoadedROMs — pulled in via debug.ts opts so the
+// label command can self-seed an md5 header on first write.
+type LoadedROMsLike = Parameters<typeof loadDebugSymbols>[1];
 
 let state: State | null = null;
 
@@ -105,12 +121,16 @@ function disasmAround(
   machine: PC88Machine,
   pc: u16,
   lines: number,
+  syms: DebugSymbols | null,
 ): DisasmLine[] {
   const read = (addr: u16) => machine.memBus.read(addr & 0xffff);
+  const opts = syms
+    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
+    : {};
   const out: DisasmLine[] = [];
   let addr: u16 = pc & 0xffff;
   for (let i = 0; i < lines; i++) {
-    const r = disassemble(read, addr);
+    const r = disassemble(read, addr, opts);
     out.push({ pc: addr, bytes: r.bytes, mnemonic: r.mnemonic });
     addr = (addr + r.length) & 0xffff;
   }
@@ -135,7 +155,12 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     ops: s.debug.ops,
     halted: s.machine.cpu.halted,
     cpu: snapshotCpu(s.machine),
-    disasm: disasmAround(s.machine, s.machine.cpu.regs.PC, DISASM_LINES),
+    disasm: disasmAround(
+      s.machine,
+      s.machine.cpu.regs.PC,
+      DISASM_LINES,
+      s.syms,
+    ),
     debug: snapshotDebug(s),
   };
   const msg: WorkerOutbound =
@@ -219,20 +244,46 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   const machine = new PC88Machine(msg.config, loaded);
   machine.reset();
   const debug = makeDebugState();
-  // The watch-hook installer monkey-patches memBus.read/write +
-  // ioBus.tracer so RAM and port watches fire on access. No symbol
-  // file in the browser bundle — pass null and the hooks render
-  // bare hex labels in their log lines.
+  // installWatchHooks needs a `syms` slot for log-line label
+  // formatting; pass null up front and rebind once the async load
+  // resolves. The hooks read `state.syms` lazily through the
+  // closure so the rebind is visible without re-installing.
   installWatchHooks(machine, debug, null);
-  state = {
+  const s: State = {
     machine,
     running: false,
     loopHandle: null,
     debug,
+    syms: null,
+    loadedRoms: loaded,
   };
+  state = s;
   log.info(`booted ${msg.config.model}`);
   post({ type: "ready" });
-  postTick(state, "tick");
+  postTick(s, "tick");
+  // Kick off OPFS-backed symbol-file load. Surfaces a "labels
+  // loaded" line on the REPL when it lands; failures are
+  // non-fatal.
+  void loadDebugSymbols(machine, loaded)
+    .then((loadedSyms) => {
+      if (state !== s) return;
+      s.syms = loadedSyms;
+      let count = 0;
+      for (const e of loadedSyms.byRomId.values()) count += e.file.byAddr.size;
+      count += loadedSyms.ramFile.byAddr.size;
+      count += loadedSyms.portFile.byAddr.size;
+      post({
+        type: "out",
+        text: `  ${count} labels loaded across ${loadedSyms.byRomId.size} ROMs + RAM/port files\n`,
+      });
+      // Re-tick so any disasm-side label-resolution refresh picks
+      // up the freshly loaded symbols.
+      postTick(s, "tick");
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn(`symbol load failed: ${message}`);
+    });
 }
 
 // Step / next / continue have to flow through the worker's state
@@ -287,15 +338,18 @@ async function handleCommand(s: State, line: string): Promise<void> {
       return;
   }
   // Other commands flow through the same dispatch the CLI uses.
-  // syms = null in the browser bundle; OPFS-backed label persistence
-  // is a follow-up.
-  const ctx = {
+  // syms is filled in asynchronously after handleBoot kicks off
+  // loadDebugSymbols — until that resolves, label / unlabel /
+  // labels surface a "symbols not loaded" line and no-op safely.
+  // loadedRoms is omitted (not set to undefined) when null so the
+  // exactOptionalPropertyTypes-narrowed DispatchCtx still matches.
+  const opts = s.loadedRoms ? { loadedRoms: s.loadedRoms } : {};
+  await dispatch(line, {
     machine: s.machine,
     state: s.debug,
-    syms: null,
-    opts: {},
-  };
-  await dispatch(line, ctx);
+    syms: s.syms,
+    opts,
+  });
   // The command may have set a breakpoint, mutated memory, etc.
   // Re-tick so the panels reflect the new state without the user
   // having to click anything.

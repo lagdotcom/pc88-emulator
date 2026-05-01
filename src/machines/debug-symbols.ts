@@ -16,12 +16,11 @@ import { dirname, join } from "node:path";
 import type { ResolveLabel, ResolvePort } from "../chips/z80/disasm.js";
 import {
   emptySymbolFile,
-  loadSymbolFile,
   removeSymbol,
-  saveSymbolFile,
   setSymbol,
   type SymbolFile,
 } from "../chips/z80/symbols.js";
+import { loadSymbolFile, saveSymbolFile } from "../chips/z80/symbols-fs.js";
 import type { FilesystemPath, ROMID } from "../flavours.js";
 import type { ROMDescriptor } from "./config.js";
 import type { PC88Machine } from "./pc88.js";

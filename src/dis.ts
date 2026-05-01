@@ -34,11 +34,11 @@ import { parseArgs } from "node:util";
 import { disassemble } from "./chips/z80/disasm.js";
 import {
   fuzzySymbolTable,
-  loadSymbolFile,
   mergeSymbolTables,
   type SymbolTable,
   symbolTable,
 } from "./chips/z80/symbols.js";
+import { loadSymbolFile } from "./chips/z80/symbols-fs.js";
 import type { FilesystemPath, u8, u16 } from "./flavours.js";
 import { byte, hex, word } from "./tools.js";
 
@@ -198,7 +198,9 @@ async function main(): Promise<void> {
   if (romSyms) tables.push(romSyms);
   if (ramSyms) tables.push(ramSyms);
   const merged: SymbolTable | undefined =
-    tables.length === 0 ? undefined : fuzzySymbolTable(mergeSymbolTables(...tables));
+    tables.length === 0
+      ? undefined
+      : fuzzySymbolTable(mergeSymbolTables(...tables));
 
   process.stdout.write(
     `; ${filePath} (${bytes.length} bytes), base=0x${hex(base, 4)}, ` +
