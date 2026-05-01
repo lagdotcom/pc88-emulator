@@ -115,6 +115,7 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     halted: s.machine.cpu.halted,
     cpu: snapshotCpu(s.machine),
     disasm: disasmAround(s.machine, s.machine.cpu.regs.PC, DISASM_LINES),
+    breakpoints: [...s.debug.breakpoints],
   };
   const msg: WorkerOutbound =
     type === "stopped"

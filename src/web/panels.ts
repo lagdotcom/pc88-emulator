@@ -86,12 +86,17 @@ export class DisasmPanel {
     this.element.appendChild(this.pre);
   }
 
-  render(pc: number, lines: DisasmLine[]): void {
+  render(pc: number, lines: DisasmLine[], breakpoints: number[]): void {
+    const bps = new Set(breakpoints);
     const out: string[] = [];
     for (const ln of lines) {
-      const marker = ln.pc === pc ? "►" : " ";
+      // Two-character marker column: a red bullet for an active
+      // breakpoint, then a play-head arrow for the current PC. Both
+      // independent so a breakpoint at PC shows both glyphs.
+      const bp = bps.has(ln.pc) ? "●" : " ";
+      const cur = ln.pc === pc ? "►" : " ";
       const bytesStr = ln.bytes.map(b).join(" ").padEnd(11);
-      out.push(`${marker} ${w(ln.pc)}  ${bytesStr}  ${ln.mnemonic}`);
+      out.push(`${bp}${cur} ${w(ln.pc)}  ${bytesStr}  ${ln.mnemonic}`);
     }
     this.pre.textContent = out.join("\n");
   }

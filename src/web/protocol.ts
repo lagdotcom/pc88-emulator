@@ -69,6 +69,9 @@ export type WorkerOutbound =
       halted: boolean;
       cpu: CPUSnapshot;
       disasm: DisasmLine[];
+      // Active code breakpoints — let the UI mark disassembly rows.
+      // Sorted-not-required; the disasm panel does a Set lookup.
+      breakpoints: u16[];
     }
   | {
       type: "stopped";
@@ -83,6 +86,7 @@ export type WorkerOutbound =
       halted: boolean;
       cpu: CPUSnapshot;
       disasm: DisasmLine[];
+      breakpoints: u16[];
     }
   | {
       type: "memory";

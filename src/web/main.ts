@@ -66,14 +66,14 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
       case "tick":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm);
+        ui.disasm.render(msg.pc, msg.disasm, msg.breakpoints);
         ui.status.textContent = `${msg.running ? "running" : "paused"} pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}${msg.halted ? " halted" : ""}`;
         setRunUi(ui, msg.running);
         break;
       case "stopped":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm);
+        ui.disasm.render(msg.pc, msg.disasm, msg.breakpoints);
         ui.status.textContent = `stopped (${msg.reason}) pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}`;
         setRunUi(ui, false);
         break;
@@ -127,9 +127,24 @@ function renderRunningView(
   root.classList.remove("boot-screen");
   root.classList.add("running");
 
+  // Title row: model name on the left, back-to-boot button on the
+  // right. The button terminates the worker before re-rendering so
+  // a second boot doesn't spawn an additional one alongside.
+  const titleRow = document.createElement("div");
+  titleRow.className = "title-row";
   const heading = document.createElement("h1");
   heading.textContent = config.model;
-  root.appendChild(heading);
+  titleRow.appendChild(heading);
+  const back = document.createElement("button");
+  back.type = "button";
+  back.textContent = "Back to boot screen";
+  back.className = "back-button";
+  back.addEventListener("click", () => {
+    worker.terminate();
+    void main();
+  });
+  titleRow.appendChild(back);
+  root.appendChild(titleRow);
 
   const controls = document.createElement("div");
   controls.className = "run-controls";
@@ -185,20 +200,6 @@ function renderRunningView(
   pre.className = "tvram-dump";
   fallback.appendChild(pre);
   root.appendChild(fallback);
-
-  const back = document.createElement("button");
-  back.type = "button";
-  back.textContent = "Back to boot screen";
-  back.className = "back-button";
-  back.addEventListener("click", () => {
-    // Tear down the worker before re-rendering the boot screen.
-    // Without this the worker keeps running in the background and a
-    // second boot would spawn another one alongside it, multiplying
-    // the CPU load every time the user round-trips.
-    worker.terminate();
-    void main();
-  });
-  root.appendChild(back);
 
   return {
     renderer,

@@ -94,10 +94,11 @@ button:disabled { background: #555; cursor: not-allowed; }
   background: #000;
   /* CSS-scale the 8×16 cell × 80×20 grid to a comfortable size while
      keeping pixel-aligned glyph edges; the canvas backing store stays
-     at the natural 640×320. */
-  width: 960px;
+     at the natural 640×320. Height-driven so the canvas always fills
+     the same vertical lane regardless of CRTC column count. */
+  height: 480px;
+  width: auto;
   max-width: 100%;
-  height: auto;
   image-rendering: pixelated;
   align-self: flex-start;
 }
@@ -105,7 +106,16 @@ button:disabled { background: #555; cursor: not-allowed; }
   font-size: 0.85rem;
 }
 .ascii-fallback summary { color: #aaa; cursor: pointer; }
-.back-button { align-self: flex-start; background: #444; margin-top: 0.5rem; }
+
+.title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+.title-row h1 { margin: 0; }
+.back-button { background: #b91c1c; }
+.back-button:hover { background: #dc2626; }
 
 .panels {
   display: grid;
