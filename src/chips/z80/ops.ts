@@ -26,7 +26,7 @@
 // fetch both bytes of the target address.
 
 import type { u8 } from "../../flavours.js";
-import { asS8, parity } from "../../numbers.js";
+import { asS8, parity } from "../../tools.js";
 import type { Z80 } from "./cpu.js";
 import {
   and_a,
