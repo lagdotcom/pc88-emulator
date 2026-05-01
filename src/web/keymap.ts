@@ -104,6 +104,12 @@ const MAP: Readonly<Record<string, PC88Key>> = {
   AltRight: PC88Key.GRPH,
   CapsLock: PC88Key.CAPS_LOCK,
 
+  // STOP is the BASIC break key. The host's Pause/Break key is the
+  // closest physical equivalent; on Macs without a Pause key the
+  // user can map STOP via the on-screen REPL or rebind in browser
+  // shortcuts.
+  Pause: PC88Key.STOP,
+
   // Function keys (mkI/mkII expose F1..F5; FH+ adds F6..F10)
   F1: PC88Key.F1,
   F2: PC88Key.F2,
