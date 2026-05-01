@@ -379,14 +379,24 @@ Roughly ordered by what's blocking what.
   require the N88 banner past the prompt. ROMs go in `roms/`
   (gitignored) — see `src/machines/variants/mk1.ts` for filenames
   + md5s.
-- [ ] **N88 disk-files prompt needs keyboard input**. After the
-  IRQ fix, `--basic=n88` boots all the way to "How many
-  files(0-15)?" (the disk-config prompt that real N88-BASIC
-  shows on disk-equipped models) and stalls. To reach the
-  banner past this prompt the headless runner needs either: a
-  way to feed key events into `Keyboard` (the matrix is wired
-  but no input source is hooked up), or a `--no-disk` switch
-  that programs the DIP bits to skip the prompt.
+- [x] **N88 disk-files prompt — past it via mailbox poke**. The
+  real-ROM smoke test now answers the prompt and asserts the BASIC
+  banner ("NEC N-88 BASIC Version 1.0", copyright, "Ok"). The full
+  matrix-scan ISR path (RTC IRQ → ISR samples keyboard → queues
+  ASCII into the BIOS mailbox) isn't wired — RTC IRQs aren't
+  generated, and the BIOS's IM 2 vector table at 0xF300 is wiped
+  before the prompt is reached anyway. Workaround: the test pokes
+  ASCII directly into the BIOS's input mailbox at the head pointer
+  stored at 0xE6CB. ROM-version-specific (works for the mkI N88
+  ROM md5 verified by loadRoms).
+- [ ] **RTC IRQ pump + keyboard ISR path**. Real-silicon-style
+  keyboard input requires (a) a 600 Hz RTC IRQ source, (b) the BIOS
+  IM 2 vector table at 0xF300 staying populated through the prompt
+  (or pointing somewhere stable), and (c) the BIOS keyboard ISR
+  reading the matrix. Today (a) and (b) are both missing — the
+  BIOS sets up the table at boot then re-clears it around op
+  124k for reasons we haven't reverse-engineered yet. Until this
+  lands, headless tests use the mailbox-poke workaround above.
 
 ## Web UI architecture
 

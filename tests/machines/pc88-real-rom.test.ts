@@ -78,4 +78,48 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
 
     expect(machine.display.toASCIIDump()).toContain("How many files(0-15)?");
   });
+
+  it("--basic=n88 path: answers the prompt and reaches the BASIC banner", async () => {
+    // Real silicon reaches the banner past "How many files(0-15)?"
+    // only after the user types '0' Return. The keystroke is decoded
+    // by the RTC-driven keyboard ISR, which queues the ASCII char
+    // into a RAM mailbox the BIOS's polling loop drains. We don't
+    // drive RTC IRQs yet (would also need a valid IM 2 vector table
+    // — the BIOS LDIRs one to 0xf300 then wipes it again before the
+    // prompt), so the matrix scan never fires.
+    //
+    // To still verify the post-prompt path runs, we forge the ISR's
+    // output directly: the mailbox head pointer lives at 0xE6CB; we
+    // poke the char field, the BIOS picks it up and processes as if
+    // the user typed it. Specific to mkI N88 ROM
+    // md5=22be239bc0c4298bc0561252eed98633 (validated by loadRoms).
+    const loaded = await loadRoms(MKI, { dir: ROM_DIR });
+    if (!loaded.n80 || !loaded.n88) return;
+    const config = {
+      ...MKI,
+      dipSwitches: {
+        ...MKI.dipSwitches,
+        port31: MKI.dipSwitches.port31 & ~0x04,
+      },
+    };
+    const machine = new PC88Machine(config, loaded as LoadedROMs);
+    machine.reset();
+    runMachine(machine, { maxOps: kOps(250) });
+
+    const ram = machine.memoryMap.mainRam;
+    const mailbox = ram[0xe6cb]! | (ram[0xe6cc]! << 8);
+    const charField = (mailbox + 2) & 0xffff;
+
+    ram[charField] = 0x30; // '0'
+    runMachine(machine, { maxOps: kOps(50) });
+
+    ram[charField] = 0x0d; // Return
+    runMachine(machine, { maxOps: kOps(50) });
+
+    const dump = machine.display.toASCIIDump();
+    expect(dump).toContain("How many files(0-15)?");
+    expect(dump).toContain("NEC N-88 BASIC");
+    expect(dump).toContain("Copyright (C) 1981 by Microsoft");
+    expect(dump).toContain("Ok");
+  });
 });
