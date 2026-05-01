@@ -268,8 +268,9 @@ percentage and ETA come from a hardcoded total of ~5.8 G
 instructions per run (measured on this emulator; refresh in both
 `zex-runner.ts` and `zexdoc.test.ts` if it drifts).
 
-Measured rate (Windows V8): ~36 Mops/s. Full zexdoc ~2.5 min; full
-zexall ~2.5 min. Both pass cleanly (no CRC mismatches). The
+Measured rate (Windows V8): ~33.8 Mops/s on zexall, ~36 Mops/s on
+zexdoc. Full zexdoc ~2.5 min; full zexall ~2.5 min. Both pass
+cleanly (no CRC mismatches). The
 vitest `test:zex` path captures the same output but only surfaces
 it on completion.
 
@@ -595,6 +596,22 @@ that never reaches the screen** — token tables (`auto`, `go to`,
 `rawTVRAMDump()` ignores the CRTC config and lays out the full 4 KB
 as 25 × 80 cells; useful for spotting what the BIOS is using
 TVRAM for outside the visible area.
+
+### Boot-path op-budget thresholds
+
+Empirical minimums for the headless runner (`runMachine` /
+`pc88-real-rom.test.ts`) — anything below these and the visible
+region will still be mid-init when the run terminates:
+
+- **N-BASIC banner** ("NEC PC-8001 BASIC", "Copyright 1979 (C) by
+  Microsoft", "Ok") — needs at least **120 kOps**. The smoke test
+  budgets `kOps(150)` for headroom.
+- **N88-BASIC "How many files(0-15)?"** — needs at least
+  **210 kOps**. The smoke test budgets `kOps(250)`.
+
+Refresh these if the boot path picks up extra work (e.g. when
+the FDC and sub-CPU land and the disk-config prompt actually
+takes user input).
 
 `yarn pc88` exposes its options as CLI flags (`yarn pc88 --help`
 for the full list): `-m`/`--machine=NAME`,
