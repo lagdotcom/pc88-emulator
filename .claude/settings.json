@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"Reminder: CLAUDE.md treats the README TODO list as part of the deliverable. If this commit adds, changes, or removes a feature, verify the TODO list in README.md reflects the change in the same commit (or as a follow-up amend before push).\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}

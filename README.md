@@ -117,6 +117,13 @@ required mkI ROM files are `mkI-n80.rom`, `mkI-n88.rom`,
 `mkI-e0.rom` with md5s declared in `src/machines/variants/mk1.ts`.
 The `roms/` directory is gitignored so dumps stay local.
 
+Canned debugger recipes live in `dbg/` (`*.dbg` files); run
+`yarn pc88 --basic=n88 --script=dbg/n88-print-entry.dbg` to drop a
+log-mode watch on port 0x71, run boot to the print-routine entry,
+and dump the RAM hooks the print path dispatches through. Recipes
+omit `quit` so the REPL takes over once the script finishes —
+useful for interactive follow-up.
+
 `yarn pc88 --debug` drops into an interactive REPL before any
 instructions execute. Commands: step / next (step-over) /
 continue [cycles] / break / unbreak / breaks / regs / chips /

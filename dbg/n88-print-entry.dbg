@@ -1,0 +1,23 @@
+# Catch the call into N88's print routine and inspect what BASIC has
+# done to the RAM hooks (0xEC88 / 0xED42 / 0xED99 / 0xE64C) so far.
+#
+#   yarn pc88 --basic=n88 --script=dbg/n88-print-entry.dbg
+#
+# Expectation: stops at 0x5550 with the auto-trace showing the path
+# in (e.g. CALL print_string from 0x78ad), call stack showing the
+# enclosing routine, and a peek of the four RAM hooks. Initial port
+# 0x71 reads / writes are logged inline while boot runs through
+# EROM gating.
+
+bp 0x71 rw log
+break 0x5550
+continue 10000000
+
+# At the breakpoint, dump the four RAM cells the print path
+# dispatches through (per README diagnosis).
+peek 0xEC88 4
+peek 0xED42 2
+peek 0xED99 2
+peek 0xE64C 2
+stack
+chips

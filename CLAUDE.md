@@ -818,6 +818,34 @@ in `irq.ts`. `PORT52`, `PORT53`, `VRAM_SEL` live in
 `display-regs.ts`. All follow the `as const` object pattern so they
 compose with `&`/`|` without TS-enum casts.
 
+## Canned debugger recipes (`dbg/`)
+
+Diagnostic flows we run repeatedly live as committed scripts under
+`dbg/`. Each is a one-shot probe — set up the watches/breakpoints,
+run a fixed cycle budget, dump diagnostics. Scripts intentionally
+omit `quit` so the REPL takes over when the script finishes,
+giving the operator room for interactive follow-up.
+
+| Script | Purpose |
+|--------|---------|
+| `dbg/n88-print-entry.dbg` | Run N88 boot, log port 0x71 EROM gating, break at 0x5550, dump the RAM hooks (0xEC88/0xED42/0xED99/0xE64C). Initial diagnosis output: `0xED42`/`0xED99` are still RET stubs at print-call time → BIOS hasn't installed the RST 18h hook. |
+| `dbg/erom-cycle.dbg` | Log every port 0x32 + 0x71 hit during a fixed boot window. Diff between N88 and N-BASIC to see who actually exercises the EROM dispatch. |
+| `dbg/vbl-acceptance.dbg` | Log writes to port 0xE6 (IRQ mask), break at 0x0038 to catch IM 1 acceptance. Stack will show `via=IRQ` from the about-to-execute PC. |
+
+When you write a new recipe (or significantly change one), update
+this table and the README's debugger paragraph in the same commit.
+
+## Hooks
+
+Project-wide hooks live in `.claude/settings.json`:
+
+- **`PostToolUse` on `Bash(git commit *)`** — emits a reminder via
+  `additionalContext` that the README TODO list should be updated
+  in any feature-changing commit. Backstop for the "treat README
+  as part of the deliverable" rule above; the existing
+  `~/.claude/stop-hook-git-check.sh` separately blocks Stop while
+  uncommitted changes remain.
+
 ## Branch / pushing
 
 Active branch: `claude/pc88-emulator-fdc-NufaT`. Never push to `main`.
