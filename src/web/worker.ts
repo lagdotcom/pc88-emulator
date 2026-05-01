@@ -2,20 +2,15 @@ import { disassemble } from "../chips/z80/disasm.js";
 import type { ROMID, u16 } from "../flavours.js";
 import { getLogger } from "../log.js";
 import {
+  callOpLength,
   type DebugState,
   dispatch,
   installWatchHooks,
   makeDebugState,
   setDebugWriter,
+  trackedStep,
 } from "../machines/debug.js";
-import {
-  makeVblState,
-  PC88Machine,
-  pumpVbl,
-  stepOneInstruction,
-  VBL_HZ,
-  type VblState,
-} from "../machines/pc88.js";
+import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
 import { md5 } from "./md5.js";
 import type {
@@ -38,8 +33,6 @@ const FRAME_INTERVAL_MS = Math.round(1000 / VBL_HZ);
 
 interface State {
   machine: PC88Machine;
-  vbl: VblState;
-  ops: number;
   running: boolean;
   loopHandle: ReturnType<typeof setTimeout> | null;
   debug: DebugState;
@@ -118,7 +111,7 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     rows: frame.rows,
     pc: s.machine.cpu.regs.PC,
     cycles: s.machine.cpu.cycles,
-    ops: s.ops,
+    ops: s.debug.ops,
     halted: s.machine.cpu.halted,
     cpu: snapshotCpu(s.machine),
     disasm: disasmAround(s.machine, s.machine.cpu.regs.PC, DISASM_LINES),
@@ -139,21 +132,48 @@ function postPeek(s: State, addr: u16, count: number): void {
   post({ type: "memory", addr: addr & 0xffff, bytes: buf }, [buf]);
 }
 
+// Single canonical run loop. Uses trackedStep so RAM/port watches
+// fire, the call stack synthesises, and the PC ring buffer fills.
+// Breakpoints + step-over targets stop the loop the same way
+// dispatch's runUntilStop would, but yields back to the message
+// queue every FRAME_CYCLES so pause / peek / typed REPL commands
+// stay responsive.
 function runFrame(s: State): void {
   if (!s.running) return;
   const target = s.machine.cpu.cycles + FRAME_CYCLES;
   while (s.machine.cpu.cycles < target) {
-    pumpVbl(s.machine, s.vbl);
     if (s.machine.cpu.halted && !s.machine.cpu.iff1) {
       s.running = false;
       postTick(s, "stopped", "halted-no-irq");
       return;
     }
-    s.machine.cpu.runOneOp();
-    s.ops++;
+    trackedStep(s.machine, s.debug);
+    if (s.debug.stopReason) {
+      const reason = s.debug.stopReason;
+      s.debug.stopReason = null;
+      stopRunning(s);
+      postTick(s, "stopped", reason);
+      return;
+    }
+    const pc = s.machine.cpu.regs.PC;
+    if (s.debug.stepOverTarget !== null && pc === s.debug.stepOverTarget) {
+      s.debug.stepOverTarget = null;
+      stopRunning(s);
+      postTick(s, "stopped", `step-over @ ${hex4(pc)}`);
+      return;
+    }
+    if (s.debug.breakpoints.has(pc)) {
+      stopRunning(s);
+      postTick(s, "stopped", `breakpoint @ ${hex4(pc)}`);
+      return;
+    }
   }
   postTick(s, "tick");
   s.loopHandle = setTimeout(() => runFrame(s), FRAME_INTERVAL_MS);
+}
+
+function hex4(v: number): string {
+  return v.toString(16).padStart(4, "0");
 }
 
 function startRunning(s: State): void {
@@ -184,8 +204,6 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   installWatchHooks(machine, debug, null);
   state = {
     machine,
-    vbl: makeVblState(),
-    ops: 0,
     running: false,
     loopHandle: null,
     debug,
@@ -195,8 +213,60 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   postTick(state, "tick");
 }
 
+// Step / next / continue have to flow through the worker's state
+// machine — dispatch's versions call runUntilStop synchronously,
+// which would block the message loop and prevent pause / peek /
+// typed REPL commands from interleaving with a running emulator.
+// Other commands (break / unbreak / watch / peek / regs / chips /
+// label / …) flow through dispatch unchanged.
+function doStep(s: State): void {
+  stopRunning(s);
+  if (s.machine.cpu.halted && !s.machine.cpu.iff1) {
+    post({ type: "out", text: "  (HALT with IFF1=0; CPU is stuck)\n" });
+    postTick(s, "tick");
+    return;
+  }
+  trackedStep(s.machine, s.debug);
+  if (s.debug.stopReason) {
+    post({ type: "out", text: `  ${s.debug.stopReason}\n` });
+    s.debug.stopReason = null;
+  }
+  postTick(s, "tick");
+}
+
+function doNext(s: State): void {
+  stopRunning(s);
+  const pc = s.machine.cpu.regs.PC;
+  const op = s.machine.memBus.read(pc);
+  const len = callOpLength(op);
+  if (len !== null) {
+    s.debug.stepOverTarget = (pc + len) & 0xffff;
+    startRunning(s);
+  } else {
+    doStep(s);
+  }
+}
+
 async function handleCommand(s: State, line: string): Promise<void> {
-  // syms = null for now; phase 4b/c may swap in OPFS-backed labels.
+  const head = line.trim().split(/\s+/)[0]?.toLowerCase();
+  switch (head) {
+    case "s":
+    case "step":
+      doStep(s);
+      return;
+    case "n":
+    case "next":
+      doNext(s);
+      return;
+    case "c":
+    case "cont":
+    case "continue":
+      startRunning(s);
+      return;
+  }
+  // Other commands flow through the same dispatch the CLI uses.
+  // syms = null in the browser bundle; OPFS-backed label persistence
+  // is a follow-up.
   const ctx = {
     machine: s.machine,
     state: s.debug,
@@ -204,9 +274,9 @@ async function handleCommand(s: State, line: string): Promise<void> {
     opts: {},
   };
   await dispatch(line, ctx);
-  // The debugger may have stepped, set a breakpoint, mutated memory,
-  // etc. Re-tick so the panels reflect the new state without the
-  // user having to click anything.
+  // The command may have set a breakpoint, mutated memory, etc.
+  // Re-tick so the panels reflect the new state without the user
+  // having to click anything.
   postTick(s, "tick");
 }
 
@@ -228,19 +298,29 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
         }
         break;
       case "step":
-        if (state && !state.running) {
-          pumpVbl(state.machine, state.vbl);
-          stepOneInstruction(state.machine);
-          state.ops++;
-          postTick(state, "tick");
-        }
+        if (state) doStep(state);
         break;
       case "reset":
         if (state) {
           stopRunning(state);
           state.machine.reset();
-          state.vbl = makeVblState();
-          state.ops = 0;
+          // Drop the debugger's bookkeeping too — call stack /
+          // pcTrace / VBL counters all become invalid the moment
+          // the CPU jumps back to 0x0000. Breakpoints + watches
+          // are intentionally preserved across reset; the user set
+          // them deliberately and would resent losing them on a
+          // routine reboot.
+          const fresh = makeDebugState([...state.debug.breakpoints]);
+          fresh.ramWatches = state.debug.ramWatches;
+          fresh.portWatches = state.debug.portWatches;
+          state.debug.callStack = fresh.callStack;
+          state.debug.ops = fresh.ops;
+          state.debug.vbl = fresh.vbl;
+          state.debug.pcTrace = fresh.pcTrace;
+          state.debug.pcTraceWrite = fresh.pcTraceWrite;
+          state.debug.pcTraceFilled = fresh.pcTraceFilled;
+          state.debug.stopReason = null;
+          state.debug.stepOverTarget = null;
           postTick(state, "tick");
         }
         break;

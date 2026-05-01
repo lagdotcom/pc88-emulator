@@ -251,7 +251,7 @@ function parseAddr(raw: string | undefined): u16 | null {
 // CALL family — return (1) bytes consumed, or null if not a CALL.
 // Conditional CALL Cc, RST p both included. CALL inside DD/FD/CB
 // prefix isn't a thing; we check the unprefixed byte at PC.
-function callOpLength(opcode: u8): Bytes | null {
+export function callOpLength(opcode: u8): Bytes | null {
   // Unconditional CALL: 0xCD, 3 bytes
   if (opcode === 0xcd) return 3;
   // Conditional CALL Cc: 0xC4 / CC / D4 / DC / E4 / EC / F4 / FC, 3 bytes
@@ -293,7 +293,7 @@ function pushFrame(state: DebugState, frame: CallFrame): void {
 // Watchpoints are checked inside memBus.read / write / ioBus.tracer
 // hooks installed by installWatchHooks(); they set state.stopReason
 // which the run loop drains between instructions.
-function trackedStep(machine: PC88Machine, state: DebugState): void {
+export function trackedStep(machine: PC88Machine, state: DebugState): void {
   pumpVbl(machine, state.vbl);
   if (machine.cpu.halted && !machine.cpu.iff1) return;
 
