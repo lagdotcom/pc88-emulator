@@ -333,6 +333,7 @@ src/
     debug-symbols.ts           # syms file I/O (Node-only)
     debug-symbols-browser.ts   # OPFS-backed browser version
     rom-loader-browser.ts      # in-memory map path
+  md5.ts                       # MD5Sum-branded wrapper over js-md5
   web/
     main.ts                    # UI entry; spawns worker, renders ticks
     worker.ts                  # emulator worker; owns PC88Machine + run loop
@@ -341,7 +342,6 @@ src/
     keymap.ts                  # KeyboardEvent.code → PC88Key
     panels.ts                  # Registers / Disasm / Memory / Breakpoints / Watches / Stack / REPL
     boot-screen.ts             # form + state
-    md5.ts                     # RFC-1321
     opfs.ts                    # storage abstraction
 web/
   index.html, app.css          # static page + styles
