@@ -13,6 +13,7 @@ import type {
   u8,
   u16,
 } from "../src/flavours.js";
+import { PC88Key } from "../src/machines/pc88-input.js";
 
 export function filledROM(size: number, fill: u8) {
   return new Uint8Array(size).fill(fill);
@@ -114,30 +115,33 @@ export function buildTestDisk(
 // IPC round-trip without a real disk-board ROM.
 export const SUBCPU_ECHO_PLUS_ONE: u8[] = [0xdb, 0xfd, 0x3c, 0xd3, 0xfc, 0x76];
 
-// PC-88 keyboard matrix for ASCII characters. Coordinates derived
-// from `PC88Key` (`row * 8 + col`, counting from `NUMPAD_0 = 0`):
-//   row 1 — RETURN at col 7
-//   row 2 — AT, A..G        (A at col 1)
-//   row 3 — H..O            (H at col 0)
-//   row 4 — P..W            (P at col 0)
-//   row 5 — X..Z + symbols
-//   row 6 — NUM_0..NUM_7
-//   row 7 — NUM_8/9 + ; , . / _ :
-//   row 8 — modifiers       (SHIFT at col 6, CTRL at col 7)
-//   row 9 — STOP, F1..F5, SPACE (col 6), ESC
+// PC-88 keyboard matrix for ASCII characters. The PC88Key enum packs
+// `row * 8 + col` (per its file-level comment) so divmod-by-8 is the
+// authoritative row/col extractor. Sourcing the map from the enum
+// keeps the matrix layout single-sourced — adding a key in
+// pc88-input.ts is enough to make it typeable here.
+const rowCol = (k: PC88Key): readonly [number, number] => [k >> 3, k & 7];
+
 const PC88_KEY_MAP: { readonly [c: string]: readonly [number, number] } = {
-  "0": [6, 0], "1": [6, 1], "2": [6, 2], "3": [6, 3],
-  "4": [6, 4], "5": [6, 5], "6": [6, 6], "7": [6, 7],
-  "8": [7, 0], "9": [7, 1],
-  " ": [9, 6],
-  a: [2, 1], b: [2, 2], c: [2, 3], d: [2, 4], e: [2, 5], f: [2, 6], g: [2, 7],
-  h: [3, 0], i: [3, 1], j: [3, 2], k: [3, 3], l: [3, 4], m: [3, 5], n: [3, 6], o: [3, 7],
-  p: [4, 0], q: [4, 1], r: [4, 2], s: [4, 3], t: [4, 4], u: [4, 5], v: [4, 6], w: [4, 7],
-  x: [5, 0], y: [5, 1], z: [5, 2],
-  "\r": [1, 7],
+  "0": rowCol(PC88Key.NUM_0), "1": rowCol(PC88Key.NUM_1),
+  "2": rowCol(PC88Key.NUM_2), "3": rowCol(PC88Key.NUM_3),
+  "4": rowCol(PC88Key.NUM_4), "5": rowCol(PC88Key.NUM_5),
+  "6": rowCol(PC88Key.NUM_6), "7": rowCol(PC88Key.NUM_7),
+  "8": rowCol(PC88Key.NUM_8), "9": rowCol(PC88Key.NUM_9),
+  " ": rowCol(PC88Key.SPACE),
+  a: rowCol(PC88Key.A), b: rowCol(PC88Key.B), c: rowCol(PC88Key.C),
+  d: rowCol(PC88Key.D), e: rowCol(PC88Key.E), f: rowCol(PC88Key.F),
+  g: rowCol(PC88Key.G), h: rowCol(PC88Key.H), i: rowCol(PC88Key.I),
+  j: rowCol(PC88Key.J), k: rowCol(PC88Key.K), l: rowCol(PC88Key.L),
+  m: rowCol(PC88Key.M), n: rowCol(PC88Key.N), o: rowCol(PC88Key.O),
+  p: rowCol(PC88Key.P), q: rowCol(PC88Key.Q), r: rowCol(PC88Key.R),
+  s: rowCol(PC88Key.S), t: rowCol(PC88Key.T), u: rowCol(PC88Key.U),
+  v: rowCol(PC88Key.V), w: rowCol(PC88Key.W), x: rowCol(PC88Key.X),
+  y: rowCol(PC88Key.Y), z: rowCol(PC88Key.Z),
+  "\r": rowCol(PC88Key.RETURN),
 };
 
-const PC88_SHIFT_KEY: readonly [number, number] = [8, 6];
+const PC88_SHIFT_KEY: readonly [number, number] = rowCol(PC88Key.SHIFT);
 
 // Shifted-character map: PC-88 JIS-style layout puts " on SHIFT+2.
 // Extend as more shifted chars are needed by tests.
