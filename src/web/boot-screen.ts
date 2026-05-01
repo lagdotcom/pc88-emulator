@@ -209,22 +209,42 @@ export async function renderBootScreen(
   async function rebuildRomList(): Promise<void> {
     romState.clear();
     romList.innerHTML = "";
+    const indexKey = `index-${variantSlug(currentVariant)}`;
     const index =
-      (await deps.store.readJSON<RomIndex>(
-        `index-${variantSlug(currentVariant)}`,
-      )) ?? ({} as RomIndex);
+      (await deps.store.readJSON<RomIndex>(indexKey)) ?? ({} as RomIndex);
+    let indexDirty = false;
 
     for (const [slot, descriptor] of Object.entries(currentVariant.roms) as [
       keyof ROMManifest,
       ROMDescriptor | undefined,
     ][]) {
       if (!descriptor) continue;
+
+      // Try the per-variant index first (fast path: one md5 lookup
+      // against a known key). Then fall back to a direct
+      // descriptor-md5 probe so a ROM uploaded for a different
+      // variant — which lives content-addressed at /roms/<md5>.rom —
+      // resolves automatically when the user switches machines.
+      // The "todo-md5" placeholder used on un-dumped slots is never
+      // a real ROM, so skip the direct probe for those.
+      let usable: Uint8Array | null = null;
       const cachedMd5 = index[descriptor.id];
-      const cached = cachedMd5 ? await deps.store.readRom(cachedMd5) : null;
-      // Validate cached bytes still md5 to the descriptor — protects
-      // against ROMs whose checksums shifted after the descriptor
-      // was tightened.
-      const usable = cached && md5(cached) === descriptor.md5 ? cached : null;
+      if (cachedMd5) {
+        const cached = await deps.store.readRom(cachedMd5);
+        if (cached && md5(cached) === descriptor.md5) usable = cached;
+      }
+      if (!usable && descriptor.md5 !== "todo-md5") {
+        const direct = await deps.store.readRom(descriptor.md5);
+        if (direct) {
+          usable = direct;
+          if (index[descriptor.id] !== descriptor.md5) {
+            // Backfill the index so subsequent loads of this variant
+            // hit the fast path without a second probe.
+            index[descriptor.id] = descriptor.md5;
+            indexDirty = true;
+          }
+        }
+      }
 
       const state: RomState = {
         descriptor,
@@ -235,6 +255,7 @@ export async function renderBootScreen(
       romState.set(descriptor.id, state);
       romList.appendChild(makeRomRow(state, index));
     }
+    if (indexDirty) await deps.store.writeJSON(indexKey, index);
     refreshBootButton();
   }
 
