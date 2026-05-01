@@ -17,16 +17,8 @@ import {
   type RunResult,
 } from "./machines/pc88.js";
 import { loadRoms } from "./machines/rom-loader.js";
-import { FA } from "./machines/variants/fa.js";
-import { FH } from "./machines/variants/fh.js";
-import { MA } from "./machines/variants/ma.js";
-import { MA2 } from "./machines/variants/ma2.js";
-import { MH } from "./machines/variants/mh.js";
 import { MKI } from "./machines/variants/mk1.js";
-import { MKII } from "./machines/variants/mk2.js";
-import { MKII_FR } from "./machines/variants/mk2fr.js";
-import { MKII_MR } from "./machines/variants/mk2mr.js";
-import { MKII_SR } from "./machines/variants/mk2sr.js";
+import { VARIANTS, VARIANTS_BY_NICKNAME } from "./machines/variants/index.js";
 import { hex } from "./tools.js";
 
 const DEFAULT_MAX_OPS = kOps(15);
@@ -35,10 +27,8 @@ const DEFAULT_MAX_OPS = kOps(15);
 // NEC's release timeline. Only mkI is verified to boot end-to-end;
 // mkII / mkII SR get exercised by tests; everything else has its
 // PC88Config laid out but not exercised against real ROMs yet.
-const variants = [MKI, MKII, MKII_SR, MKII_FR, MKII_MR, FH, MH, FA, MA, MA2];
-const variantNames = Object.fromEntries(
-  variants.flatMap((mach) => mach.nicknames.map((nick) => [nick, mach])),
-);
+const variants = VARIANTS;
+const variantNames = VARIANTS_BY_NICKNAME;
 
 interface CliFlags {
   config: PC88Config;

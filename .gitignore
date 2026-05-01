@@ -2,6 +2,8 @@
 /dist
 /main.js
 /main.js.map
+/web/app.js
+/web/app.js.map
 /coverage
 /.env
 /tests/z80/data

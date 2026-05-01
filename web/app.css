@@ -1,0 +1,78 @@
+* { box-sizing: border-box; }
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  margin: 0;
+  padding: 1rem;
+  background: #1a1a1a;
+  color: #ddd;
+  line-height: 1.4;
+}
+
+h1 { margin: 0 0 1rem; font-size: 1.4rem; }
+h2 { margin: 1rem 0 0.5rem; font-size: 1.1rem; }
+
+.boot-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 720px;
+}
+
+.boot-screen label { display: block; }
+.boot-screen select { margin-left: 0.5rem; }
+.boot-screen .warn { color: #f5a623; }
+.boot-screen .err { color: #ef4444; }
+.boot-screen .ok { color: #4ade80; }
+
+.rom-list { list-style: none; padding: 0; margin: 0; }
+.rom-row {
+  display: grid;
+  grid-template-columns: 8rem 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #333;
+}
+.rom-status { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.rom-meta { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+
+fieldset {
+  border: 1px solid #333;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+}
+fieldset legend { padding: 0 0.5rem; color: #aaa; }
+fieldset label { padding: 0.1rem 0; }
+fieldset input[type="text"] {
+  font-family: ui-monospace, monospace;
+  background: #000;
+  color: #ddd;
+  border: 1px solid #444;
+  padding: 0.15rem 0.3rem;
+  margin-left: 0.25rem;
+}
+
+button {
+  background: #2563eb;
+  color: white;
+  border: 0;
+  padding: 0.4rem 1rem;
+  border-radius: 3px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+button:disabled { background: #555; cursor: not-allowed; }
+
+.boot-row { display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem; }
+.boot-status { color: #aaa; font-size: 0.85rem; }
+
+.tvram-dump {
+  background: #000;
+  color: #4ade80;
+  padding: 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  white-space: pre;
+  overflow-x: auto;
+}

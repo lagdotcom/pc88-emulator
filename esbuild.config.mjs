@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import { fileURLToPath } from "node:url";
 import process from "process";
 import builtins from "builtin-modules";
 
@@ -8,27 +9,68 @@ if you want to view the source, please visit the github repository of this plugi
 */
 `;
 
-const prod = process.argv[2] === "production";
+const target = process.argv[2];
+const prod = target === "production";
+const buildWeb = target === "web" || target === "web-prod";
+const webProd = target === "web-prod";
 
-const context = await esbuild.context({
-  banner: {
-    js: banner,
-  },
-  entryPoints: ["src/main.ts"],
-  bundle: true,
-  external: builtins,
-  format: "cjs",
-  target: "esnext",
-  logLevel: "info",
-  sourcemap: prod ? false : "inline",
-  treeShaking: true,
-  outfile: "main.js",
-  minify: prod,
-});
-
-if (prod) {
-  await context.rebuild();
-  process.exit(0);
+if (buildWeb) {
+  await buildWebBundle();
 } else {
-  await context.watch();
+  await buildNodeBundle();
+}
+
+async function buildNodeBundle() {
+  const ctx = await esbuild.context({
+    banner: { js: banner },
+    entryPoints: ["src/main.ts"],
+    bundle: true,
+    external: builtins,
+    format: "cjs",
+    target: "esnext",
+    logLevel: "info",
+    sourcemap: prod ? false : "inline",
+    treeShaking: true,
+    outfile: "main.js",
+    minify: prod,
+  });
+  if (prod) {
+    await ctx.rebuild();
+    process.exit(0);
+  } else {
+    await ctx.watch();
+  }
+}
+
+async function buildWebBundle() {
+  // Alias the `log` package and its `log/lib/emitter` submodule to
+  // our minimal shim so the browser bundle doesn't drag in
+  // medikoo/log's transitive deps (es5-ext, sprintf-kit, …). The
+  // shim re-exports the same `default.get(name).<level>(...)`
+  // surface every chip module uses.
+  const shimPath = fileURLToPath(new URL("./src/log-shim.ts", import.meta.url));
+  const ctx = await esbuild.context({
+    entryPoints: ["src/web/main.ts"],
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    logLevel: "info",
+    sourcemap: webProd ? false : "inline",
+    treeShaking: true,
+    outfile: "web/app.js",
+    minify: webProd,
+    alias: {
+      log: shimPath,
+      "log/lib/emitter": shimPath,
+    },
+  });
+  if (webProd) {
+    await ctx.rebuild();
+    process.exit(0);
+  } else {
+    await ctx.watch();
+    // eslint-disable-next-line no-console
+    console.log("Watching web bundle. Open web/index.html via a static server.");
+  }
 }

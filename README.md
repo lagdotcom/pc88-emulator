@@ -109,6 +109,8 @@ yarn zex zexdoc          # standalone zex runner with streamed output
 yarn zex zexall          # same, all-behaviour variant
 yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 yarn dis <file>          # disassemble any raw ROM file (no emulation)
+yarn web                 # esbuild watch for the browser bundle
+yarn build:web           # tsc -noEmit + production browser bundle to web/app.js
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
@@ -294,6 +296,24 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
+- [ ] **Web UI** — phase 1 boot screen landed. `yarn build:web`
+  produces a single `web/app.js` (~75 KB minified) referenced from
+  `web/index.html`. The boot screen reads/writes OPFS for ROM
+  storage (content-addressed by md5) + last-used variant + DIP
+  overrides; falls back to in-memory if OPFS is unavailable. ROM
+  upload validates size + md5 against the variant descriptor. Boot
+  currently runs a synchronous burst on the main thread and dumps
+  the visible TVRAM region — the Worker boundary, screen canvas,
+  and debugger panels are still TODO. See the plan in
+  `claude/emulator-web-interface-MnWv7` for phasing.
+  Sub-items still open:
+  - [ ] Move emulator into a Web Worker; rAF-driven frame pump.
+  - [ ] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
+  - [ ] Debugger panels (registers, disasm, memory, breakpoints,
+    watches, stack) driven by snapshot + `dispatch()` over the
+    worker channel.
+  - [ ] On-page REPL pane mirroring the existing CLI debugger.
+  - [ ] Keyboard input wired through `Keyboard` matrix.
 - [x] **`build` script type-checks `src/machines/` errors** — the
   `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
   that compile cleanly. They still need real shapes (see machine layer
