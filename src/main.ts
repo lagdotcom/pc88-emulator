@@ -259,7 +259,7 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
     lines.push(`TVRAM          : empty (BIOS never wrote a byte)`);
   } else {
     lines.push(
-      `TVRAM          : ${nonZero} non-zero bytes, range [0xF${hex(firstNz, 3)}..0xF${hex(lastNz, 3)}]`,
+      `TVRAM          : ${nonZero} non-zero bytes, range [0xf${hex(firstNz, 3)}..0xf${hex(lastNz, 3)}]`,
     );
   }
 
