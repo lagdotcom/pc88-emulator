@@ -8,6 +8,7 @@ import { SystemController } from "../chips/io/sysctrl.js";
 import { YM2203 } from "../chips/io/YM2203.js";
 import { μPD3301 } from "../chips/io/μPD3301.js";
 import { μPD8251 } from "../chips/io/μPD8251.js";
+import { μPD8255 } from "../chips/io/μPD8255.js";
 import { μPD8257 } from "../chips/io/μPD8257.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
@@ -20,6 +21,7 @@ import type { PC88Config } from "./config.js";
 import { DisplayRegisters } from "./display-regs.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import { type LoadedROMs, PC88MemoryMap } from "./pc88-memory.js";
+import { SubCPU } from "./sub-cpu.js";
 
 const log = getLogger("pc88");
 
@@ -60,6 +62,10 @@ export interface PC88MachineParts {
   misc: MiscPorts;
   display: PC88Display;
   displayRegs: DisplayRegisters;
+  // mkII+ FDC sub-CPU. `null` when the variant has no internal
+  // FDD-IF (mkI) or when the disk ROM wasn't loaded.
+  ppi: μPD8255 | null;
+  subcpu: SubCPU | null;
 }
 
 export class PC88Machine {
@@ -80,6 +86,8 @@ export class PC88Machine {
   readonly misc: MiscPorts;
   readonly display: PC88Display;
   readonly displayRegs: DisplayRegisters;
+  readonly ppi: μPD8255 | null;
+  readonly subcpu: SubCPU | null;
 
   constructor(
     public config: PC88Config,
@@ -138,6 +146,24 @@ export class PC88Machine {
       this.sysctrl,
       this.displayRegs,
     );
+
+    // mkII+ FDC sub-CPU subsystem. Only wired when the variant
+    // declares an internal FDD-IF and the disk ROM loaded — mkI's
+    // disk ROM (PC-8031 external unit) is parsed but unused here
+    // until the external floppy interface lands.
+    if (config.disk.hasSubCpu && roms.disk) {
+      this.ppi = new μPD8255();
+      this.ppi.registerMain(this.ioBus);
+      this.subcpu = new SubCPU({ rom: roms.disk, ppi: this.ppi });
+    } else {
+      if (config.disk.hasSubCpu && !roms.disk) {
+        log.warn(
+          "config.disk.hasSubCpu=true but roms.disk missing; sub-CPU not started",
+        );
+      }
+      this.ppi = null;
+      this.subcpu = null;
+    }
   }
 
   // Reset to power-on state: PC=0, SP=0, IFFs cleared, ROM mapped.
@@ -194,6 +220,7 @@ export class PC88Machine {
     // via port 0x32 when it wants one mapped in.
     this.memoryMap.setEROMEnabled(false);
     this.memoryMap.setVRAMEnabled(false);
+    this.subcpu?.reset();
   }
 
   // Aggregate every chip's persistent state into a single
@@ -244,6 +271,8 @@ export class PC88Machine {
       misc: this.misc.snapshot(),
       beeper: this.beeper.snapshot(),
       displayRegs: this.displayRegs.snapshot(),
+      ppi: this.ppi?.snapshot() ?? null,
+      subcpu: this.subcpu?.snapshot() ?? null,
     };
   }
 }
@@ -355,7 +384,7 @@ export function runMachine(
   machine: PC88Machine,
   opts: RunOptions = {},
 ): RunResult {
-  const { cpu } = machine;
+  const { cpu, subcpu } = machine;
   const maxOps = opts.maxOps ?? mOps(50);
   const maxCycles = opts.maxCycles ?? Number.POSITIVE_INFINITY;
 
@@ -376,7 +405,16 @@ export function runMachine(
       );
     }
 
+    const before = cpu.cycles;
     cpu.runOneOp();
+    if (subcpu) {
+      // Both CPUs are 4 MHz on real silicon — drive the sub for the
+      // same cycle delta the main just consumed. runCycles bails on
+      // sub-side HALT, so a sub-CPU waiting on a non-existent FDC IRQ
+      // doesn't burn the budget.
+      const delta = cpu.cycles - before;
+      subcpu.runCycles(delta as Cycles);
+    }
     ops++;
     if (opts.onProgress && opts.onProgress(ops)) {
       stopReason = "stopped";

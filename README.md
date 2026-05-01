@@ -36,11 +36,12 @@ Not yet built:
   is built (`src/disk/`), as is the `FloppyDrive` layer the FDC will
   hold. The FDC chip itself is still TODO.
 - Sub-CPU model (mkII+ has a second Z80 driving the FDC via the
-  `μPD8255` PPI at 0xFC-0xFF). The PPI bridge + the SubCPU class
-  (Z80 + memBus + ioBus + ROM/RAM map per MAME's pc80s31k) are
-  built and tested standalone. Integrating the SubCPU into
-  `PC88Machine` for `hasSubCpu: true` variants + scheduling it
-  alongside the main Z80 is the next step.
+  `μPD8255` PPI at 0xFC-0xFF). The PPI + the SubCPU + integration
+  into `PC88Machine` are wired: when a variant has
+  `hasSubCpu: true` and a disk ROM, the machine constructs both,
+  registers the PPI on the main IOBus at 0xFC-0xFF, and the runner
+  schedules the sub for the same cycle delta as the main on every
+  step. mkI doesn't trigger the wiring (`hasSubCpu: false`).
 - Pixel-accurate CRT controller rendering (the μPD3301 stub
   consumes the SET MODE block correctly but doesn't generate raster).
 - Graphics VRAM rendering + analogue palette (palette ports
@@ -272,11 +273,17 @@ Roughly ordered by what's blocking what.
   registered on its sub side, modelled per MAME's pc80s31k. Tested
   standalone with an echo+1 Z80 program that round-trips a byte
   through the PPI from the main side back to the main side.
-- [ ] **Wire SubCPU into `PC88Machine`** for `hasSubCpu: true`
-  variants + schedule it alongside the main Z80. Disk-ROM loader
-  needs to populate `LoadedROMs.disk`; the runner needs an
-  alternation policy (e.g. run sub for N cycles whenever the PPI
-  has fresh data, or trade timeslices 1:1 at 4 MHz).
+- [x] **Wire SubCPU into `PC88Machine`** for `hasSubCpu: true`
+  variants. Disk-ROM loader populates `LoadedROMs.disk` (slot
+  added to `LOADED_ROM_SLOTS`); the runner alternates 1:1 at
+  4 MHz (after each main `runOneOp`, sub runs the same cycle
+  delta). PPI registered on the main IOBus when the SubCPU is
+  present, otherwise 0xFC-0xFF stay open-bus. `MachineSnapshot`
+  now includes `subcpu` + `ppi` fields (null on hasSubCpu=false).
+- [ ] **PPI-driven sub-CPU IRQ** so a fresh-data write into the
+  PPI wakes a HALTed sub-CPU instead of leaving it idle until the
+  next main-CPU step finds a non-stale byte. Lands with the FDC
+  + GPIB-style port-C handshake bits.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

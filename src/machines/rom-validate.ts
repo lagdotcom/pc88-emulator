@@ -51,7 +51,15 @@ export function validateRomBytes(
 // (font, kanji1, etc.) aren't part of the runtime ROM set yet —
 // they're declared in variant configs for completeness but the chips
 // that consume them haven't been built.
-const LOADED_ROM_SLOTS = ["n80", "n88", "e0", "e1", "e2", "e3"] as const;
+const LOADED_ROM_SLOTS = [
+  "n80",
+  "n88",
+  "e0",
+  "e1",
+  "e2",
+  "e3",
+  "disk",
+] as const;
 type LoadedRomSlot = (typeof LOADED_ROM_SLOTS)[number];
 
 export function isLoadedRomSlot(slot: string): slot is LoadedRomSlot {

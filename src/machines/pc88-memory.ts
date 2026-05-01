@@ -26,6 +26,11 @@ export interface LoadedROMs {
   readonly e1?: Uint8Array; //  8 KB
   readonly e2?: Uint8Array; //  8 KB
   readonly e3?: Uint8Array; //  8 KB
+  // FDC sub-CPU boot ROM. Mounted by SubCPU at 0x0000-0x1FFF on its
+  // own bus when config.disk.hasSubCpu is true. On mkII+ this is the
+  // internal FDD-IF; on mkI it would belong to an external floppy
+  // unit (PC-8031 etc.) which we don't model yet.
+  readonly disk?: Uint8Array;
 }
 
 export type BasicMode = "n80" | "n88";

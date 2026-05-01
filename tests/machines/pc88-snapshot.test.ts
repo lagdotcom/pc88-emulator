@@ -34,6 +34,8 @@ describe("PC88Machine.snapshot", () => {
         "memoryMap",
         "misc",
         "opn",
+        "ppi",
+        "subcpu",
         "sysctrl",
         "usart",
       ].sort(),
