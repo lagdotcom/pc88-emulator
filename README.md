@@ -36,9 +36,11 @@ Not yet built:
   is built (`src/disk/`), as is the `FloppyDrive` layer the FDC will
   hold. The FDC chip itself is still TODO.
 - Sub-CPU model (mkII+ has a second Z80 driving the FDC via the
-  `μPD8255` PPI at 0xFC-0xFF). The PPI bridge is built and tested
-  (`src/chips/io/μPD8255.ts`, MAME-pc80s31k-style PA↔PB crossover);
-  the second Z80 + its bus + ROM is still TODO.
+  `μPD8255` PPI at 0xFC-0xFF). The PPI bridge + the SubCPU class
+  (Z80 + memBus + ioBus + ROM/RAM map per MAME's pc80s31k) are
+  built and tested standalone. Integrating the SubCPU into
+  `PC88Machine` for `hasSubCpu: true` variants + scheduling it
+  alongside the main Z80 is the next step.
 - Pixel-accurate CRT controller rendering (the μPD3301 stub
   consumes the SET MODE block correctly but doesn't generate raster).
 - Graphics VRAM rendering + analogue palette (palette ports
@@ -186,6 +188,9 @@ src/
     pc88.ts           PC88Machine factory + runMachine() VBL pump
     pc88-memory.ts    PC88MemoryMap, paged ROM/RAM/VRAM banking
                       (write-through to mainRam under ROM)
+    sub-cpu.ts        SubCPU subsystem: Z80 + memBus + ioBus + ROM
+                      mirror at 0x0000-0x1FFF + RAM at 0x4000-0x7FFF
+                      + PPI/FDC port wiring, per pc80s31k
     pc88-display.ts   text-frame capture + ASCII dump
     display-regs.ts   palette + layer-mask + plane-select register block
     rom-loader.ts     md5-validating fs ROM resolver
@@ -262,10 +267,16 @@ Roughly ordered by what's blocking what.
   TODO: GPIB-style PC bit remap (writer uses PC[4..7], reader sees
   PC[0..2] in MAME) — not exercised by the BIOS init path; lands
   when the FDC sub-CPU ROM consumes the strobe protocol.
-- [ ] **Sub-CPU subsystem**: second Z80 + its own MemoryBus + IOBus
-  + sub-CPU ROM, scheduled alongside the main CPU. The PPI bridges
-  the two sides; the FDC + drives + boot ROM live entirely on the
-  sub-CPU bus. mkII variants set `hasSubCpu: true` in the config.
+- [x] **Sub-CPU subsystem** in `src/machines/sub-cpu.ts`. Second
+  Z80 + its own MemoryBus + IOBus + ROM mirror + 16 KB RAM + PPI
+  registered on its sub side, modelled per MAME's pc80s31k. Tested
+  standalone with an echo+1 Z80 program that round-trips a byte
+  through the PPI from the main side back to the main side.
+- [ ] **Wire SubCPU into `PC88Machine`** for `hasSubCpu: true`
+  variants + schedule it alongside the main Z80. Disk-ROM loader
+  needs to populate `LoadedROMs.disk`; the runner needs an
+  alternation policy (e.g. run sub for N cycles whenever the PPI
+  has fresh data, or trade timeslices 1:1 at 4 MHz).
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is
