@@ -1,3 +1,4 @@
+import type { μPD765a } from "../chips/io/μPD765a.js";
 import type { μPD8255 } from "../chips/io/μPD8255.js";
 import { Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
@@ -66,16 +67,18 @@ export class SubCPU {
   readonly memBus: MemoryBus;
   readonly ioBus: IOBus;
   readonly ppi: μPD8255;
+  readonly fdc: μPD765a | null;
   readonly rom: Uint8Array;
   readonly ram: Uint8Array;
 
   irqVector: u8 = 0;
   driveMode: u8 = 0;
 
-  constructor(opts: { rom: Uint8Array; ppi: μPD8255 }) {
+  constructor(opts: { rom: Uint8Array; ppi: μPD8255; fdc?: μPD765a }) {
     this.rom = opts.rom;
     this.ram = new Uint8Array(RAM_SIZE);
     this.ppi = opts.ppi;
+    this.fdc = opts.fdc ?? null;
 
     const romProvider: MemoryProvider = {
       name: "subcpu/rom",
@@ -114,6 +117,17 @@ export class SubCPU {
     });
 
     this.cpu = new Z80(this.memBus, this.ioBus);
+
+    if (this.fdc) {
+      this.fdc.register(this.ioBus);
+      // FDC INT line: command-completion / data-ready raises an IRQ
+      // on the sub-CPU. The vector byte the FDC drives onto the data
+      // bus is whatever the sub last latched at port 0xF0 (real
+      // hardware loops it back); we forward the latched vector here.
+      this.fdc.onInterrupt = () => {
+        this.cpu.requestIrq(this.irqVector);
+      };
+    }
   }
 
   reset(): void {

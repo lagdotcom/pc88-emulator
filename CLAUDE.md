@@ -518,7 +518,15 @@ is a noisy-once 0xff read / no-op write at the bus default):
 0xE8-0xEF    kanji ROM lookup        (kanji.ts: 2 banks, addr latch + 0xFF read)
 0xF4 / 0xF8  external floppy DMA     (misc.ts: read 0xFF = card not present)
 0xFC-0xFF    sub-CPU IPC PPI (mkII+) (μPD8255.ts: PA-out → other side's PB-in;
-                                      port C symmetric; not yet wired to a sub-CPU)
+                                      port C symmetric)
+
+(sub-CPU bus, exposed when hasSubCpu=true)
+0xF0         IRQ vector latch        (sub-cpu.ts)
+0xF4         drive-mode register     (sub-cpu.ts)
+0xFA-0xFB    μPD765a FDC             (μPD765a.ts: SPECIFY, SENSE,
+                                      RECAL, SEEK, READ ID/DATA;
+                                      WRITE/FORMAT still TODO)
+0xFC-0xFF    μPD8255 PPI (sub side)  (same chip as the main-side line)
 ```
 
 The runner (`runMachine` in `pc88.ts`) pumps a 60 Hz VBL: every

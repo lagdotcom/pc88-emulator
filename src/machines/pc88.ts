@@ -7,6 +7,7 @@ import { MiscPorts } from "../chips/io/misc.js";
 import { SystemController } from "../chips/io/sysctrl.js";
 import { YM2203 } from "../chips/io/YM2203.js";
 import { μPD3301 } from "../chips/io/μPD3301.js";
+import { μPD765a } from "../chips/io/μPD765a.js";
 import { μPD8251 } from "../chips/io/μPD8251.js";
 import { μPD8255 } from "../chips/io/μPD8255.js";
 import { μPD8257 } from "../chips/io/μPD8257.js";
@@ -154,7 +155,8 @@ export class PC88Machine {
     if (config.disk.hasSubCpu && roms.disk) {
       this.ppi = new μPD8255();
       this.ppi.registerMain(this.ioBus);
-      this.subcpu = new SubCPU({ rom: roms.disk, ppi: this.ppi });
+      const fdc = new μPD765a();
+      this.subcpu = new SubCPU({ rom: roms.disk, ppi: this.ppi, fdc });
     } else {
       if (config.disk.hasSubCpu && !roms.disk) {
         log.warn(
