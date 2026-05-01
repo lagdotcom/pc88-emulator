@@ -1,4 +1,15 @@
 {
-  "cSpell.words": ["DJNZ", "RLCA", "RRCA"],
+  "cSpell.words": [
+    "CRTC",
+    "DJNZ",
+    "DMAC",
+    "EROM",
+    "GVRAM",
+    "RLCA",
+    "RRCA",
+    "TVRAM",
+    "ZEXALL",
+    "ZEXDOC"
+  ],
   "files.eol": "\n"
 }

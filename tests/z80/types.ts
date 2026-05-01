@@ -1,30 +1,32 @@
+import type { u8, u16 } from "../../src/flavours.js";
+
 export interface State {
-  pc: number;
-  sp: number;
-  a: number;
-  b: number;
-  c: number;
-  d: number;
-  e: number;
-  f: number;
-  h: number;
-  l: number;
-  i: number;
-  r: number;
+  pc: u16;
+  sp: u16;
+  a: u8;
+  b: u8;
+  c: u8;
+  d: u8;
+  e: u8;
+  f: u8;
+  h: u8;
+  l: u8;
+  i: u8;
+  r: u8;
   ei: number;
-  wz: number;
-  ix: number;
-  iy: number;
-  af_: number;
-  bc_: number;
-  de_: number;
-  hl_: number;
+  wz: u16;
+  ix: u16;
+  iy: u16;
+  af_: u16;
+  bc_: u16;
+  de_: u16;
+  hl_: u16;
   im: number;
   p: number;
   q: number;
   iff1: number;
   iff2: number;
-  ram: [number, number][];
+  ram: [u16, u8][];
 }
 
 export type CycleType = string;

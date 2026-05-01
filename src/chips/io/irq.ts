@@ -1,0 +1,90 @@
+import logLib from "log";
+
+import type { IOBus } from "../../core/IOBus.js";
+import type { u8 } from "../../flavours.js";
+
+const log = logLib.get("irq");
+
+// PC-88 maskable-interrupt control. Two registers:
+//   0xE4  priority/level — selects interrupt source priority
+//   0xE6  mask            — per-bit enable (1 = source can fire)
+//
+// Bit assignments on 0xE6 (per NEC mkII technical manual; mkI honours
+// the same layout for the bits it has):
+//   bit 0 — VBL          (this is the only one wired this branch)
+//   bit 1 — RxRdy USART
+//   bit 2 — RTC tick
+//   bit 3 — TxRdy USART
+//   bit 4 — disk/sub-CPU
+//   bits 5-7 — reserved / model-specific
+//
+// Reset state: real silicon comes up with the mask register cleared
+// (all interrupts disabled) and BASIC ROM enables what it needs. We
+// default to "all enabled" because that matches what the existing
+// pc88-irq test expects, and the BIOS overwrites the mask with its
+// own value within the first few hundred ops anyway.
+
+// Per-bit enables for the mask register at 0xE6. A bit set to 1
+// means that source can fire; cleared means masked.
+export const IRQ_MASK = {
+  VBL: 1 << 0, // vertical blank
+  RXRDY: 1 << 1, // USART RxRdy
+  RTC: 1 << 2, // real-time-clock tick
+  TXRDY: 1 << 3, // USART TxRdy
+  DISK: 1 << 4, // disk / sub-CPU
+} as const;
+
+export interface IrqSnapshot {
+  mask: u8;
+  priority: u8;
+  programmed: boolean;
+}
+
+export class IrqController {
+  mask: u8 = 0xff;
+  priority: u8 = 0xff;
+  // Set to true when the BIOS has explicitly programmed the mask. Used
+  // by diagnostics to distinguish "default still in force" from
+  // "ROM said all sources enabled".
+  programmed = false;
+
+  snapshot(): IrqSnapshot {
+    return {
+      mask: this.mask,
+      priority: this.priority,
+      programmed: this.programmed,
+    };
+  }
+
+  fromSnapshot(s: IrqSnapshot): void {
+    this.mask = s.mask;
+    this.priority = s.priority;
+    this.programmed = s.programmed;
+  }
+
+  vblMasked(): boolean {
+    return (this.mask & IRQ_MASK.VBL) === 0;
+  }
+
+  register(bus: IOBus): void {
+    bus.register(0xe4, {
+      name: "irq/priority",
+      read: () => this.priority,
+      write: (_p, v) => {
+        this.priority = v;
+        // The priority/level register is latched but not consulted
+        // anywhere — IM 2 priority resolution isn't modelled yet.
+        log.warn(`priority := 0x${v.toString(16)} (stub)`);
+      },
+    });
+    bus.register(0xe6, {
+      name: "irq/mask",
+      read: () => this.mask,
+      write: (_p, v) => {
+        this.mask = v;
+        this.programmed = true;
+        log.info(`mask := 0x${v.toString(16)}`);
+      },
+    });
+  }
+}

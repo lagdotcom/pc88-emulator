@@ -7,10 +7,10 @@ const log = logLib.get("bus");
 
 export interface MemoryProvider {
   name: string;
-  start: number;
-  end: number;
-  read?: (offset: number) => u8;
-  write?: (offset: number, value: u8) => void;
+  start: u16;
+  end: u16;
+  read?: (offset: u16) => u8;
+  write?: (offset: u16, value: u8) => void;
   // Optional direct access window. When a provider exposes a Uint8Array
   // covering its full [start, end) range and offset 0 maps to start, the
   // bus can skip its own dispatch and read/write the array directly.
@@ -50,7 +50,7 @@ export class MemoryBus {
     this.fastBytes = null;
   }
 
-  read(address: number): u8 {
+  read(address: u16): u8 {
     const fast = this.fastBytes;
     if (fast !== null) return fast[address & 0xffff]!;
     const providers = this.providers;
@@ -69,13 +69,13 @@ export class MemoryBus {
     return this.invalidByte;
   }
 
-  readWord(address: number): u16 {
+  readWord(address: u16): u16 {
     const lo = this.read(address);
     const hi = this.read(address + 1);
     return (hi << 8) | lo;
   }
 
-  write(address: number, value: u8) {
+  write(address: u16, value: u8) {
     const fast = this.fastBytes;
     if (fast !== null) {
       fast[address & 0xffff] = value;
@@ -97,7 +97,7 @@ export class MemoryBus {
     log.warn(`failed to write to ${word(address)}`);
   }
 
-  writeWord(address: number, value: u16) {
+  writeWord(address: u16, value: u16) {
     this.write(address, value & 0xff);
     this.write(address + 1, (value & 0xff00) >> 8);
   }

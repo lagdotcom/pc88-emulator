@@ -1,0 +1,15 @@
+# Watch how the BIOS programs the IRQ mask register, then catch the
+# first VBL acceptance at 0x0038 (IM 1 vector). Auto-trace shows
+# the EI / HALT path that armed it.
+#
+#   yarn pc88 --basic=n88 --script=dbg/vbl-acceptance.dbg
+#
+# Expectation: log lines for every write to port 0xE6 (mask), then a
+# break at 0x0038 with the call stack showing `via=IRQ` from
+# whatever PC was about to execute when /INT was asserted.
+
+bp 0xE6 w log
+break 0x0038
+continue 10000000
+stack
+regs

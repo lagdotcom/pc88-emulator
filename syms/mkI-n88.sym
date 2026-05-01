@@ -1,0 +1,69 @@
+# Symbol file for mkI-n88. Discovered during the N88-BASIC boot-stall
+# diagnosis (see README TODO). Expand as the BIOS reverse-engineering
+# progresses. md5 below is checked at load time; if it mismatches the
+# loaded ROM, a warning is emitted and symbols still load.
+# md5: 22be239bc0c4298bc0561252eed98633
+
+# --- Reset / boot vectors ---
+0x0000 reset_vector         ; DI; LD SP,0xe1a0; JP boot_prologue
+0x0038 irq_im1_vector       ; JP 0xe669 (default RAM IRQ handler)
+0x0142 erom_dispatch        ; OUT (0x71),A; check 'R4' sig at HL; JP into E-ROM
+
+# --- Banner / startup print sequence ---
+0x7968 print_banner_seq     ; banner / "Bytes free" / Copyright sequence
+0x5550 print_string         ; print NUL-terminated string at HL via RST 18
+0x5925 print_handler        ; main char-print path entered from RST 18
+0x4B52 print_alt_handler    ; alt path when (0xEC88) != 0 (console redirect?)
+0x59A5 print_to_tvram       ; the actual write-to-TVRAM target (not yet reached)
+
+# --- Banner string data ---
+0x79B2 str_bytes_free       ; " Bytes free\0"
+0x79BE str_n88_banner       ; "NEC N-88 BASIC Version 1.0\0"
+0x79DA str_copyright        ; "Copyright (C) 1981 by Microsoft\0"
+
+# --- Boot prologue ---
+0x77F7 boot_prologue        ; DJNZ delay; read DIPs into 0xef7f; check port 0x09
+0x77c6 boot_alt_entry       ; alt boot path; fills 0xec8f w/ spaces; falls into 0x7820
+0x7820 boot_full_init       ; SP=0xe5fe; CALL clear_basic_workspace_843; LDIR vectors
+0x77a6 basic_mode_switch    ; RRCA;RET nc — switch BASIC mode if A bit 0 set; uses port 0x31
+
+# --- BASIC workspace init ---
+0x7999 clear_basic_workspace ; memset 843 bytes at 0xef0a, then LD (0xef7f),HL
+0x69b2 init_ram_hook_table  ; fills 0xecbb..0xee0b with 'c9 00 00' triplets (RET hooks), then 0xee0e.. with JP 0x4dc1
+0x4dc1 hook_input_handler   ; main handler for RAM hooks, processes input/commands
+
+# --- Hook handler subroutines ---
+0x03b3 erom_bank_switch_ff  ; switches E-ROM bank to 0xff, part of hook processing
+0x46f1 input_char_reader    ; reads next input character
+0x4da0 input_dispatch_a     ; input dispatch branch A
+0x4e53 input_dispatch_table ; input dispatch table
+
+# --- Sysctrl init / VBL / row helpers ---
+0x72cd sysctrl_init_from_ram ; DI;OUT 0xe6,0; restore 0x30/0x40/0x31/0xeb from RAM shadows
+0x433f wait_vbl_low         ; spin until port 0x40 bit 5 = 0 (VBL falling edge)
+0x4345 wait_vbl_high        ; spin until port 0x40 bit 5 = 1 (VBL rising edge)
+                            ; pair acts as "wait one full VBL cycle"
+0x431e row_index_to_addr    ; bound-check L<26; calls word_table_lookup
+0x4333 word_table_lookup    ; DE=(0x4257 + A*2); preserved-HL helper
+0x42e9 row_ldir_copy        ; LDIR BC=0x78=120 bytes; src=(0x4289)+DE; dst=(0xe6c4)+DE
+0x4257 word_pointer_table   ; word-pointer table consumed by word_table_lookup
+
+# --- Cursor / position helpers ---
+0x4494 set_cursor_save_hl   ; PUSH AF;LD (0xef86),HL;PUSH HL;CALL 0x429d;POP HL;POP AF;RET
+0x429d cursor_addr_calc     ; compute cell address from row/col; doubles HL if (0xef89)>=0x29
+0x5e49 set_cursor_row1      ; HL=(0xe6b0); H=1; LD (0xef83),HL; JP 0x4494
+
+# --- Screen-mode setup ---
+0x6f70 screen_mode_select   ; CP 0x14 → choose CRTC param table (40 vs 80 col)
+0x705b crtc_params_40col    ; CRTC SET MODE parameters for 40-col mode
+0x7066 crtc_params_80col    ; CRTC SET MODE parameters for 80-col mode
+
+# --- E-ROM bank-switch helpers ---
+# These are the routines that read port 0x71 (E-ROM bank readback),
+# stash the current bank in AF, push a restore-trampoline onto the
+# stack, and dispatch to a handler in the selected bank. Behaviour
+# depends on port 0x71 being a stateful latch — our current stub
+# returns a fixed 0xff, which makes 0x4551 push 0xff:F as a fake
+# return address and corrupts control flow at the matching restore.
+0x4551 erom_dispatch_helper ; DI;CALL ram hook;IN A,(0x71);PUSH AF;...;OUT (0x71),0xfe;...;RET
+0x4581 erom_bank_restore    ; DI;EX (SP),HL;LD A,H;OUT (0x71),A;EI;RET — pops AF as bank+flags

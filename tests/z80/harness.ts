@@ -1,62 +1,23 @@
 import { Z80 } from "../../src/chips/z80/cpu.js";
-import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
+import { IOBus } from "../../src/core/IOBus.js";
+import { MemoryBus } from "../../src/core/MemoryBus.js";
+import type { u8, u16 } from "../../src/flavours.js";
+import { RAM64k, TestIO } from "../tools.js";
 import type { State, TestCase } from "./types.js";
-
-export class TestRam implements MemoryProvider {
-  name = "ram";
-  start = 0;
-  end = 0x10000;
-  bytes = new Uint8Array(0x10000);
-
-  read(offset: number): number {
-    return this.bytes[offset]!;
-  }
-
-  write(offset: number, value: number): void {
-    this.bytes[offset] = value;
-  }
-}
-
-export class TestIo implements MemoryProvider {
-  name = "io";
-  start = 0;
-  end = 0x10000;
-  inputs = new Map<number, number[]>();
-  writes: [number, number][] = [];
-
-  queueInput(port: number, value: number): void {
-    let q = this.inputs.get(port);
-    if (!q) {
-      q = [];
-      this.inputs.set(port, q);
-    }
-    q.push(value);
-  }
-
-  read(port: number): number {
-    const q = this.inputs.get(port);
-    if (q && q.length) return q.shift()!;
-    return 0xff;
-  }
-
-  write(port: number, value: number): void {
-    this.writes.push([port, value]);
-  }
-}
 
 export interface Harness {
   cpu: Z80;
-  ram: TestRam;
-  io: TestIo;
+  ram: RAM64k;
+  io: TestIO;
 }
 
 export function makeHarness(): Harness {
-  const ram = new TestRam();
-  const io = new TestIo();
+  const ram = new RAM64k();
+  const io = new TestIO();
   const memBus = new MemoryBus([ram], 0xff);
-  const ioBus = new MemoryBus([io], 0xff);
+  const ioBus = new IOBus();
+  ioBus.registerAll({ name: io.name, read: io.read, write: io.write });
   const cpu = new Z80(memBus, ioBus);
-  if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
   return { cpu, ram, io };
 }
 
@@ -99,25 +60,25 @@ export function loadState(h: Harness, st: State): void {
 }
 
 export interface DumpedState {
-  pc: number;
-  sp: number;
-  a: number;
-  f: number;
-  b: number;
-  c: number;
-  d: number;
-  e: number;
-  h: number;
-  l: number;
-  i: number;
-  r: number;
-  wz: number;
-  ix: number;
-  iy: number;
-  af_: number;
-  bc_: number;
-  de_: number;
-  hl_: number;
+  pc: u16;
+  sp: u16;
+  a: u8;
+  f: u8;
+  b: u8;
+  c: u8;
+  d: u8;
+  e: u8;
+  h: u8;
+  l: u8;
+  i: u8;
+  r: u8;
+  wz: u16;
+  ix: u16;
+  iy: u16;
+  af_: u16;
+  bc_: u16;
+  de_: u16;
+  hl_: u16;
   im: number;
   iff1: number;
   iff2: number;
@@ -188,7 +149,7 @@ export interface DiffOptions {
 
 export interface Diff {
   reg?: string;
-  ramAddr?: number;
+  ramAddr?: u16;
   got: number;
   want: number;
 }
@@ -241,6 +202,6 @@ export function step(h: Harness): void {
 export function seedPorts(h: Harness, tc: TestCase): void {
   if (!tc.ports) return;
   for (const [port, value, kind] of tc.ports) {
-    if (kind === "r") h.io.queueInput(port, value);
+    if (kind === "r") h.io.enqueueInput(port, value);
   }
 }

@@ -15,6 +15,8 @@
     "test:programs": "vitest run tests/programs",
     "test:zex": "cross-env ZEX=1 vitest run tests/programs/zexdoc.test.ts",
     "zex": "tsx tests/programs/zex-runner.ts",
+    "pc88": "tsx src/main.ts",
+    "dis": "tsx src/dis.ts",
     "start": "tsx src/main.ts"
   },
   "devDependencies": {

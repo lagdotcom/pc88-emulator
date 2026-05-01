@@ -7,3 +7,7 @@
 /tests/z80/data
 /tests/programs/fixtures
 /out
+/roms/*
+!/roms/.gitkeep
+*.log
+.env

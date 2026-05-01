@@ -5,35 +5,21 @@
 //   tsx tests/programs/bench.ts
 
 import { Z80 } from "../../src/chips/z80/cpu.js";
-import { MemoryBus, type MemoryProvider } from "../../src/core/MemoryBus.js";
-
-class Ram implements MemoryProvider {
-  name = "ram";
-  start = 0;
-  end = 0x10000;
-  bytes = new Uint8Array(0x10000);
-  read(o: number) {
-    return this.bytes[o]!;
-  }
-  write(o: number, v: number) {
-    this.bytes[o] = v;
-  }
-}
-
-class Io implements MemoryProvider {
-  name = "io";
-  start = 0;
-  end = 0x10000;
-  read() {
-    return 0xff;
-  }
-  write() {}
-}
+import { IOBus } from "../../src/core/IOBus.js";
+import { MemoryBus } from "../../src/core/MemoryBus.js";
+import { mOps } from "../../src/flavour.makers.js";
+import type {
+  Bytes,
+  Milliseconds,
+  Operations,
+  u8,
+} from "../../src/flavours.js";
+import { RAM64k } from "../tools.js";
 
 interface Bench {
   name: string;
-  program: number[];
-  iterations: number; // how many ops per program completion
+  program: u8[];
+  iterations: Operations; // how many ops per program completion
 }
 
 // Tight loop: NOP NOP NOP ... HALT, with the loop counter set up via DJNZ.
@@ -45,7 +31,7 @@ function nopLoop(loops: number): Bench {
   //       DJNZ loop
   // HALT
   const innerNops = 16;
-  const program: number[] = [];
+  const program: u8[] = [];
   program.push(0x06, loops & 0xff); // LD B,N
   const loopStart = program.length;
   for (let i = 0; i < innerNops; i++) program.push(0x00); // NOP
@@ -90,7 +76,7 @@ function addLoop(loops: number): Bench {
 }
 
 // LDIR — exercises memory R-M-W and the looping ED prefix.
-function ldirLoop(bytes: number): Bench {
+function ldirLoop(bytes: Bytes): Bench {
   // LD HL,0x0200
   // LD DE,0x0400
   // LD BC,N
@@ -111,16 +97,16 @@ function ldirLoop(bytes: number): Bench {
   };
 }
 
-function run(bench: Bench, repeats: number): { mops: number; ms: number } {
-  const ram = new Ram();
-  const io = new Io();
-  for (let i = 0; i < bench.program.length; i++) {
+const MAX_OPS = mOps(50);
+
+function run(bench: Bench, repeats: number) {
+  const ram = new RAM64k();
+  for (let i = 0; i < bench.program.length; i++)
     ram.bytes[0x0100 + i] = bench.program[i]!;
-  }
+
   // Plant some recognisable bytes at the LDIR source.
   for (let i = 0; i < 0x100; i++) ram.bytes[0x0200 + i] = i & 0xff;
-  const cpu = new Z80(new MemoryBus([ram], 0xff), new MemoryBus([io], 0xff));
-  if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
+  const cpu = new Z80(new MemoryBus([ram], 0xff), new IOBus());
 
   // Warmup
   for (let r = 0; r < Math.min(3, repeats); r++) {
@@ -132,13 +118,13 @@ function run(bench: Bench, repeats: number): { mops: number; ms: number } {
     while (!cpu.halted) {
       cpu.runOneOp();
       ops++;
-      if (ops > 50_000_000) throw new Error(`runaway in ${bench.name}`);
+      if (ops > MAX_OPS) throw new Error(`runaway in ${bench.name}`);
     }
   }
 
   // Measured run
-  const start = Date.now();
-  let ops = 0;
+  const start: Milliseconds = Date.now();
+  let ops: Operations = 0;
   for (let r = 0; r < repeats; r++) {
     cpu.regs.PC = 0x0100;
     cpu.regs.SP = 0xff00;
@@ -149,9 +135,9 @@ function run(bench: Bench, repeats: number): { mops: number; ms: number } {
       ops++;
     }
   }
-  const ms = Date.now() - start;
-  const mops = ops / 1_000_000 / (ms / 1000);
-  return { mops, ms };
+
+  const ms: Milliseconds = Date.now() - start;
+  return { ms, ops };
 }
 
 function main() {
@@ -166,9 +152,10 @@ function main() {
   );
   console.log("-".repeat(60));
   for (const { bench, repeats } of benches) {
-    const { mops, ms } = run(bench, repeats);
+    const { ms, ops } = run(bench, repeats);
+    const rate = ops / 1_000_000 / (ms / 1000);
     console.log(
-      `${bench.name.padEnd(40)} ${ms.toString().padStart(8)} ${mops.toFixed(2).padStart(10)}`,
+      `${bench.name.padEnd(40)} ${ms.toString().padStart(8)} ${rate.toFixed(2).padStart(10)}`,
     );
   }
 }

@@ -1,0 +1,58 @@
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
+import { MKI_KANJI1 } from "./mk1.js";
+import { FR_E1, FR_E3 } from "./mk2fr.js";
+import { SR_E0 } from "./mk2sr.js";
+
+// MR ROM hashes are placeholders: MAME's pc8801mk2mr ROM_START
+// declares CRC32+SHA1 but we use md5; replace each value once the
+// physical ROM has been dumped + md5'd locally. Until then loadRoms()
+// will fail md5 validation when --machine=mr is selected.
+const MR_DISK = makeROM("mr-disk", 2, "f553ae258c4a93de4e64dc35830d9737");
+const MR_N80 = makeROM("mr-n80", 32, "c3e24966b51cc2f6533fa6e4de1c7bfe");
+const MR_N88 = makeROM("mr-n88", 32, "8d31c7597c17411558ff17a8f98940e0");
+const MR_E2 = makeROM("mr-e2", 8, "3959c68a87490b8a3f7fae86ffd50814");
+// kanji2 became standard from MR onwards.
+export const MR_KANJI2 = makeROM("mr-kanji2", 128, "todo-md5");
+
+export const MKII_MR: PC88Config = {
+  model: "PC-8801 mkII MR",
+  nicknames: ["mr", "mkiimr", "mkii_mr", "mkii-mr"],
+  releaseYear: 1985,
+  cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
+  memory: {
+    mainRam: 192,
+    textVram: 4,
+    tvramSeparate: true,
+  },
+  video: {
+    modes: ["N", "V1", "V2"],
+    hasAnaloguePalette: true,
+  },
+  sound: { psg: "YM2203" },
+  disk: { count: 2, model: "μPD765a", hasSubCpu: true },
+  dipSwitches: {
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH |
+      0xc0, // bits 6-7 model-specific
+    port31:
+      PORT31.LINES_200 |
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific
+  },
+  roms: {
+    disk: MR_DISK,
+    n80: MR_N80,
+    n88: MR_N88,
+    e0: SR_E0,
+    e1: FR_E1,
+    e2: MR_E2,
+    e3: FR_E3,
+    kanji1: MKI_KANJI1,
+    kanji2: MR_KANJI2,
+  },
+};

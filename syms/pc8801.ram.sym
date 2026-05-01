@@ -1,0 +1,90 @@
+# RAM symbols for PC-8801 mkI (variant slug `pc8801`).
+# Discovered tracing N88-BASIC boot toward the banner stall.
+# Loaded automatically by the debugger and threaded into the
+# disassembler's address resolver as RAM-address fallbacks
+# (alongside per-ROM symbols).
+
+# --- Stack / boot ---
+0xe1a0 stack_top_pre_boot   ; reset SP value (set by 0x0001 LD SP,0xe1a0)
+0xe5fe stack_top_basic      ; main BASIC stack top (set by 0x7820 LD HL,0xe5fe;LD SP,HL)
+
+# --- BIOS RAM jump table (LDIR'd from ROM 0x00be at 0x7837) ---
+# 0x253 = 595 bytes copied during 0x7820 boot. mkI-n88 ROM 0x00be onwards
+# is a vector table; bytes copied verbatim into 0xe600..0xe853.
+0xe600 bios_vector_table    ; start of LDIR-installed vectors
+0xe649 vec_print_state      ; some print-state byte tested at 0x592D
+0xe656 vec_basic_state      ; LD HL,(0xe656) at 0x0378
+0xe669 vec_default_irq      ; default IM 1 IRQ handler (= 'c3 00 00' = JP 0)
+0xe6b0 vec_cursor_pos       ; cursor row/col stored as HL
+0xe6b8 vec_screen_state     ; screen state byte
+0xe6c0 shadow_port30        ; cached port 0x30 value (init from DIP)
+0xe6c1 shadow_port40        ; cached port 0x40 value
+0xe6c2 shadow_port31        ; cached port 0x31 value
+0xe6c4 vec_tvram_base       ; base offset for row LDIR copies (used by 0x42e9)
+
+# --- BASIC vectors (live above 0xe853, post-LDIR area) ---
+0xeacc vec_basic_ptr_a      ; BASIC pointer A
+0xeace vec_basic_ptr_b      ; BASIC pointer B
+0xeb05 vec_basic_eb05       ; LD HL,(0xeb05) at 0x03ff
+0xeb07 vec_basic_eb07       ; LD HL,(0xeb07) at 0x03f3
+0xeb09 vec_basic_eb09       ; LD HL,(0xeb09) at 0x0406
+0xeb0b vec_basic_eb0b       ; LD (0xeb0b),HL at 0x0402
+0xeb0d vec_basic_eb0d       ; LD HL,(0xeb0d) at 0x0415
+0xeb0f vec_basic_eb0f       ; LD HL,0xeb0f at 0x041b
+0xeb12 vec_basic_eb12       ; LD (0xeb12),HL
+0xeb14 vec_basic_eb14       ; LD (0xeb14),HL
+0xeb18 vec_basic_eb18       ; LD (0xeb18),HL at 0x454d
+0xeba5 vec_basic_eba5       ; LD (0xeba5),HL at 0x7875
+
+# --- Console-print RAM hooks ---
+0xec88 ram_print_redir_flag ; non-zero -> print_handler takes alt path at 0x4B52
+0xec8f boot_msg_buffer      ; 9-byte buffer filled with spaces at 0x77c7
+
+# --- Hook handler state ---
+0xeca3 hook_state_a3        ; state byte used by hook_input_handler
+0xeca4 hook_state_a4        ; state byte used by hook_input_handler
+0xec27 hook_state_27        ; state byte used by hook_input_handler
+0xe653 hook_state_53        ; state byte used by hook_input_handler
+
+# --- RAM hook table (3-byte slots at 0xecbb; default 'c9 00 00' or JP 0x4dc1) ---
+# Populated by 0x69b2; each slot is a CALL target (RET-by-default until BASIC
+# overrides). Indexed CALLs land here from various BIOS code paths. Many
+# slot purposes still unknown.
+0xecbb ram_hook_start       ; start of 3-byte RAM-hook slots (RET hooks)
+0xee0e ram_hook_jp_start    ; start of JP 0x4dc1 hooks
+0xed42 ram_print_hook       ; RAM print hook — JP target from RST 18 path
+0xed72 ram_hook_for_4fb4    ; CALL'd from 0x4fb4 — must return valid SP in HL
+0xedc9 ram_hook_for_3c4     ; CALL'd from 0x03c4 in BASIC init
+0xedf3 ram_hook_for_4555    ; CALL'd from 0x4551 helper (E-ROM dispatch)
+
+# --- BASIC workspace (0xef0a..0xf254 = 843 bytes, zero-filled) ---
+0xef0a basic_workspace      ; start of BASIC zeroed workspace
+0xef0a tmp_a                ; LD (0xef0a),A scratch byte
+0xef0b tmp_hl               ; LD (0xef0b),HL scratch word
+0xef62 tmp_basic_ef62       ; LD (0xef62),A at 0x72ee
+0xef7f dip_inverted         ; high=~port31, low=~port30 (set by 0x77fe-0x7803)
+0xef83 cursor_state_lo      ; LD (0xef83),A
+0xef84 cursor_state_mid     ; LD (0xef84),A
+0xef85 cursor_state_hi      ; LD (0xef85),A
+0xef86 cursor_pos_save      ; LD (0xef86),HL — cursor pos from set_cursor_save_hl
+0xef88 screen_cols          ; column count (CP 0x14 selects 40 vs 80 col)
+0xef89 screen_rows          ; row count (CP 0x29 → divide row offset by 2)
+0xef8a tmp_addr_save        ; LD (0xef8a),HL at 0x4441
+0xef8d tmp_div_result       ; LD (0xef8d),A at 0x4436
+0xef8e tmp_basic_ef8e       ; checked at 0x43c3
+0xef90 cursor_state_lo_b    ; LD (0xef90),A at 0x3f7a
+0xef98 row_state_table      ; 0x5f1d ED 11 98 EF — fill table of "active row" flags
+0xefb4 cursor_visible_flag  ; cursor visibility flag at 0x5f12
+
+# --- Higher BASIC scratch ---
+0xeff9 basic_eff9           ; checked CP 0xff at 0x32a5
+0xeffa basic_effa           ; LD A,(0xeffa) at 0x32af
+0xeffb basic_effb_ptr       ; LD HL,(0xeffb) at 0x32ac
+
+# --- Trampoline scratch ---
+0xf0d0 trampoline_basic_swap ; DI/OUT (0x31),A/JP HL trampoline built at 0x77b0
+
+# --- TVRAM ---
+0xf000 tvram_base           ; 4 KB TVRAM array (permanently mapped)
+0xf300 tvram_n80_origin     ; N-BASIC DMAC src — start of 80x20 visible region
+0xf3c8 tvram_n88_origin     ; N88-BASIC DMAC src — start of 80x20 visible region

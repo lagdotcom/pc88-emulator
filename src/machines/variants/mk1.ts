@@ -1,15 +1,15 @@
-import { makeROM, type PC88Config } from "../config.js";
+import { makeROM, type PC88Config, PORT30, PORT31 } from "../config.js";
 
-export const MKI_DISC = makeROM(
-  "mkI-disc",
+export const MKI_DISK = makeROM(
+  "mkI-disk",
   2,
   "793f86784e5608352a5d7f03f03e0858",
 );
 const MKI_N80 = makeROM("mkI-n80", 32, "5d6854624dd01cd791f58727fc43a525");
-const MKI_N88 = makeROM("mkI-n88", 32, "d8a5dcd9a38e6d8268fbb8bdd9469517");
+const MKI_N88 = makeROM("mkI-n88", 32, "22be239bc0c4298bc0561252eed98633");
 const MKI_E0 = makeROM("mkI-e0", 8, "e28fe3f520bea594350ea8fb00395370");
 const MKI_FONT = makeROM("mkI-font", 2, "cd428f9ee8ff9f84c60beb7a8a0ef628");
-const MKI_KANJI1 = makeROM(
+export const MKI_KANJI1 = makeROM(
   "mkI-kanji1",
   128,
   "d81c6d5d7ad1a4bbbd6ae22a01257603",
@@ -17,23 +17,44 @@ const MKI_KANJI1 = makeROM(
 
 export const MKI: PC88Config = {
   model: "PC-8801",
+  nicknames: ["88", "pc88", "mki", "original"],
+  releaseYear: 1981,
   cpu: { main: "μPD780C-1", sub: "μPD780C-1", highSpeedMode: false },
   memory: {
     mainRam: 64,
     textVram: 4,
-    graphicsVramPlanes: 3,
-    graphicsVramPerPlane: 16,
-    hasExtendedRam: false,
+    tvramSeparate: false,
   },
   video: {
     modes: ["N", "V1"],
-    hasAnaloguePalette: true,
-    hasKanjiRom: true,
+    // Analogue palette was introduced on mkII SR (1985); pre-SR
+    // machines hardwire the 8-colour digital palette.
+    hasAnaloguePalette: false,
   },
   sound: { psg: "beeper" },
   disk: { count: 0, model: "μPD765a", hasSubCpu: false },
+  // mkI factory defaults: 80 cols, mono, 200 lines / V1, ROM boot,
+  // N-BASIC. Reproduces the typical "out of the box" configuration
+  // users would have seen in 1981.
+  dipSwitches: {
+    port30:
+      PORT30.COLS_80 |
+      PORT30.MONO |
+      // bit 2 clear: serial carrier mode = "space"
+      PORT30.CASSETTE_MOTOR |
+      PORT30.USART_RS232_HIGH | // bits 4-5 = 11
+      0xc0, // bits 6-7 model-specific (set high)
+    port31:
+      PORT31.LINES_200 |
+      // bit 1 clear: MMODE = ROM boot
+      PORT31.RMODE_N80 |
+      PORT31.GRPH |
+      // bit 4 clear: HCOLOR off (mono palette)
+      PORT31.HIGHRES |
+      0xc0, // bits 6-7 model-specific (set high)
+  },
   roms: {
-    disk: MKI_DISC,
+    disk: MKI_DISK,
     font: MKI_FONT,
     n80: MKI_N80,
     n88: MKI_N88,

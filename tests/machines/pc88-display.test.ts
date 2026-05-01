@@ -1,0 +1,104 @@
+import { describe, expect, it } from "vitest";
+
+import type { u8, u16 } from "../../src/flavours.js";
+import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
+import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
+import { MKI } from "../../src/machines/variants/mk1.js";
+import { filledROM } from "../tools.js";
+
+function syntheticRoms(program: u8[]): LoadedROMs {
+  const n80 = filledROM(0x8000, 0x76);
+  for (let i = 0; i < program.length; i++) n80[i] = program[i]!;
+  const n88 = filledROM(0x8000, 0x76);
+  const e0 = filledROM(0x2000, 0x76);
+  return { n80, n88, e0 };
+}
+
+// Helper: drop a string into TVRAM at the given absolute address as
+// 2-byte cells (char + 0x00 attribute).
+function fillTextCells(machine: PC88Machine, addr: u16, s: string): void {
+  const tvramOffset = addr - 0xf000;
+  for (let i = 0; i < s.length; i++) {
+    machine.memoryMap.tvram[tvramOffset + i * 2] = s.charCodeAt(i);
+    machine.memoryMap.tvram[tvramOffset + i * 2 + 1] = 0;
+  }
+}
+
+describe("PC88TextDisplay visible region", () => {
+  it("returns a placeholder when the CRTC has not been programmed", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76])); // HALT
+    machine.reset();
+    runMachine(machine, { maxOps: 10 });
+    const dump = machine.display.toASCIIDump();
+    expect(dump).toMatch(/CRTC not yet programmed/);
+  });
+
+  it("renders the CRTC+DMAC-fetched region when SET MODE has run", () => {
+    // Program the machine the way N-BASIC does: 40-col 2-byte-cell
+    // mode (port 0x30 bit 0 clear), CRTC SET MODE for an 80-byte
+    // cell run × 20 rows, DMAC ch2 source = 0xF300, then drop
+    // "HELLO" at the top-left of the visible region.
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+
+    // Port 0x30 write with COLS_80 clear → 40-col / 2-byte-cell mode.
+    machine.ioBus.write(0x30, 0x00);
+
+    // CRTC SET MODE (cmd 0x00, 5 params: 80×20).
+    machine.ioBus.write(0x51, 0x00);
+    machine.ioBus.write(0x50, 0xce);
+    machine.ioBus.write(0x50, 0x93);
+    machine.ioBus.write(0x50, 0x69);
+    machine.ioBus.write(0x50, 0xbe);
+    machine.ioBus.write(0x50, 0x13);
+
+    // DMAC ch2 source = 0xF300 (low byte then high byte).
+    machine.ioBus.write(0x64, 0x00);
+    machine.ioBus.write(0x64, 0xf3);
+
+    fillTextCells(machine, 0xf300, "HELLO");
+
+    const dump = machine.display.toASCIIDump();
+    const lines = dump.split("\n");
+    expect(lines[0]).toBe("HELLO");
+    expect(lines).toHaveLength(20);
+  });
+
+  it("honours the DMAC source offset when it isn't 0xF000", () => {
+    // The first 0x300 bytes of TVRAM are off-screen scratch when
+    // DMAC ch2 starts at 0xF300; bytes there must NOT show up in
+    // the visible dump. 40-col 2-byte-cell mode for the 2-byte
+    // fillTextCells helper to populate cells correctly.
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    machine.ioBus.write(0x30, 0x00); // COLS_80 clear → 40-col mode
+    machine.ioBus.write(0x51, 0x00);
+    machine.ioBus.write(0x50, 0xce);
+    machine.ioBus.write(0x50, 0x93);
+    machine.ioBus.write(0x50, 0x69);
+    machine.ioBus.write(0x50, 0xbe);
+    machine.ioBus.write(0x50, 0x13);
+    machine.ioBus.write(0x64, 0x00);
+    machine.ioBus.write(0x64, 0xf3);
+
+    fillTextCells(machine, 0xf000, "OFFSCREEN");
+    fillTextCells(machine, 0xf300, "VISIBLE");
+
+    const dump = machine.display.toASCIIDump();
+    expect(dump).not.toMatch(/OFFSCREEN/);
+    expect(dump).toMatch(/^VISIBLE/);
+  });
+
+  it("rawTvramDump shows the full 4 KB regardless of CRTC state", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    fillTextCells(machine, 0xf000, "OFFSCREEN");
+    const dump = machine.display.rawTVRAMDump();
+    // 4 KB / 16 bytes per line = 256 lines.
+    expect(dump.split("\n")).toHaveLength(256);
+    // First line should contain the 'O' 'F' 'F' bytes interleaved
+    // with 0x00 attributes.
+    expect(dump.split("\n")[0]).toContain("4f 00 46 00 46 00");
+    expect(dump.split("\n")[0]).toContain("O.F.F.");
+  });
+});

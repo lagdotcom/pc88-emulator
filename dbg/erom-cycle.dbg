@@ -1,0 +1,15 @@
+# Map every EROM-gating port hit during a fixed boot window. Useful
+# for spotting which slot N88 actually expects vs what we're
+# returning, and which RAM-resident dispatch helpers (0x4551,
+# 0x455d, 0x4571, 0x4589, 0x0144 ...) are actually hot.
+#
+#   yarn pc88 --basic=n88 --script=dbg/erom-cycle.dbg
+#   yarn pc88 --basic=n80 --script=dbg/erom-cycle.dbg
+#
+# Run with both BASICs and diff — N88 cycles port 0x71 heavily,
+# N-BASIC barely touches it.
+
+bp 0x32 rw log
+bp 0x71 rw log
+continue 10000000
+chips
