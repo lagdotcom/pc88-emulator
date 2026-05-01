@@ -32,9 +32,13 @@ Working:
 
 Not yet built:
 
-- FDC (μPD765a) and the `Disk` interface that abstracts D88 from it.
+- FDC (μPD765a). The `Disk` interface that abstracts D88 from it
+  is built (`src/disk/`), as is the `FloppyDrive` layer the FDC will
+  hold. The FDC chip itself is still TODO.
 - Sub-CPU model (mkII+ has a second Z80 driving the FDC via the
-  `μPD8255` PPI at 0xFC-0xFF; communicates through shared latches).
+  `μPD8255` PPI at 0xFC-0xFF). The PPI bridge is built and tested
+  (`src/chips/io/μPD8255.ts`, MAME-pc80s31k-style PA↔PB crossover);
+  the second Z80 + its bus + ROM is still TODO.
 - Pixel-accurate CRT controller rendering (the μPD3301 stub
   consumes the SET MODE block correctly but doesn't generate raster).
 - Graphics VRAM rendering + analogue palette (palette ports
@@ -168,7 +172,8 @@ src/
     z80/              CPU, register file, opcode tables, disasm,
                       symbol-file parser
     io/               sysctrl, keyboard, μPD3301, μPD8257, μPD8251,
-                      kanji, YM2203, calendar, beeper, irq, misc
+                      μPD8255 (sub-CPU IPC bridge), kanji, YM2203,
+                      calendar, beeper, irq, misc
                       (mostly stubs at first light)
   core/             buses + shared infrastructure
     MemoryBus.ts      providers + fast-path single-array memory bus
@@ -248,10 +253,19 @@ Roughly ordered by what's blocking what.
   model; the drive only tracks position.
 - [ ] **`ROMManifest.disk` is still optional** — once at least one
   chip needs the disk ROM at runtime, lift the field to required.
-- [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80
-  instances + a shared latch object; FDC connects to the sub-CPU
-  bus, not the main bus. Design the IPC latch before writing FDC
-  code so the FDC doesn't accidentally couple to the main bus.
+- [x] **Sub-CPU IPC PPI** (`μPD8255` at 0xFC-0xFF). Two-sided
+  bridge modelled per MAME's `pc80s31k`: on each side, port A is
+  outgoing (write to send), port B is incoming (read to receive),
+  port C is symmetric pass-through. Six internal latches with the
+  PA↔PB crossover that real silicon has. `hasFreshForSub()` /
+  `hasFreshForMain()` flags will drive the sub-CPU scheduler.
+  TODO: GPIB-style PC bit remap (writer uses PC[4..7], reader sees
+  PC[0..2] in MAME) — not exercised by the BIOS init path; lands
+  when the FDC sub-CPU ROM consumes the strobe protocol.
+- [ ] **Sub-CPU subsystem**: second Z80 + its own MemoryBus + IOBus
+  + sub-CPU ROM, scheduled alongside the main CPU. The PPI bridges
+  the two sides; the FDC + drives + boot ROM live entirely on the
+  sub-CPU bus. mkII variants set `hasSubCpu: true` in the config.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is
