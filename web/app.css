@@ -76,3 +76,18 @@ button:disabled { background: #555; cursor: not-allowed; }
   white-space: pre;
   overflow-x: auto;
 }
+
+.running {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.run-controls { display: flex; gap: 0.5rem; }
+.run-controls button { background: #2563eb; }
+.run-controls button:disabled { background: #555; }
+.run-status {
+  color: #aaa;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+.back-button { align-self: flex-start; background: #444; margin-top: 0.5rem; }

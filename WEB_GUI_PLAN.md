@@ -86,34 +86,38 @@ thread for now and dumps the visible TVRAM region into a `<pre>`.
 
 ## What's next — phasing
 
-### Phase 2: Worker boundary
+### Phase 2: Worker boundary ✓ (committed)
 
-Goal: emulator runs on a Web Worker; UI thread only renders and
-forwards user input. Pause/step/continue cross as messages.
+Done. Emulator runs on a dedicated Web Worker; UI thread only
+renders + forwards user input. Pause/run/step/reset cross as
+messages.
 
-- New `src/web/worker.ts`. Imports `PC88Machine`, `runMachine`,
-  `makeVblState`, `pumpVbl`, `stepOneInstruction`. Owns the
-  emulator instance.
-- New `src/web/protocol.ts`. Typed message union — see sketch in
-  the original plan (`boot`, `cmd`, `run`, `pause`, `step`,
-  `stepOver`, `snapshot`, `peek`, `poke`, `key` inbound;
-  `out`, `stopped`, `frame`, `snapshot`, `memory` outbound).
-- Update `esbuild.config.mjs` to bundle `src/web/worker.ts` to
-  `web/worker.js`. Worker should also have the `log` alias +
-  `process.env.LOG_CPU` define applied. (Easiest: factor the
-  shared esbuild options into a helper so both entries inherit.)
-- `src/web/main.ts` shrinks: instantiate the worker, post boot,
-  listen for stopped/frame messages, render. Replace the synchronous
-  `runMachine(machine, { maxOps: 200_000 })` path entirely.
-- Frame pacing: rAF-driven. Worker emits `frame` at most once per
-  rAF tick. Run loop in worker is a `setTimeout(0)`-driven busy
-  loop with a per-tick op budget; a `pause` message flips a flag
-  the loop checks.
-- Snapshot frequency: full snapshot only on `stopped`; while
-  running, `frame` carries `{textFrame, pc, vblCount}` only.
-- OPFS lives on the Worker side — `FileSystemSyncAccessHandle` is
-  worker-only and avoids the async-promise dance during boot. The
-  UI thread asks for the ROM list via a `listRoms` message.
+- `src/web/worker.ts` owns a `PC88Machine` + `VblState` + run loop.
+  60 Hz pacing comes from `setTimeout(FRAME_INTERVAL_MS)`; each
+  iteration advances the CPU by one VBL period of cycles, then
+  posts a `tick`. `halted && !iff1` ends the run with a `stopped`
+  message tagged `halted-no-irq` (matching `runMachine`).
+- `src/web/protocol.ts` carries the typed message union. Inbound:
+  `boot` (config + `[ROMID, ArrayBuffer]` pairs, transferred),
+  `run`, `pause`, `step`, `reset`. Outbound: `ready`, `tick`,
+  `stopped`, `error`. `tick` carries the ASCII display dump + PC
+  + cycle count + ops + running flag — small enough that 60 Hz
+  postMessage-with-string is fine.
+- `esbuild.config.mjs` factored to one shared options object;
+  builds `web/app.js` (UI) and `web/worker.js` (emulator) in
+  parallel via two `esbuild.context()`s. Both inherit the `log`
+  alias + `process.env.LOG_CPU` define.
+- `src/web/main.ts` no longer imports `PC88Machine`. It spawns
+  the worker via `new Worker(new URL("./worker.js", import.meta.url),
+  { type: "module" })`, transfers fresh `ArrayBuffer` copies of
+  the user's ROM bytes (originals stay alive on the boot screen
+  for the back button), and renders Run / Pause / Step / Reset
+  buttons + a status line over the same `<pre>` ASCII dump.
+- OPFS still lives on the main thread for now — async OPFS works
+  there fine, and moving the boot-screen ROM list dance behind
+  postMessage adds surface area phase 2 doesn't need. Move when
+  `FileSystemSyncAccessHandle` actually buys something (probably
+  phase 5 for savestate writes).
 
 ### Phase 3: Canvas text-mode renderer
 
@@ -243,7 +247,7 @@ the CLI debugger because every command flows through the same
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 1
+## File index after phase 2
 
 ```
 src/
@@ -254,7 +258,9 @@ src/
     variants/
       index.ts                     # VARIANTS list + helpers
   web/
-    main.ts                        # entry
+    main.ts                        # UI entry; spawns worker, renders ticks
+    worker.ts                      # emulator worker; owns PC88Machine + run loop
+    protocol.ts                    # typed message union (inbound + outbound)
     boot-screen.ts                 # form + state
     md5.ts                         # RFC-1321
     opfs.ts                        # storage abstraction
@@ -264,4 +270,5 @@ web/
   index.html
   app.css
   app.js                           # esbuild output (gitignored)
+  worker.js                        # esbuild output (gitignored)
 ```

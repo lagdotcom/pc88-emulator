@@ -49,8 +49,15 @@ async function buildWebBundle() {
   // shim re-exports the same `default.get(name).<level>(...)`
   // surface every chip module uses.
   const shimPath = fileURLToPath(new URL("./src/log-shim.ts", import.meta.url));
-  const ctx = await esbuild.context({
-    entryPoints: ["src/web/main.ts"],
+  // Shared config between the UI bundle (web/app.js) and the worker
+  // bundle (web/worker.js) so both entries get the same alias /
+  // define treatment. esbuild's `define` only accepts identifiers /
+  // JSON literals, hence the per-key form rather than a wholesale
+  // `process.env` replacement; pc88.ts has a dev-only
+  // `process.env.LOG_CPU` guard that survives tree-shaking and would
+  // otherwise throw ReferenceError on `process` at runtime in the
+  // browser.
+  const shared = {
     bundle: true,
     format: "esm",
     platform: "browser",
@@ -58,29 +65,33 @@ async function buildWebBundle() {
     logLevel: "info",
     sourcemap: webProd ? false : "inline",
     treeShaking: true,
-    outfile: "web/app.js",
     minify: webProd,
     alias: {
       log: shimPath,
       "log/lib/emitter": shimPath,
     },
-    // pc88.ts has a dev-only `process.env.LOG_CPU` guard that
-    // survives tree-shaking; substitute it for `false` so the
-    // conditional dead-code-eliminates instead of throwing
-    // ReferenceError on `process` at runtime in the browser.
-    // esbuild's `define` only accepts identifiers / JSON literals,
-    // hence the per-key form rather than a wholesale `process.env`
-    // replacement.
     define: {
       "process.env.LOG_CPU": "false",
     },
+  };
+  const mainCtx = await esbuild.context({
+    ...shared,
+    entryPoints: ["src/web/main.ts"],
+    outfile: "web/app.js",
+  });
+  const workerCtx = await esbuild.context({
+    ...shared,
+    entryPoints: ["src/web/worker.ts"],
+    outfile: "web/worker.js",
   });
   if (webProd) {
-    await ctx.rebuild();
+    await Promise.all([mainCtx.rebuild(), workerCtx.rebuild()]);
     process.exit(0);
   } else {
-    await ctx.watch();
-    // eslint-disable-next-line no-console
-    console.log("Watching web bundle. Open web/index.html via a static server.");
+    await Promise.all([mainCtx.watch(), workerCtx.watch()]);
+
+    console.log(
+      "Watching web bundle. Open web/index.html via a static server.",
+    );
   }
 }
