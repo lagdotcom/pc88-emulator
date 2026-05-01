@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("misc-io");
+const log = getLogger("misc-io");
 
 // Catch-all for the handful of low-traffic ports the mkI BASIC ROM
 // init path touches that don't belong to any other chip stub. None of

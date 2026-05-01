@@ -25,9 +25,6 @@
 // trip through load + save unchanged. Inline comments stay attached
 // to their symbol; if you rename a symbol the comment is kept.
 
-import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-
 import type { FilesystemPath, MD5Sum, u16 } from "../../flavours.js";
 
 const MD5_HEADER_RE = /^\s*#\s*md5:\s*([0-9a-fA-F]{32})\s*$/;
@@ -68,7 +65,7 @@ export interface SymbolFile {
 
 // Read-only view used by callers that just want to look symbols up
 // (disassembler, debugger prompt). Trivially backed by SymbolFile
-// but composeable: in phase 2 we'll merge per-ROM + RAM + port
+// but composeable — `mergeSymbolTables` stacks per-ROM + RAM + port
 // tables behind this same interface.
 export interface SymbolTable {
   lookup(addr: u16): string | undefined;
@@ -272,14 +269,6 @@ export function emptySymbolFile(path: FilesystemPath): SymbolFile {
   };
 }
 
-export async function loadSymbolFile(
-  path: FilesystemPath,
-): Promise<SymbolFile | null> {
-  if (!existsSync(path)) return null;
-  const text = await readFile(path, "utf-8");
-  return parseSymbolFile(text, path);
-}
-
-export async function saveSymbolFile(file: SymbolFile): Promise<void> {
-  await writeFile(file.path, serialiseSymbolFile(file), "utf-8");
-}
+// loadSymbolFile / saveSymbolFile live in symbols-fs.ts so the
+// browser bundle can import the parse / serialise / setSymbol /
+// removeSymbol pure helpers above without dragging in node:fs.

@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("usart");
+const log = getLogger("usart");
 
 // μPD8251 USART stub. NEC's clone of the Intel 8251A — the same chip
 // is used three places on PC-88 / mkII+:

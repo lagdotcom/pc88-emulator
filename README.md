@@ -109,6 +109,10 @@ yarn zex zexdoc          # standalone zex runner with streamed output
 yarn zex zexall          # same, all-behaviour variant
 yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 yarn dis <file>          # disassemble any raw ROM file (no emulation)
+yarn web                 # esbuild watch for the browser bundle
+yarn build:web           # tsc -noEmit + production browser bundles to web/{app,worker}.js
+yarn web:host            # static-serve web/ via local-server (regenerates the
+                         # Chrome DevTools workspace-folders file first)
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
@@ -179,9 +183,10 @@ src/
                       (write-through to mainRam under ROM)
     pc88-display.ts   text-frame capture + ASCII dump
     display-regs.ts   palette + layer-mask + plane-select register block
-    debug.ts          interactive REPL debugger
-    debug-symbols.ts  per-variant symbol-file routing
     rom-loader.ts     md5-validating fs ROM resolver
+  debug/            interactive REPL debugger + per-ROM symbol routing
+                    (split out from machines/ — see "Web UI architecture"
+                    below for the full file list)
 refs/             references for chip behaviour cross-referenced
                   during reverse-engineering — D88 format,
                   Z80 undocumented, MAME PC-8801 port handlers,
@@ -206,16 +211,6 @@ Roughly ordered by what's blocking what.
 
 ### CPU
 
-- [x] **Block-instruction repeat-iteration flags** — fully resolved.
-  INIR/INDR/OTIR/OTDR (and CPIR/CPDR, LDIR/LDDR via the same
-  PC.high logic) apply the 5 T-state PC-decrement fix-up to H and
-  PF per David Banks's analysis (matching MAME's
-  `block_io_interrupted_flags`). 1604/1604 opcodes × full 1000-case
-  SingleStepTests pass.
-- [x] **IM 2 acceptance**. `requestIrq(vector)` carries the data-bus
-  byte; on accept the CPU reads PC from `(I << 8) | (vector & 0xFE)`.
-  The runner asserts vector 0x00 for VBL. PC-88 BIOS programs IM 2
-  early during init.
 - [ ] **Interrupt acceptance: IM 0, NMI**. IM 0 (execute the byte on
   the data bus as an opcode — only the RST-38 case is reachable by
   the same vector path as IM 1) and NMI (vector 0x0066, ignores
@@ -223,42 +218,18 @@ Roughly ordered by what's blocking what.
   mkI but the FDD-IF on later models can drive it.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [x] **Per-opcode switch dispatcher** — `ops.ts` is six giant
-  switches (`dispatchBase` / `dispatchED` / `dispatchCB` /
-  `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`), one per
-  prefix table. Throughput ~36 Mops/s on Windows V8; full
-  zexdoc/zexall ~2.5 min each, both CRC-clean (incl. undocumented
-  X/Y).
-- [x] **Retire the MCycle table system** — done. The legacy
-  closure-per-MCycle dispatcher and its compile / OpCode.execute /
-  buildOpTable / buildCbTable / buildIndexedCbTable machinery are
-  gone. ALU/flag/control helpers live in `alu.ts`, mnemonic tables
-  for the disassembler / test harness in `mnemonics.ts`, and
-  `ops.ts` is the only dispatcher. The `useDispatchBase`
-  kill-switch and the `DISPATCH=table` harness override are gone.
 
 ### Machine layer
 
 - [ ] **`Disk` interface** in `src/chips/` (or `src/core/`?). Tracks
   + per-sector metadata, density, deleted-mark, CRC status. D88
   parser bolts on top.
-- [x] **`pc88.ts` factory** consuming `PC88Config` — `PC88Machine`
-  wires the chip set, memory map, and I/O ports for mkI.
-- [x] **`DipSwitchState` is a real shape** — `{ port30: u8, port31: u8 }`,
-  required on `PC88Config`, with mkI/mkII/SR variants supplying their
-  factory defaults. `SystemController` consumes them via constructor
-  injection rather than hardcoding magic bytes.
 - [ ] **`ROMManifest.disk` is still optional** — once at least one
   chip needs the disk ROM at runtime, lift the field to required.
 - [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80
   instances + a shared latch object; FDC connects to the sub-CPU
   bus, not the main bus. Design the IPC latch before writing FDC
   code so the FDC doesn't accidentally couple to the main bus.
-- [x] **Real CRTC parameter parsing**. `μPD3301.ts` decodes all 5
-  SET MODE parameter bytes per MAME's `upd3301_device::write`
-  MODE_RESET handler: `dmaCharMode`, `charsPerRow`, `rowsPerScreen`,
-  `charHeightLines`, `gfxMode`, `attrPairsPerRow`. Surfaced through
-  `CRTCSnapshot` and the `chips` debugger command.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is
@@ -283,21 +254,44 @@ Roughly ordered by what's blocking what.
 - [ ] **YM2203 / YM2608 sound generation**. `YM2203.ts` latches
   register writes (0x44 = addr, 0x45 = data) but doesn't generate
   audio. Needs FM synth + SSG + per-channel mixer.
-- [x] **USART stub** (μPD8251). Three channels at 0x20/0xC0/0xC2
-  with mode/command latching and idle status reads — enough for
-  N88 boot init not to stall on the channel-1/-2 reset sequence.
-  Real serial / cassette traffic still TODO.
-- [x] **Kanji ROM lookup** (μPD3301 sister chip). 0xE8-0xEF
-  latches the 16-bit address per bank; reads return 0xFF until a
-  real kanji ROM image is loaded. Kanji rendering = renderer +
-  ROM-image work.
+- [ ] **Real serial / cassette traffic** through the μPD8251 USART
+  stubs. Three channels at 0x20/0xC0/0xC2 currently latch mode +
+  command bytes and return idle status — enough for boot init
+  not to stall.
+- [ ] **Kanji ROM image**. The lookup at 0xE8-0xEF latches the
+  16-bit address per bank but reads return 0xFF until a real ROM
+  image is loaded.
 
 ### Tooling
 
-- [x] **`build` script type-checks `src/machines/` errors** — the
-  `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
-  that compile cleanly. They still need real shapes (see machine layer
-  TODOs).
+- [x] **Web UI** — `yarn build:web` produces `web/app.js` +
+  `web/worker.js`. Boot screen with variant + DIP picker writes
+  ROMs to OPFS (md5 content-addressed); a top-level multi-file
+  picker auto-routes uploads to descriptors by md5 then filename
+  stem, and per-row inputs stay for explicit overrides;
+  cross-variant detection picks up shared ROMs without
+  re-upload. Boot spawns a Worker
+  that owns the CPU loop and emits 60 Hz tick snapshots — each
+  tick ships the CRTC chars buffer (transferable), an ASCII
+  fallback, a typed `CPUSnapshot`, 16 disasm lines around PC,
+  and a `DebugSnapshot` (breakpoints + RAM/port watches + call
+  stack). UI renders an 8×16 cell `<canvas>` (480 px tall,
+  pixel-aligned) plus Registers / Disassembly (with ●
+  breakpoint + ► PC markers + per-row label headers) / Memory
+  / Breakpoints / Watches / Stack / REPL panels. The REPL
+  flows through the same `dispatch()` as the CLI debugger via
+  a `setDebugWriter` callback. Keyboard input maps
+  `KeyboardEvent.code` → `PC88Key` matrix when no form has
+  focus. Symbol files persist in OPFS and feed disasm
+  resolution; an "Import labels" panel takes one or more `.sym`
+  uploads and merges them into the live tables, routing each
+  file by `# md5:` header → filename stem → explicit scope.
+  Native monospace font for now; a CG-ROM glyph atlas is
+  deferred until the kanji ROM image lands. See "Web UI
+  architecture" below for module layout + gotchas.
+  Still open:
+  - [ ] `localStorage` for breakpoint / watch persistence + panel
+    layout preferences across reloads.
 - [x] **End-to-end real-ROM smoke test**. `tests/machines/pc88-real-rom.test.ts`
   is gated on `PC88_REAL_ROMS=1` and runs the mkI N-BASIC boot
   against the real ROM image, asserting the banner ("NEC PC-8001
@@ -305,28 +299,12 @@ Roughly ordered by what's blocking what.
   CRTC+DMAC visible region. A second case runs `--basic=n88` to the
   "How many files(0-15)?" disk-config prompt and asserts the prompt
   string in the visible region; boot stalls past that on keyboard
-  input (no input source wired to the key matrix yet). When that
-  lands, tighten the assertion to require the N88 banner past the
-  prompt. ROMs go in `roms/` (gitignored) — see
-  `src/machines/variants/mk1.ts` for filenames + md5s.
-- [x] **N88-BASIC print path reaches TVRAM**. Root cause was the
-  IRQ controller bit layout: real PC-88 wires port 0xE6 as
-  `bit 0=RTC, bit 1=SOUND, bit 2=VBL` and the μPD8214 priority
-  encoder emits IM 2 vector `2 × source` (RTC=0x00, SOUND=0x02,
-  VBL=0x04). Our stub had bit 0 = VBL with vector 0x00. N88-BASIC
-  programs mask=0x03 (RTC + SOUND) before populating its IM 2
-  table, so under the wrong wiring every VBL pulse was accepted,
-  the CPU read PC from `(0xF300)` (still all zeros), jumped to
-  0x0000, and soft-reset mid-banner — looping forever in the
-  TVRAM-clear LDIR. Fixed `IRQ_MASK` constants in
-  `src/chips/io/irq.ts` and `VBL_IRQ_VECTOR` in
-  `src/machines/pc88.ts`; the RAM hooks at 0xED42 / 0xED99 are
-  user-replaceable hooks that are *meant* to be `C9` RET stubs
-  by default (the RST 18h dispatch itself lives at ROM 0x0018,
-  always installed). The previous diagnosis was a red herring.
-  N80-BASIC banner now prints clean. N88-BASIC reaches its
-  "How many files(0-15)?" disk prompt and stalls waiting for
-  keyboard input — see next item.
+  input — `Keyboard.pressKey(row, col)` is wired now (the web UI
+  uses it via `src/web/keymap.ts`), but the headless test doesn't
+  drive the matrix yet. Once it does, tighten the assertion to
+  require the N88 banner past the prompt. ROMs go in `roms/`
+  (gitignored) — see `src/machines/variants/mk1.ts` for filenames
+  + md5s.
 - [ ] **N88 disk-files prompt needs keyboard input**. After the
   IRQ fix, `--basic=n88` boots all the way to "How many
   files(0-15)?" (the disk-config prompt that real N88-BASIC
@@ -336,36 +314,71 @@ Roughly ordered by what's blocking what.
   but no input source is hooked up), or a `--no-disk` switch
   that programs the DIP bits to skip the prompt.
 
-- [x] **`yarn dis` standalone disassembler**. Reads any raw ROM
-  file, optionally with a `--base=ADDR` mount point so JR/CALL
-  targets render in the right address space. Used to drive the
-  N88 diagnosis above.
-- [x] **mkI BASIC banner reaches TVRAM**. The N-BASIC banner ("NEC
-  PC-8001 BASIC Ver 1.2", "Copyright 1979 (C) by Microsoft", "Ok")
-  is now visible in the TVRAM dump.
-- [x] **PC88TextDisplay reads the right layout**. Per MAME's
-  `upd3301_device::dack_w`, the CRTC streams `charsPerRow` bytes
-  (= 80) as **single-byte chars**, then `attrPairsPerRow * 2` (=
-  40) attr-pair bytes — total 120 bytes/row matching the DMAC
-  count. Software-side cell stride is selected by
-  `sysctrl.cols80` (mirrors port 0x30 bit 0): 1 byte/cell in
-  80-col mode (N88-BASIC), 2 bytes/cell in 40-col mode (N-BASIC,
-  with chars at even offsets and attrs at odd). The "always
-  2-byte cells" theory I had earlier was wrong — N-BASIC just
-  uses the same 80-byte stream as a 40 × 2 layout.
-- [x] **Visible region driven by CRTC + DMAC**. The on-screen image
-  is whatever the μPD3301 (rows × cols, programmed via SET MODE
-  cmd `0x00`-`0x1F` — top 3 bits dispatch the command, low 5 bits
-  are flags) tells it to lay out from the address the μPD8257
-  channel 2 streams in. `toASCIIDump()` now respects both, so it
-  shows only the visible region — not BASIC's TVRAM scratch
-  (token tables, line buffers, attribute pair tables). The full
-  4 KB is still dumped via `rawTVRAMDump()` for diagnostics.
-- [x] **Stub IRQ mask register (0xE6)**. VBL pulses now respect the
-  per-bit mask — when the BIOS clears bit 0 during init, the runner
-  flips the status bit but doesn't assert /INT.
-- [x] **Stub low-traffic ports** 0x09 (read) / 0xE7 / 0xF8 (write).
-  Quietly idle so they don't pollute diagnostics.
+## Web UI architecture
+
+```
+┌─────────────────────────────┐  postMessage   ┌────────────────────┐
+│ web/main.ts (UI thread)     │ ─────────────► │ web/worker.ts      │
+│  panels + canvas + REPL     │ ◄───────────── │  PC88Machine       │
+│  OPFS ROM/settings cache    │                │  DebugState + REPL │
+└─────────────────────────────┘                └────────────────────┘
+```
+
+Worker owns the CPU loop. UI thread owns rendering + input.
+Snapshots cross as plain JSON; CRTC chars buffers and memory-peek
+responses ride as transferable `ArrayBuffer`. The CLI debugger's
+`dispatch(line, ctx)` is the message protocol — every panel button
+is sugar over typed REPL lines, and the on-page REPL gives access
+to anything we don't build a button for.
+
+```
+src/
+  chips/z80/
+    symbols.ts                 # pure parse / serialise / mutate
+    symbols-fs.ts              # node:fs load / save (Node-only)
+  debug/
+    debug.ts                   # dispatch + DebugState (browser-safe)
+    debug-cli.ts               # runDebug + runScript (Node-only)
+    debug-symbols-core.ts      # shared label-file logic (browser-safe)
+    debug-symbols.ts           # fs + node:crypto backend (Node-only)
+    debug-symbols-browser.ts   # OPFS + js-md5 backend
+  machines/
+    rom-loader-browser.ts      # in-memory map path
+  md5.ts                       # MD5Sum-branded wrapper over js-md5
+  web/
+    main.ts                    # UI entry; spawns worker, renders ticks
+    worker.ts                  # emulator worker; owns PC88Machine + run loop
+    protocol.ts                # typed message union (inbound + outbound)
+    canvas-renderer.ts         # CRTC chars → 8×16 cell canvas
+    keymap.ts                  # KeyboardEvent.code → PC88Key
+    panels.ts                  # Registers / Disasm / Memory / Breakpoints / Watches / Stack / REPL
+    boot-screen.ts             # form + state
+    opfs.ts                    # storage abstraction
+web/
+  index.html, app.css          # static page + styles
+  app.js, worker.js            # esbuild output (gitignored)
+```
+
+Gotchas:
+
+1. **`pc88.ts` has a `process.env.LOG_CPU` guard** that esbuild's
+   tree-shaker can't drop because the surrounding function is
+   reachable. The web bundle's `define` substitutes it for
+   `false`. New `process.env.X` reads must be added there too —
+   esbuild rejects a wholesale `process.env: "({})"`.
+
+2. **`debug-symbols.ts` uses `node:fs` / `node:crypto`** at module
+   top. The web esbuild config has an `onResolve` plugin that
+   redirects every relative import of `./debug-symbols.js` to
+   `debug-symbols-browser.ts` (esbuild's `alias` rejects relative
+   paths, hence the plugin). Same redirect strategy applies if
+   any other Node-fs-using module gets pulled in.
+
+3. **OPFS handle types are hand-rolled** in `opfs.ts` and
+   `debug-symbols-browser.ts` because the standard-lib
+   `FileSystemDirectoryHandle` types aren't reachable through
+   this tsconfig. If the typing gets awkward, consider adding
+   `"DOM.AsyncIterable"` to `tsconfig.json`'s `lib`.
 
 ## Test harness notes
 

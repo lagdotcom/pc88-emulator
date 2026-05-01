@@ -1,7 +1,10 @@
-// Debugger ↔ symbol-file glue. Owns the per-ROM SymbolFile cache,
-// resolves CPU addresses to ROM ids based on the live memory map,
-// and persists every mutation eagerly so labels accumulate across
-// sessions.
+// Backend-agnostic debugger symbol-file logic. The Node CLI and the
+// browser worker both share this code; only the I/O strip
+// (file read/write + md5) differs between them. Each environment
+// supplies a `SymbolBackend`; the thin wrappers in
+// debug-symbols.ts (fs + node:crypto) and
+// debug-symbols-browser.ts (OPFS + js-md5) bind a backend and
+// re-export the same surface.
 //
 // Memory-map awareness is the key piece: address 0x5550 means
 // different things depending on whether n80 or n88 is currently
@@ -9,25 +12,41 @@
 // is enabled. romIdAt() consults the same map state the CPU sees
 // to dispatch lookups + mutations to the right per-ROM file.
 
-import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import type { ResolveLabel, ResolvePort } from "../chips/z80/disasm.js";
 import {
   emptySymbolFile,
-  loadSymbolFile,
+  parseSymbolFile,
   removeSymbol,
-  saveSymbolFile,
+  serialiseSymbolFile,
   setSymbol,
   type SymbolFile,
 } from "../chips/z80/symbols.js";
-import type { FilesystemPath, ROMID } from "../flavours.js";
-import type { ROMDescriptor } from "./config.js";
-import type { PC88Machine } from "./pc88.js";
-import type { LoadedROMs } from "./pc88-memory.js";
+import type { MD5Sum, ROMID } from "../flavours.js";
+import type { ROMDescriptor } from "../machines/config.js";
+import type { PC88Machine } from "../machines/pc88.js";
+import type { LoadedROMs } from "../machines/pc88-memory.js";
 
-const SYMS_DIR: FilesystemPath = "syms";
+const SYMS_DIR = "syms";
+
+// Single bytewise representation of a syms file is a string —
+// `parseSymbolFile` / `serialiseSymbolFile` round-trip through one.
+// The backend doesn't have to know about `SymbolFile` directly; it
+// just stores text under a key and computes md5s for header seeding.
+export interface SymbolBackend {
+  // Returns the file's contents, or null if it doesn't exist.
+  // `name` is a bare basename (e.g. "mkI-n88.sym"); the backend is
+  // responsible for any directory scoping.
+  read(name: string): Promise<string | null>;
+  // Overwrite the file with the given text.
+  write(name: string, text: string): Promise<void>;
+  // Compute an md5 over the given bytes. Distinct from the file
+  // I/O so the same backend abstraction works for both node:crypto
+  // and js-md5.
+  md5(bytes: Uint8Array): MD5Sum;
+  // Emit a non-fatal warning. Node routes through process.stderr so
+  // tests can capture it; browser routes to console.warn.
+  warn(message: string): void;
+}
 
 interface DebugSymbolEntry {
   romId: ROMID;
@@ -63,10 +82,9 @@ function variantSlug(machine: PC88Machine): string {
 }
 
 // Determine which ROM id is mapped at `addr` right now, given the
-// machine's live memory-map state. Returns null for RAM regions
-// (those will be in a separate variant-wide RAM symbol file in
-// phase 3).
-export function romIdAt(machine: PC88Machine, addr: u16): string | null {
+// machine's live memory-map state. Returns null for RAM regions —
+// those route to the variant-wide RAM symbol file (`ramFile`).
+export function romIdAt(machine: PC88Machine, addr: number): string | null {
   const mm = machine.memoryMap;
   if (!mm.basicROMEnabled) return null;
   const page = (addr >> 12) & 0xf;
@@ -104,17 +122,13 @@ function activeEromDescriptor(machine: PC88Machine): ROMDescriptor | undefined {
   }
 }
 
-// Type alias for u16 to avoid pulling flavours into a debug-only
-// module — phase 3 might split this file out further.
-type u16 = number;
-
 // Bytes for whichever ROM image is mapped at `addr`. Used by the
 // md5-on-create path so a newly-touched symbol file can self-seed
 // its header.
 function bytesForRomAt(
   machine: PC88Machine,
   loaded: LoadedROMs,
-  addr: u16,
+  addr: number,
 ): Uint8Array | null {
   const id = romIdAt(machine, addr);
   if (!id) return null;
@@ -148,42 +162,46 @@ function collectLoadedROMIDs(
   return out;
 }
 
-// Load symbol files for every ROM the machine has byte data for.
-// Files that don't exist yet are represented by empty SymbolFile
-// records pointing at the path we'd save to — that way `label`
-// can write a fresh file on first use.
+async function loadOrEmpty(
+  backend: SymbolBackend,
+  name: string,
+): Promise<SymbolFile> {
+  const path = `${SYMS_DIR}/${name}`;
+  const text = await backend.read(name);
+  return text ? parseSymbolFile(text, path) : emptySymbolFile(path);
+}
+
+async function save(backend: SymbolBackend, file: SymbolFile): Promise<void> {
+  // file.path is "syms/<name>" — pull the basename for the backend.
+  const name = file.path.startsWith(`${SYMS_DIR}/`)
+    ? file.path.slice(SYMS_DIR.length + 1)
+    : file.path;
+  await backend.write(name, serialiseSymbolFile(file));
+}
+
 export async function loadDebugSymbols(
+  backend: SymbolBackend,
   machine: PC88Machine,
   loaded: LoadedROMs,
 ): Promise<DebugSymbols> {
   const byRomId = new Map<string, DebugSymbolEntry>();
   for (const { id, bytes } of collectLoadedROMIDs(machine.config, loaded)) {
-    const path = join(SYMS_DIR, `${id}.sym`);
-    const file = (await loadSymbolFile(path)) ?? emptySymbolFile(path);
+    const file = await loadOrEmpty(backend, `${id}.sym`);
     if (file.md5) {
-      const got = createHash("md5").update(bytes).digest("hex");
+      const got = backend.md5(bytes);
       if (got !== file.md5) {
-        process.stderr.write(
-          `warning: ${path} declares md5=${file.md5} but ROM is ${got}\n`,
-        );
+        // Mismatch is a warning, not a hard error — symbols still
+        // load. Each backend picks its own sink (CLI → stderr,
+        // browser → console.warn).
+        backend.warn(`${file.path} declares md5=${file.md5} but ROM is ${got}`);
       }
     }
     byRomId.set(id, { romId: id, romBytes: bytes, file });
   }
-
-  // Variant-wide RAM + port files. Live alongside the per-ROM
-  // files at syms/<variant>.{ram,port}.sym.
   const slug = variantSlug(machine);
-  const ramPath = join(SYMS_DIR, `${slug}.ram.sym`);
-  const portPath = join(SYMS_DIR, `${slug}.port.sym`);
-  const ramFile = (await loadSymbolFile(ramPath)) ?? emptySymbolFile(ramPath);
-  const portFile =
-    (await loadSymbolFile(portPath)) ?? emptySymbolFile(portPath);
+  const ramFile = await loadOrEmpty(backend, `${slug}.ram.sym`);
+  const portFile = await loadOrEmpty(backend, `${slug}.port.sym`);
 
-  // Address resolver: ROM region → per-ROM file via memory-map
-  // dispatch, otherwise → variant RAM file. Within 16 bytes of a
-  // preceding label we emit "name+N" so instructions in the
-  // middle of a labelled function still surface the name.
   const FUZZ = 16;
   const exact = (addr: number): string | undefined => {
     const id = romIdAt(machine, addr);
@@ -199,38 +217,33 @@ export async function loadDebugSymbols(
     }
     return undefined;
   };
-
   const exactResolver: ResolveLabel = (addr) => exact(addr);
-
   const portResolver: ResolvePort = (port) =>
     portFile.byAddr.get(port & 0xff)?.name;
 
   return { byRomId, ramFile, portFile, resolver, exactResolver, portResolver };
 }
 
-// Add or rename a label. Determines which ROM the address belongs
-// to, mutates that ROM's symbol file, and writes the file back to
-// disk eagerly. The very first mutation against a previously-empty
-// file seeds it with a `# md5: <hash>` header line so future loads
-// can detect ROM-revision drift.
+function seedHeaderIfNew(file: SymbolFile, headerText: string): void {
+  if (file.entries.length > 0) return;
+  file.entries.push({ kind: "comment", text: headerText });
+  file.entries.push({ kind: "blank" });
+}
+
 export async function addLabel(
+  backend: SymbolBackend,
   machine: PC88Machine,
   loaded: LoadedROMs,
   syms: DebugSymbols,
-  addr: u16,
+  addr: number,
   name: string,
   comment?: string,
-): Promise<{ scope: string; path: FilesystemPath }> {
+): Promise<{ scope: string; path: string }> {
   const id = romIdAt(machine, addr);
-  // RAM-region addresses (and any address outside a mapped ROM)
-  // route to the variant-wide RAM file. The same `name+N` window
-  // means the resolver can still find them when a code path
-  // reads from a slightly-offset address.
   if (!id) {
     seedHeaderIfNew(syms.ramFile, `# RAM symbols for ${variantSlug(machine)}`);
     setSymbol(syms.ramFile, addr, name, comment);
-    mkdirSync(dirname(syms.ramFile.path), { recursive: true });
-    await saveSymbolFile(syms.ramFile);
+    await save(backend, syms.ramFile);
     return { scope: "ram", path: syms.ramFile.path };
   }
   const entry = syms.byRomId.get(id);
@@ -239,14 +252,10 @@ export async function addLabel(
       `no symbol-file entry for ROM ${id} (this shouldn't happen)`,
     );
   }
-
-  // First-mutation seeding: stamp the md5 header so a future load
-  // can sanity-check it. Skip if the file already has anything
-  // (including a header the user wrote by hand).
   if (entry.file.entries.length === 0 && !entry.file.md5) {
     const bytes = bytesForRomAt(machine, loaded, addr);
     if (bytes) {
-      const md5 = createHash("md5").update(bytes).digest("hex");
+      const md5 = backend.md5(bytes);
       entry.file.md5 = md5;
       entry.file.entries.push({
         kind: "comment",
@@ -256,100 +265,201 @@ export async function addLabel(
       entry.file.entries.push({ kind: "blank" });
     }
   }
-
   setSymbol(entry.file, addr, name, comment);
-  // Make sure the syms/ directory exists on first write.
-  mkdirSync(dirname(entry.file.path), { recursive: true });
-  await saveSymbolFile(entry.file);
+  await save(backend, entry.file);
   return { scope: id, path: entry.file.path };
 }
 
-// Seed a fresh non-ROM symbol file with a one-line comment header
-// so it's obvious from skim what the file is for. Idempotent — if
-// the file already has anything (header or first symbol from a
-// previous session) we leave it alone.
-function seedHeaderIfNew(file: SymbolFile, headerText: string): void {
-  if (file.entries.length > 0) return;
-  file.entries.push({ kind: "comment", text: headerText });
-  file.entries.push({ kind: "blank" });
-}
-
-// Add or rename a port label. Variant-wide; lives in
-// syms/<variant>.port.sym alongside the RAM file. Port numbers
-// are u8 — masked at write time so callers can pass either a
-// bare number or a full 16-bit hex.
 export async function addPortLabel(
+  backend: SymbolBackend,
   machine: PC88Machine,
   syms: DebugSymbols,
   port: number,
   name: string,
   comment?: string,
-): Promise<{ scope: string; path: FilesystemPath }> {
+): Promise<{ scope: string; path: string }> {
   const masked = port & 0xff;
   seedHeaderIfNew(syms.portFile, `# Port symbols for ${variantSlug(machine)}`);
   setSymbol(syms.portFile, masked, name, comment);
-  mkdirSync(dirname(syms.portFile.path), { recursive: true });
-  await saveSymbolFile(syms.portFile);
+  await save(backend, syms.portFile);
   return { scope: "port", path: syms.portFile.path };
 }
 
 export async function deletePortLabel(
+  backend: SymbolBackend,
   syms: DebugSymbols,
   portOrName: number | string,
-): Promise<{ scope: string; path: FilesystemPath } | null> {
+): Promise<{ scope: string; path: string } | null> {
   const target =
     typeof portOrName === "number" ? portOrName & 0xff : portOrName;
   if (!removeSymbol(syms.portFile, target)) return null;
-  await saveSymbolFile(syms.portFile);
+  await save(backend, syms.portFile);
   return { scope: "port", path: syms.portFile.path };
 }
 
-// Remove a label by address or name. If by address, the lookup
-// uses the live memory-map state to pick the right ROM (so
-// `unlabel 0x5550` while N88 is mapped removes from mkI-n88.sym,
-// not mkI-n80.sym). RAM addresses fall through to the variant
-// RAM file. If by name, every loaded file is searched (per-ROM,
-// then RAM, then port).
 export async function deleteLabel(
+  backend: SymbolBackend,
   machine: PC88Machine,
   syms: DebugSymbols,
-  addrOrName: u16 | string,
-): Promise<{ scope: string; path: FilesystemPath } | null> {
+  addrOrName: number | string,
+): Promise<{ scope: string; path: string } | null> {
   if (typeof addrOrName === "number") {
     const id = romIdAt(machine, addrOrName);
     if (id) {
       const entry = syms.byRomId.get(id);
       if (!entry) return null;
       if (!removeSymbol(entry.file, addrOrName)) return null;
-      await saveSymbolFile(entry.file);
+      await save(backend, entry.file);
       return { scope: id, path: entry.file.path };
     }
     if (removeSymbol(syms.ramFile, addrOrName)) {
-      await saveSymbolFile(syms.ramFile);
+      await save(backend, syms.ramFile);
       return { scope: "ram", path: syms.ramFile.path };
     }
     return null;
   }
   for (const entry of syms.byRomId.values()) {
     if (removeSymbol(entry.file, addrOrName)) {
-      await saveSymbolFile(entry.file);
+      await save(backend, entry.file);
       return { scope: entry.romId, path: entry.file.path };
     }
   }
   if (removeSymbol(syms.ramFile, addrOrName)) {
-    await saveSymbolFile(syms.ramFile);
+    await save(backend, syms.ramFile);
     return { scope: "ram", path: syms.ramFile.path };
   }
   if (removeSymbol(syms.portFile, addrOrName)) {
-    await saveSymbolFile(syms.portFile);
+    await save(backend, syms.portFile);
     return { scope: "port", path: syms.portFile.path };
   }
   return null;
 }
 
-// Render the full label table grouped by ROM id, sorted by
-// address within each group. Empty ROM files are skipped so the
-// list isn't padded with header-only blocks.
+// One-file import result. The UI surfaces this so the user can see
+// where each uploaded file landed and whether anything went wrong.
+export interface ImportResult {
+  // Original filename the user uploaded.
+  fileName: string;
+  // Where the symbols ended up: ROM id ("mkI-n88"), "ram", "port",
+  // or null if no destination could be matched.
+  scope: string | null;
+  // How the destination was picked. "md5" beats "filename" beats
+  // "explicit" (the user's manual override) beats "none".
+  matchedBy: "md5" | "filename" | "explicit" | "none";
+  // Number of symbol entries merged on success; 0 on no-match.
+  merged: number;
+  // Optional human-readable detail when scope is null or merged is 0.
+  reason?: string;
+}
+
+// Import (or merge) a parsed `.sym` file into the active
+// `DebugSymbols`. For each input file the destination is picked by
+// (in order):
+//
+//   1. The file's `# md5: <hash>` header, if it matches one of the
+//      loaded ROM bytes — most precise, can't be wrong.
+//   2. The filename stem matching either a loaded ROM id, or
+//      `<currentVariantSlug>.{ram,port}`.
+//   3. An explicit `scope` override the caller passes in (used when
+//      the UI asks the user to disambiguate).
+//
+// Symbols that already exist at the same address are overwritten
+// (matches `setSymbol`'s rename semantics — one address = one name).
+// Files with no resolvable destination are returned with scope=null
+// and merged=0 so the caller can surface the failure.
+export async function importSymbols(
+  backend: SymbolBackend,
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  files: { name: string; text: string; scope?: string }[],
+): Promise<ImportResult[]> {
+  const slug = variantSlug(machine);
+  const out: ImportResult[] = [];
+
+  for (const f of files) {
+    const stem = f.name.replace(/^.*[\\/]/, "").replace(/\.sym$/i, "");
+    const parsed = parseSymbolFile(f.text, `(uploaded:${f.name})`);
+    const entries = [...parsed.byAddr.values()];
+
+    let target: SymbolFile | null = null;
+    let matchedBy: ImportResult["matchedBy"] = "none";
+    let scope: string | null = null;
+
+    // 1. md5 header match — most reliable.
+    if (parsed.md5) {
+      for (const entry of syms.byRomId.values()) {
+        if (backend.md5(entry.romBytes) === parsed.md5) {
+          target = entry.file;
+          matchedBy = "md5";
+          scope = entry.romId;
+          break;
+        }
+      }
+    }
+    // 2. Filename match: <rom-id>.sym, <slug>.ram.sym, <slug>.port.sym.
+    if (!target) {
+      const romEntry = syms.byRomId.get(stem);
+      if (romEntry) {
+        target = romEntry.file;
+        matchedBy = "filename";
+        scope = romEntry.romId;
+      } else if (stem === `${slug}.ram`) {
+        target = syms.ramFile;
+        matchedBy = "filename";
+        scope = "ram";
+      } else if (stem === `${slug}.port`) {
+        target = syms.portFile;
+        matchedBy = "filename";
+        scope = "port";
+      }
+    }
+    // 3. Explicit scope override (UI manual selector).
+    if (!target && f.scope) {
+      const romEntry = syms.byRomId.get(f.scope);
+      if (romEntry) {
+        target = romEntry.file;
+        matchedBy = "explicit";
+        scope = romEntry.romId;
+      } else if (f.scope === "ram") {
+        target = syms.ramFile;
+        matchedBy = "explicit";
+        scope = "ram";
+      } else if (f.scope === "port") {
+        target = syms.portFile;
+        matchedBy = "explicit";
+        scope = "port";
+      }
+    }
+
+    if (!target) {
+      out.push({
+        fileName: f.name,
+        scope: null,
+        matchedBy: "none",
+        merged: 0,
+        reason: "no md5 / filename match — pick a destination",
+      });
+      continue;
+    }
+    if (entries.length === 0) {
+      out.push({
+        fileName: f.name,
+        scope,
+        matchedBy,
+        merged: 0,
+        reason: "file contains no symbol lines",
+      });
+      continue;
+    }
+
+    for (const e of entries) setSymbol(target, e.addr, e.name, e.comment);
+    await save(backend, target);
+    out.push({ fileName: f.name, scope, matchedBy, merged: entries.length });
+  }
+  return out;
+}
+
+// renderLabelList is pure — no backend needed.
 export function renderLabelList(syms: DebugSymbols): string {
   const out: string[] = [];
   const renderFile = (label: string, file: SymbolFile, hexWidth: number) => {

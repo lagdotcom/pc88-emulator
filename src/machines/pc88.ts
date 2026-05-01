@@ -1,5 +1,3 @@
-import logLib from "log";
-
 import { Beeper } from "../chips/io/beeper.js";
 import { Calendar } from "../chips/io/calendar.js";
 import { IrqController } from "../chips/io/irq.js";
@@ -16,13 +14,14 @@ import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
 import { mHz, mOps } from "../flavour.makers.js";
 import type { Cycles, Operations, u16 } from "../flavours.js";
+import { getLogger } from "../log.js";
 import { byte, word } from "../tools.js";
 import type { PC88Config } from "./config.js";
 import { DisplayRegisters } from "./display-regs.js";
 import { type PC88Display, PC88TextDisplay } from "./pc88-display.js";
 import { type LoadedROMs, PC88MemoryMap } from "./pc88-memory.js";
 
-const log = logLib.get("pc88");
+const log = getLogger("pc88");
 
 // VBL pump runs at 60 Hz (V1 mode default; CRTC reprogramming
 // switches between 24 kHz and 15 kHz horizontal rates which gives
@@ -148,14 +147,43 @@ export class PC88Machine {
   // on the DIP; modelling the choice up-front avoids needing the
   // shared entry to do a runtime ROM swap before printing anything.
   reset(): void {
+    // Z80 user manual RESET behaviour: PC, I, R, IFF1, IFF2, IM all
+    // clear to 0; SP, AF, BC, DE, HL, IX, IY, AF', BC', DE', HL' are
+    // formally undefined on real silicon but most emulators zero them
+    // for determinism — and tests that observe register state across
+    // a reset assume zeros, not whatever the previous run left
+    // behind.
     this.cpu.regs.PC = 0;
     this.cpu.regs.SP = 0;
+    this.cpu.regs.AF = 0;
+    this.cpu.regs.BC = 0;
+    this.cpu.regs.DE = 0;
+    this.cpu.regs.HL = 0;
+    this.cpu.regs.IX = 0;
+    this.cpu.regs.IY = 0;
+    this.cpu.regs.AF_ = 0;
+    this.cpu.regs.BC_ = 0;
+    this.cpu.regs.DE_ = 0;
+    this.cpu.regs.HL_ = 0;
+    this.cpu.regs.I = 0;
+    this.cpu.regs.R = 0;
+    // WZ (MEMPTR) is a real architectural latch — clear it. OP /
+    // OP2 / OPx are dispatcher scratch slots; zero them so a leaked
+    // value from a previous run can't be observed across reset.
+    this.cpu.regs.WZ = 0;
+    this.cpu.regs.OP = 0;
+    this.cpu.regs.OP2 = 0;
+    this.cpu.regs.OPx = 0;
     this.cpu.iff1 = false;
     this.cpu.iff2 = false;
+    this.cpu.im = 0;
     this.cpu.eiDelay = false;
     this.cpu.halted = false;
     this.cpu.irqLine = false;
     this.cpu.cycles = 0;
+    this.cpu.q = 0;
+    this.cpu.qWritten = false;
+    this.cpu.prefix = undefined;
     this.memoryMap.setBasicRomEnabled(true);
     this.memoryMap.setBasicMode(
       this.config.dipSwitches.port31 & 0x04 ? "n80" : "n88",
@@ -343,7 +371,7 @@ export function runMachine(
     }
 
     if (process.env.LOG_CPU) {
-      log.debug(
+      log.trace(
         `pc=${word(cpu.regs.PC)} op=${byte(cpu.mem.read(cpu.regs.PC))}`,
       );
     }

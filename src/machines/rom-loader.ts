@@ -3,9 +3,17 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Bytes, FilesystemPath } from "../flavours.js";
+import type { FilesystemPath, MD5Sum } from "../flavours.js";
 import type { PC88Config, ROMDescriptor, ROMManifest } from "./config.js";
 import type { LoadedROMs } from "./pc88-memory.js";
+import {
+  assembleLoadedRoms,
+  isLoadedRomSlot,
+  RomLoadError,
+  validateRomBytes,
+} from "./rom-validate.js";
+
+export { RomLoadError } from "./rom-validate.js";
 
 export interface RomLoadOptions {
   // Directory to search. Defaults to the `roms/` folder at repo root,
@@ -15,17 +23,6 @@ export interface RomLoadOptions {
   // Disable md5 verification. Used by the synthetic-ROM tests, which
   // build images on the fly.
   skipMd5?: boolean;
-}
-
-export class RomLoadError extends Error {
-  constructor(
-    message: string,
-    public readonly slot: keyof ROMManifest,
-    public readonly descriptor: ROMDescriptor,
-  ) {
-    super(message);
-    this.name = "RomLoadError";
-  }
 }
 
 // Resolve every ROM slot in the manifest to a `Uint8Array`. Required
@@ -60,32 +57,13 @@ export async function loadRoms(
       continue;
     }
     const bytes = new Uint8Array(await readFile(path));
-    const expectedSize: Bytes = descriptor.size * 1024;
-    if (bytes.length !== expectedSize) {
-      throw new RomLoadError(
-        `ROM "${descriptor.id}" at ${path} is ${bytes.length} bytes, expected ${expectedSize}`,
-        slot,
-        descriptor,
-      );
+    if (opts.skipMd5) {
+      validateRomBytes(bytes, slot, descriptor);
+    } else {
+      const md5 = createHash("md5").update(bytes).digest("hex") as MD5Sum;
+      validateRomBytes(bytes, slot, descriptor, { md5 });
     }
-    if (!opts.skipMd5) {
-      const got = createHash("md5").update(bytes).digest("hex");
-      if (got !== descriptor.md5) {
-        throw new RomLoadError(
-          `ROM "${descriptor.id}" md5 mismatch: expected ${descriptor.md5}, got ${got}`,
-          slot,
-          descriptor,
-        );
-      }
-    }
-    if (slot === "n80" || slot === "n88" || slot === "e0" || slot === "e1" ||
-        slot === "e2" || slot === "e3") {
-      result[slot] = bytes;
-    }
-    // Other slots (font, kanji1, etc.) aren't part of LoadedROMs yet —
-    // they'll be added when the chips that consume them land.
+    if (isLoadedRomSlot(slot)) result[slot] = bytes;
   }
-  // Required slots have been validated by the loop above (throws on
-  // missing-required), so the cast is safe.
-  return result as LoadedROMs;
+  return assembleLoadedRoms(result);
 }

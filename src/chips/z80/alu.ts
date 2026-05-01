@@ -5,8 +5,8 @@
 // Sean Young's "Undocumented Z80 Documented" and David Banks's
 // hoglet67/Z80Decoder Undocumented-Flags wiki.
 
-import { parity } from "../../numbers.js";
 import type { u8, u16 } from "../../flavours.js";
+import { parity } from "../../tools.js";
 import type { Z80 } from "./cpu.js";
 import {
   carry,

@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8, u16 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("kanji");
+const log = getLogger("kanji");
 
 // Kanji ROM lookup ports. mkI ships with one bank ("kanji1"), mkII+
 // adds a second ("kanji2"). MAME maps:

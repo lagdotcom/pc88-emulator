@@ -1,8 +1,7 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("calendar");
+const log = getLogger("calendar");
 
 // Real-time-clock + cassette-strobe I/O at port 0x10. The mkI uses
 // this port for both the calendar serial-clock pulses and the

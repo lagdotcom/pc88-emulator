@@ -1,10 +1,9 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { Chars, u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 import { byte } from "../../tools.js";
 
-const log = logLib.get("crtc");
+const log = getLogger("crtc");
 
 // μPD3301 stub. Commands are dispatched by the top 3 bits of the
 // command byte; the low 5 bits are flags / sub-selectors. This is

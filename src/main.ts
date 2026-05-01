@@ -1,15 +1,13 @@
 import { createWriteStream } from "node:fs";
 import { parseArgs } from "node:util";
 
-import ansiRegex from "ansi-regex";
 import { config as loadDotEnv } from "dotenv";
-import emitter from "log/lib/emitter";
-import startNodeLogging from "log-node";
 
+import { runDebug } from "./debug/debug-cli.js";
 import { kOps } from "./flavour.makers.js";
 import type { FilesystemPath, Operations, u16 } from "./flavours.js";
+import { logToStream } from "./log.js";
 import type { PC88Config } from "./machines/config.js";
-import { runDebug } from "./machines/debug.js";
 import {
   PC88Machine,
   runMachine,
@@ -17,28 +15,11 @@ import {
   type RunResult,
 } from "./machines/pc88.js";
 import { loadRoms } from "./machines/rom-loader.js";
-import { FA } from "./machines/variants/fa.js";
-import { FH } from "./machines/variants/fh.js";
-import { MA } from "./machines/variants/ma.js";
-import { MA2 } from "./machines/variants/ma2.js";
-import { MH } from "./machines/variants/mh.js";
+import { VARIANTS_BY_NICKNAME } from "./machines/variants/index.js";
 import { MKI } from "./machines/variants/mk1.js";
-import { MKII } from "./machines/variants/mk2.js";
-import { MKII_FR } from "./machines/variants/mk2fr.js";
-import { MKII_MR } from "./machines/variants/mk2mr.js";
-import { MKII_SR } from "./machines/variants/mk2sr.js";
-import { hex } from "./tools.js";
+import { hex, parseAddrFlag } from "./tools.js";
 
 const DEFAULT_MAX_OPS = kOps(15);
-
-// Listed in roughly-chronological order so `--help` output mirrors
-// NEC's release timeline. Only mkI is verified to boot end-to-end;
-// mkII / mkII SR get exercised by tests; everything else has its
-// PC88Config laid out but not exercised against real ROMs yet.
-const variants = [MKI, MKII, MKII_SR, MKII_FR, MKII_MR, FH, MH, FA, MA, MA2];
-const variantNames = Object.fromEntries(
-  variants.flatMap((mach) => mach.nicknames.map((nick) => [nick, mach])),
-);
 
 interface CliFlags {
   config: PC88Config;
@@ -112,10 +93,10 @@ function parseCliFlags(argv: string[]): CliFlags {
         ? "main.log"
         : null;
 
-  const config =
-    variantNames[values["machine"]?.toLowerCase() as keyof typeof variantNames];
-  if (!config && values["machine"])
-    throw new Error(`Unknown machine name: ${values["machine"]}`);
+  const config = values["machine"]
+    ? VARIANTS_BY_NICKNAME[values["machine"].toLowerCase()]
+    : MKI;
+  if (!config) throw new Error(`Unknown machine name: ${values["machine"]}`);
 
   const basicArg = values["basic"]?.toLowerCase();
   let basicOverride: CliFlags["basicOverride"] = null;
@@ -155,21 +136,8 @@ function parseCliFlags(argv: string[]): CliFlags {
     debug: !!values["debug"] || debugScript !== null,
     initialBreakpoints,
     debugScript,
-    config: config ?? MKI,
+    config,
   };
-}
-
-function parseAddrFlag(raw: string): u16 | null {
-  const s = raw.trim().toLowerCase();
-  if (s.startsWith("0x")) {
-    const n = parseInt(s.slice(2), 16);
-    return Number.isFinite(n) ? n & 0xffff : null;
-  }
-  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
-    return parseInt(s, 16) & 0xffff;
-  }
-  const dec = parseInt(s, 10);
-  return Number.isFinite(dec) ? dec & 0xffff : null;
 }
 
 const HELP = `\
@@ -283,14 +251,6 @@ function diagnostics(machine: PC88Machine, result: RunResult): string {
   return lines.join("\n");
 }
 
-function addFileLogger(path: FilesystemPath) {
-  const ws = createWriteStream(path, { encoding: "utf-8" });
-  emitter.on("log", (event) => {
-    const msg = event.message.replace(ansiRegex(), "");
-    ws.write(msg + "\n");
-  });
-}
-
 async function main(): Promise<void> {
   // .env loads first so process.env is populated before parseCliFlags
   // checks for fallbacks.
@@ -300,8 +260,8 @@ async function main(): Promise<void> {
     process.stdout.write(HELP);
     return;
   }
-  startNodeLogging();
-  if (flags.logFile) addFileLogger(flags.logFile);
+  if (flags.logFile)
+    logToStream(createWriteStream(flags.logFile, { encoding: "utf-8" }));
 
   // loadRoms throws RomLoadError if a required ROM (per the manifest's
   // `required: true` flag) is missing or fails md5/size validation, so

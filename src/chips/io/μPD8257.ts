@@ -1,10 +1,9 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8, u16 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 import { byte, word } from "../../tools.js";
 
-const log = logLib.get("dmac");
+const log = getLogger("dmac");
 
 // μPD8257 DMAC stub. The PC-88 uses one channel (typically channel 2)
 // to drive the CRTC's character-pull DMA from text VRAM. For

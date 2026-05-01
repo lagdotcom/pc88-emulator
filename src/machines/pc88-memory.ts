@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { MemoryProvider } from "../core/MemoryBus.js";
 import type { u8, u16 } from "../flavours.js";
+import { getLogger } from "../log.js";
 
-const log = logLib.get("pc88-memory");
+const log = getLogger("pc88-memory");
 
 const PAGE_SHIFT = 12; // 4 KB pages
 const PAGE_SIZE = 1 << PAGE_SHIFT;

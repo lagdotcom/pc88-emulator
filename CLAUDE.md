@@ -268,8 +268,9 @@ percentage and ETA come from a hardcoded total of ~5.8 G
 instructions per run (measured on this emulator; refresh in both
 `zex-runner.ts` and `zexdoc.test.ts` if it drifts).
 
-Measured rate (Windows V8): ~36 Mops/s. Full zexdoc ~2.5 min; full
-zexall ~2.5 min. Both pass cleanly (no CRC mismatches). The
+Measured rate (Windows V8): ~33.8 Mops/s on zexall, ~36 Mops/s on
+zexdoc. Full zexdoc ~2.5 min; full zexall ~2.5 min. Both pass
+cleanly (no CRC mismatches). The
 vitest `test:zex` path captures the same output but only surfaces
 it on completion.
 
@@ -596,6 +597,22 @@ that never reaches the screen** — token tables (`auto`, `go to`,
 as 25 × 80 cells; useful for spotting what the BIOS is using
 TVRAM for outside the visible area.
 
+### Boot-path op-budget thresholds
+
+Empirical minimums for the headless runner (`runMachine` /
+`pc88-real-rom.test.ts`) — anything below these and the visible
+region will still be mid-init when the run terminates:
+
+- **N-BASIC banner** ("NEC PC-8001 BASIC", "Copyright 1979 (C) by
+  Microsoft", "Ok") — needs at least **120 kOps**. The smoke test
+  budgets `kOps(150)` for headroom.
+- **N88-BASIC "How many files(0-15)?"** — needs at least
+  **210 kOps**. The smoke test budgets `kOps(250)`.
+
+Refresh these if the boot path picks up extra work (e.g. when
+the FDC and sub-CPU land and the disk-config prompt actually
+takes user input).
+
 `yarn pc88` exposes its options as CLI flags (`yarn pc88 --help`
 for the full list): `-m`/`--machine=NAME`,
 `--basic=n80|n88` (overrides DIP bit 2 for the run only),
@@ -756,10 +773,12 @@ The first mutation against a previously-empty symbol file seeds
 it with a `# Symbol file for <id>.` header line, an md5 header
 computed from the live ROM bytes, and a blank separator. After
 that, mutations leave the header alone and use the same
-verbatim-original-line preservation phase 1 ships.
+verbatim-original-line preservation the file parser keeps for
+unedited rows.
 
-Phase 3 — RAM and port namespaces, fuzzy `name+N` — landed.
-RAM addresses (0x8000+, outside any mapped ROM) route to
+RAM and port namespaces (with fuzzy `name+N` resolution) live
+alongside the per-ROM files. RAM addresses (0x8000+, outside
+any mapped ROM) route to
 `syms/<variant>.ram.sym`; port labels live in
 `syms/<variant>.port.sym` and surface in `IN A,(n)` / `OUT (n),A`
 disassembly via a separate `resolvePort` callback. The variant
@@ -875,12 +894,12 @@ Project-wide hooks live in `.claude/settings.json`:
 
 ## Branch / pushing
 
-Active branch: `claude/pc88-emulator-fdc-NufaT`. Never push to `main`.
+Active branch: `claude/continue-web-gui-0cis8`. Never push to `main`.
 
-GitHub MCP tools are restricted to `lagdotcom/killchain` and
-`lagdotcom/pc88-emulator`. Direct `git push` works for this branch in
-this workspace; if it fails with 403, the access change usually
-propagates after a session restart.
+GitHub MCP tools are restricted to `lagdotcom/pc88-emulator`.
+Direct `git push` works for this branch in this workspace; if
+it fails with 403, the access change usually propagates after a
+session restart.
 
 ## Open architectural decisions before FDC work
 

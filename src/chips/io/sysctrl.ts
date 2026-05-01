@@ -1,13 +1,12 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 import { type DIPSwitchState, PORT30, PORT31 } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
 import { byte, nibble } from "../../tools.js";
 import type { Beeper } from "./beeper.js";
 
-const log = logLib.get("sysctrl");
+const log = getLogger("sysctrl");
 
 // PC-88 system-control I/O. This stub covers the ports the BASIC ROM
 // init path touches: DIP-switch readback, ROM-bank select, screen mode,

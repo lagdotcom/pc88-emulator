@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("keyboard");
+const log = getLogger("keyboard");
 
 // PC-88 keyboard matrix scanner. Per MAME's pc8801 driver the keyboard
 // occupies CPU I/O ports 0x00..0x0F as 16 read-only "row" ports —

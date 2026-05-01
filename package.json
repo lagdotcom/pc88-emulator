@@ -8,6 +8,10 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "web": "node esbuild.config.mjs web",
+    "build:web": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs web-prod",
+    "devtools-json": "node scripts/gen-devtools-json.mjs",
+    "web:host": "yarn devtools-json && yarn lserver -r web",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
     "test": "vitest",
@@ -21,7 +25,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/log": "^6.3.3",
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.59.1",
     "@typescript-eslint/parser": "^8.59.1",
@@ -35,6 +38,7 @@
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-simple-import-sort": "^13.0.0",
     "globals": "^17.5.0",
+    "local-server": "^0.1.8",
     "prettier": "^3.8.3",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
@@ -42,7 +46,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "log": "^6.3.2",
-    "log-node": "^8.0.3"
+    "debug-level": "^4.1.1",
+    "js-md5": "^0.8.3"
   }
 }

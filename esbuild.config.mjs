@@ -1,4 +1,5 @@
 import esbuild from "esbuild";
+import { fileURLToPath } from "node:url";
 import process from "process";
 import builtins from "builtin-modules";
 
@@ -8,27 +9,106 @@ if you want to view the source, please visit the github repository of this plugi
 */
 `;
 
-const prod = process.argv[2] === "production";
+const target = process.argv[2];
+const prod = target === "production";
+const buildWeb = target === "web" || target === "web-prod";
+const webProd = target === "web-prod";
 
-const context = await esbuild.context({
-  banner: {
-    js: banner,
-  },
-  entryPoints: ["src/main.ts"],
-  bundle: true,
-  external: builtins,
-  format: "cjs",
-  target: "esnext",
-  logLevel: "info",
-  sourcemap: prod ? false : "inline",
-  treeShaking: true,
-  outfile: "main.js",
-  minify: prod,
-});
-
-if (prod) {
-  await context.rebuild();
-  process.exit(0);
+if (buildWeb) {
+  await buildWebBundle();
 } else {
-  await context.watch();
+  await buildNodeBundle();
+}
+
+async function buildNodeBundle() {
+  const ctx = await esbuild.context({
+    banner: { js: banner },
+    entryPoints: ["src/main.ts"],
+    bundle: true,
+    external: builtins,
+    format: "cjs",
+    target: "esnext",
+    logLevel: "info",
+    sourcemap: prod ? false : "inline",
+    treeShaking: true,
+    outfile: "main.js",
+    minify: prod,
+  });
+  if (prod) {
+    await ctx.rebuild();
+    process.exit(0);
+  } else {
+    await ctx.watch();
+  }
+}
+
+async function buildWebBundle() {
+  // Alias the `log` package and its `log/lib/emitter` submodule to
+  // our minimal shim so the browser bundle doesn't drag in
+  // medikoo/log's transitive deps (es5-ext, sprintf-kit, …). The
+  // shim re-exports the same `default.get(name).<level>(...)`
+  // surface every chip module uses.
+  const shimPath = fileURLToPath(new URL("./src/log-shim.ts", import.meta.url));
+  // Shared config between the UI bundle (web/app.js) and the worker
+  // bundle (web/worker.js) so both entries get the same alias /
+  // define treatment. esbuild's `define` only accepts identifiers /
+  // JSON literals, hence the per-key form rather than a wholesale
+  // `process.env` replacement; pc88.ts has a dev-only
+  // `process.env.LOG_CPU` guard that survives tree-shaking and would
+  // otherwise throw ReferenceError on `process` at runtime in the
+  // browser.
+  const shared = {
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2022",
+    logLevel: "info",
+    sourcemap: webProd ? false : "inline",
+    treeShaking: true,
+    minify: webProd,
+    alias: {
+      log: shimPath,
+      "log/lib/emitter": shimPath,
+    },
+    // debug-symbols.ts uses node:fs / node:crypto at module top to
+    // persist labels to disk. Redirect every relative import of it
+    // to the browser stub via a plugin (esbuild's `alias` rejects
+    // relative paths). OPFS-backed label persistence is a follow-up.
+    plugins: [
+      {
+        name: "debug-symbols-browser",
+        setup(build) {
+          const stub = fileURLToPath(
+            new URL("./src/debug/debug-symbols-browser.ts", import.meta.url),
+          );
+          build.onResolve({ filter: /\/debug-symbols\.js$/ }, () => ({
+            path: stub,
+          }));
+        },
+      },
+    ],
+    define: {
+      "process.env.LOG_CPU": "false",
+    },
+  };
+  const mainCtx = await esbuild.context({
+    ...shared,
+    entryPoints: ["src/web/main.ts"],
+    outfile: "web/app.js",
+  });
+  const workerCtx = await esbuild.context({
+    ...shared,
+    entryPoints: ["src/web/worker.ts"],
+    outfile: "web/worker.js",
+  });
+  if (webProd) {
+    await Promise.all([mainCtx.rebuild(), workerCtx.rebuild()]);
+    process.exit(0);
+  } else {
+    await Promise.all([mainCtx.watch(), workerCtx.watch()]);
+
+    console.log(
+      "Watching web bundle. Open web/index.html via a static server.",
+    );
+  }
 }

@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { u8, u16 } from "../flavours.js";
+import { getLogger } from "../log.js";
 import { word } from "../tools.js";
 
-const log = logLib.get("bus");
+const log = getLogger("bus");
 
 export interface MemoryProvider {
   name: string;

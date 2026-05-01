@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("irq");
+const log = getLogger("irq");
 
 // PC-88 maskable-interrupt control. Two registers:
 //   0xE4  priority/level — selects interrupt source priority

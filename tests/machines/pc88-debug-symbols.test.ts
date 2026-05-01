@@ -1,16 +1,15 @@
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
-  mkdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { u8 } from "../../src/flavours.js";
 import {
   addLabel,
   addPortLabel,
@@ -19,7 +18,7 @@ import {
   loadDebugSymbols,
   renderLabelList,
   romIdAt,
-} from "../../src/machines/debug-symbols.js";
+} from "../../src/debug/debug-symbols.js";
 import { PC88Machine } from "../../src/machines/pc88.js";
 import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";

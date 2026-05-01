@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("opn");
+const log = getLogger("opn");
 
 // YM2203 (OPN) — Yamaha sound chip introduced on PC-8801 mkII SR.
 // Standard Yamaha register-then-data interface:
