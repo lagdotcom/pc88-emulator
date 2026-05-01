@@ -111,6 +111,8 @@ yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 yarn dis <file>          # disassemble any raw ROM file (no emulation)
 yarn web                 # esbuild watch for the browser bundle
 yarn build:web           # tsc -noEmit + production browser bundles to web/{app,worker}.js
+yarn web:host            # static-serve web/ via local-server (regenerates the
+                         # Chrome DevTools workspace-folders file first)
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
@@ -264,8 +266,11 @@ Roughly ordered by what's blocking what.
 
 - [x] **Web UI** — `yarn build:web` produces `web/app.js` +
   `web/worker.js`. Boot screen with variant + DIP picker writes
-  ROMs to OPFS (md5 content-addressed); cross-variant detection
-  picks up shared ROMs without re-upload. Boot spawns a Worker
+  ROMs to OPFS (md5 content-addressed); a top-level multi-file
+  picker auto-routes uploads to descriptors by md5 then filename
+  stem, and per-row inputs stay for explicit overrides;
+  cross-variant detection picks up shared ROMs without
+  re-upload. Boot spawns a Worker
   that owns the CPU loop and emits 60 Hz tick snapshots — each
   tick ships the CRTC chars buffer (transferable), an ASCII
   fallback, a typed `CPUSnapshot`, 16 disasm lines around PC,
@@ -278,9 +283,12 @@ Roughly ordered by what's blocking what.
   a `setDebugWriter` callback. Keyboard input maps
   `KeyboardEvent.code` → `PC88Key` matrix when no form has
   focus. Symbol files persist in OPFS and feed disasm
-  resolution. Native monospace font for now; a CG-ROM glyph
-  atlas is deferred until the kanji ROM image lands. See "Web
-  UI architecture" below for module layout + gotchas.
+  resolution; an "Import labels" panel takes one or more `.sym`
+  uploads and merges them into the live tables, routing each
+  file by `# md5:` header → filename stem → explicit scope.
+  Native monospace font for now; a CG-ROM glyph atlas is
+  deferred until the kanji ROM image lands. See "Web UI
+  architecture" below for module layout + gotchas.
   Still open:
   - [ ] `localStorage` for breakpoint / watch persistence + panel
     layout preferences across reloads.
