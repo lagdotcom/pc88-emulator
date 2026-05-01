@@ -330,8 +330,9 @@ src/
   machines/
     debug.ts                   # dispatch + DebugState (browser-safe)
     debug-cli.ts               # runDebug + runScript (Node-only)
-    debug-symbols.ts           # syms file I/O (Node-only)
-    debug-symbols-browser.ts   # OPFS-backed browser version
+    debug-symbols-core.ts      # shared label-file logic (browser-safe)
+    debug-symbols.ts           # fs + node:crypto backend (Node-only)
+    debug-symbols-browser.ts   # OPFS + js-md5 backend
     rom-loader-browser.ts      # in-memory map path
   md5.ts                       # MD5Sum-branded wrapper over js-md5
   web/
