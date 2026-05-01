@@ -30,20 +30,20 @@ describe("runMachine VBL gating via IRQ mask register", () => {
     0x76, // HALT
   ];
 
-  it("delivers VBL when bit 0 of the IRQ mask is set (default)", () => {
+  it("delivers VBL when bit 2 of the IRQ mask is set (default)", () => {
     const machine = new PC88Machine(MKI, syntheticRoms(HALT_WITH_EI));
     machine.reset();
-    // I = 0; vector 0x00 → IM 2 reads PC from RAM[0x0000-0x0001].
-    // The synthetic ROM at PC=0 starts with `ED 5E` so the indirect
-    // load reads 0x5EED; the test only cares that IRQs DO get
-    // delivered, so we don't follow the post-jump path — running
-    // 5M cycles is enough to see ~75 VBL pulses' worth of activity.
+    // I = 0; vector 0x04 → IM 2 reads PC from RAM[0x0004-0x0005].
+    // The synthetic ROM at PC=0 starts with `ED 5E FB 76` so the
+    // indirect load at 0x0004 reads two HALT bytes (0x7676); the test
+    // only cares that IRQs DO get delivered, not what they jump to —
+    // 5M cycles covers ~75 VBL pulses.
     const result = runMachine(machine, { maxCycles: MAX_CYCLES });
     expect(result.vblIrqsRaised).toBeGreaterThan(0);
     expect(result.vblIrqsMasked).toBe(0);
   });
 
-  it("suppresses VBL delivery when bit 0 of the IRQ mask is clear", () => {
+  it("suppresses VBL delivery when bit 2 of the IRQ mask is clear", () => {
     const machine = new PC88Machine(MKI, syntheticRoms(HALT_WITH_EI));
     machine.reset();
     // Mask all interrupt sources.

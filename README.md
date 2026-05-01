@@ -308,27 +308,32 @@ Roughly ordered by what's blocking what.
   tighten the assertion to require the N88 banner once sub-CPU
   emulation lands). ROMs go in `roms/` (gitignored) — see
   `src/machines/variants/mk1.ts` for filenames + md5s.
-- [ ] **N88-BASIC banner reaches TVRAM**. Boot now runs to the
-  banner-print code path. Diagnosis via `yarn dis` against the
-  N88 ROM:
-  - The N88 banner / "Bytes free" / "Copyright" strings live at
-    ROM 0x79B2-0x79FA. Print code is at 0x7968 (`LD HL,0x79BE` /
-    `CALL 0x5550`).
-  - The print routine at 0x5550 touches port 0x71 (secondary ROM
-    bank — our handler is a logging no-op, may need real
-    behaviour) and dispatches char output via `RST 18h`.
-  - `RST 18h` jumps through `CALL (0xED42)` (a RAM-resident hook
-    the BIOS installs during init) and `JP 0x5925` (ROM print
-    handler). 0x5925 in turn checks `(0xEC88)` and may take an
-    alternate "console redirected" path at 0x4B52.
-  - Net: the print path depends on multiple RAM hooks that the
-    BIOS installs early, plus possibly the sub-CPU PPI for actual
-    cell delivery. Diagnosing further means tracing what the BIOS
-    writes to those RAM cells (0xEC88 / 0xED42 / 0xED99 / 0xE64C)
-    and at what point 0x5925 takes the "actual print to TVRAM"
-    branch (jump-target 0x59A5) vs the alternate.
-  Plumbing for switching BASICs is solid; what remains is the
-  sub-CPU + RAM-hook init.
+- [x] **N88-BASIC print path reaches TVRAM**. Root cause was the
+  IRQ controller bit layout: real PC-88 wires port 0xE6 as
+  `bit 0=RTC, bit 1=SOUND, bit 2=VBL` and the μPD8214 priority
+  encoder emits IM 2 vector `2 × source` (RTC=0x00, SOUND=0x02,
+  VBL=0x04). Our stub had bit 0 = VBL with vector 0x00. N88-BASIC
+  programs mask=0x03 (RTC + SOUND) before populating its IM 2
+  table, so under the wrong wiring every VBL pulse was accepted,
+  the CPU read PC from `(0xF300)` (still all zeros), jumped to
+  0x0000, and soft-reset mid-banner — looping forever in the
+  TVRAM-clear LDIR. Fixed `IRQ_MASK` constants in
+  `src/chips/io/irq.ts` and `VBL_IRQ_VECTOR` in
+  `src/machines/pc88.ts`; the RAM hooks at 0xED42 / 0xED99 are
+  user-replaceable hooks that are *meant* to be `C9` RET stubs
+  by default (the RST 18h dispatch itself lives at ROM 0x0018,
+  always installed). The previous diagnosis was a red herring.
+  N80-BASIC banner now prints clean. N88-BASIC reaches its
+  "How many files(0-15)?" disk prompt and stalls waiting for
+  keyboard input — see next item.
+- [ ] **N88 disk-files prompt needs keyboard input**. After the
+  IRQ fix, `--basic=n88` boots all the way to "How many
+  files(0-15)?" (the disk-config prompt that real N88-BASIC
+  shows on disk-equipped models) and stalls. To reach the
+  banner past this prompt the headless runner needs either: a
+  way to feed key events into `Keyboard` (the matrix is wired
+  but no input source is hooked up), or a `--no-disk` switch
+  that programs the DIP bits to skip the prompt.
 
 - [x] **`yarn dis` standalone disassembler**. Reads any raw ROM
   file, optionally with a `--base=ADDR` mount point so JR/CALL
