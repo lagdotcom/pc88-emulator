@@ -30,8 +30,13 @@
 0x71 erom_bank_select
 
 # --- IRQ controller ---
+# Mask layout per NEC mkII technical manual + MAME pc8801.cpp
+# `irq_mask_w`. The μPD8214 priority encoder emits IM 2 vector
+# 2 × source: RTC=0x00, SOUND=0x02, VBL=0x04, RxRdy=0x06,
+# TxRdy=0x08. N88-BASIC programs mask=0x03 (RTC + SOUND only)
+# before populating its IM 2 jump table; VBL is enabled later.
 0xE4 irq_priority           ; IRQ priority/level
-0xE6 irq_mask               ; per-bit IRQ enable; bit 0 = VBL
+0xE6 irq_mask               ; bit 0=RTC, 1=SOUND, 2=VBL, 3=RxRdy, 4=TxRdy
 
 # --- Misc (writes seen during boot, behaviour TBD) ---
 0xE7 misc_e7                ; alt IRQ mask on later models
