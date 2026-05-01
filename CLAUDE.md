@@ -97,6 +97,21 @@ The required mkI files have ids declared in `src/machines/variants/mk1.ts`
 POSIX and Windows shells. The dev environment is Windows; if you add
 new scripts that need an env var, route them through `cross-env`.
 
+The same applies to **any command line you write for the user to
+copy-and-paste** — PR descriptions, test plans, README snippets,
+chat messages telling them how to repro something. The bare
+`FOO=bar yarn x` POSIX syntax doesn't work in Windows `cmd.exe`,
+so always prefix with `cross-env` (or `npx cross-env`) when an env
+var is involved:
+
+```
+cross-env PC88_REAL_ROMS=1 yarn test
+npx cross-env Z80_SAMPLE=full yarn test:z80
+```
+
+`-noEmit`/-style flags and pure `yarn ...` commands are fine
+unprefixed.
+
 The Z80 harness fetches per-opcode JSON test cases from
 [SingleStepTests/z80](https://github.com/SingleStepTests/z80) on first run
 and caches them under `tests/z80/data/v1/` (gitignored — they total
@@ -497,7 +512,7 @@ is a noisy-once 0xff read / no-op write at the bus default):
 0xC0-0xC3    USART ch.1/ch.2         (μPD8251.ts: latched, no traffic)
 0xC8 / 0xCA  RS232 prohibited gates  (misc.ts: stub)
 0xE4         IRQ priority             (irq.ts: latched, no behaviour)
-0xE6         IRQ mask                 (irq.ts: bit 0 = VBL — runner honours)
+0xE6         IRQ mask                 (irq.ts: bit 2 = VBL — runner honours; bits 0=RTC,1=SOUND,3=RxRdy,4=TxRdy)
 0xE7         alt IRQ mask (mkII+)     (misc.ts: latched, no behaviour)
 0xE8-0xEF    kanji ROM lookup        (kanji.ts: 2 banks, addr latch + 0xFF read)
 0xF4 / 0xF8  external floppy DMA     (misc.ts: read 0xFF = card not present)
@@ -505,10 +520,12 @@ is a noisy-once 0xff read / no-op write at the bus default):
 
 The runner (`runMachine` in `pc88.ts`) pumps a 60 Hz VBL: every
 ~66,667 Z80 cycles it sets the VBL bits on sysctrl + crtc and (if
-bit 0 of the IRQ mask is set) calls `cpu.requestIrq()`, then clears
-the bits ~3,200 cycles later. Masked pulses still toggle the status
-bit so polling-based BIOS code sees them. The 60 Hz constant lives
-at the top of `pc88.ts`.
+bit 2 of the IRQ mask is set) calls `cpu.requestIrq(0x04)` — IM 2
+vector 0x04 because the μPD8214 priority encoder emits 2 × source
+and VBL is source 2 (RTC=0, SOUND=1, VBL=2). The pulse clears
+~3,200 cycles later. Masked pulses still toggle the status bit so
+polling-based BIOS code sees them. The 60 Hz constant lives at the
+top of `pc88.ts`.
 
 `runMachine` returns a `RunResult` with the final PC/SP, IFF1 state,
 HALTed flag, and counts of VBL IRQs raised vs masked. `src/main.ts`
@@ -838,7 +855,7 @@ giving the operator room for interactive follow-up.
 
 | Script | Purpose |
 |--------|---------|
-| `dbg/n88-print-entry.dbg` | Run N88 boot, log port 0x71 EROM gating, break at 0x5550, dump the RAM hooks (0xEC88/0xED42/0xED99/0xE64C). Initial diagnosis output: `0xED42`/`0xED99` are still RET stubs at print-call time → BIOS hasn't installed the RST 18h hook. |
+| `dbg/n88-print-entry.dbg` | Run N88 boot, log port 0x71 EROM gating, break at 0x5550, dump the RAM hooks (0xEC88/0xED42/0xED99/0xE64C). The hooks staying as `C9` RET stubs at print-call time is *expected* — they're user-replaceable hooks whose default state is RET; the actual RST 18h dispatch is at ROM 0x0018, always present. The original "BIOS hasn't installed RST 18h" diagnosis was a red herring — the real banner blocker was the IRQ controller bit layout. |
 | `dbg/erom-cycle.dbg` | Log every port 0x32 + 0x71 hit during a fixed boot window. Diff between N88 and N-BASIC to see who actually exercises the EROM dispatch. |
 | `dbg/vbl-acceptance.dbg` | Log writes to port 0xE6 (IRQ mask), break at 0x0038 to catch IM 1 acceptance. Stack will show `via=IRQ` from the about-to-execute PC. |
 

@@ -13,9 +13,16 @@
 # is a vector table; bytes copied verbatim into 0xe600..0xe853.
 0xe600 bios_vector_table    ; start of LDIR-installed vectors
 0xe649 vec_print_state      ; some print-state byte tested at 0x592D
+0xe64b print_col_counter    ; column / cursor pos byte; backspace dec, tab pad
+0xe64c print_handler_flag   ; 0 = take print_to_tvram path; non-zero = control-char path
+0xe64e print_tab_state      ; tab counter; INC then JR z to skip tab handling
+0xe652 print_redirect_alt   ; LD A,(e652);OR A;JP nz,0x558b at print_to_tvram entry
 0xe656 vec_basic_state      ; LD HL,(0xe656) at 0x0378
 0xe669 vec_default_irq      ; default IM 1 IRQ handler (= 'c3 00 00' = JP 0)
+0xe6a0 print_cursor_mode    ; bit 7 set → JP m,0x59d0 (cursor branch); 0=alt
+0xe6a2 print_cursor_sub     ; companion at 0x59D3 controlling space-pad path
 0xe6b0 vec_cursor_pos       ; cursor row/col stored as HL
+0xe6b6 print_e6b6_flag      ; non-zero → 0x59E1 PUSH BC fast path; zero → 0x59E6 tab/CR
 0xe6b8 vec_screen_state     ; screen state byte
 0xe6c0 shadow_port30        ; cached port 0x30 value (init from DIP)
 0xe6c1 shadow_port40        ; cached port 0x40 value
@@ -52,7 +59,9 @@
 # slot purposes still unknown.
 0xecbb ram_hook_start       ; start of 3-byte RAM-hook slots (RET hooks)
 0xee0e ram_hook_jp_start    ; start of JP 0x4dc1 hooks
-0xed42 ram_print_hook       ; RAM print hook — JP target from RST 18 path
+0xed0c ram_hook_print_crlf  ; CALL'd from 0x5a69 (print_crlf entry)
+0xed42 ram_print_hook       ; CALL'd from RST 18h handler at 0x0018; default RET
+0xed99 ram_hook_print_redir ; CALL'd from 0x5372 (print_redirect_check); default RET
 0xed72 ram_hook_for_4fb4    ; CALL'd from 0x4fb4 — must return valid SP in HL
 0xedc9 ram_hook_for_3c4     ; CALL'd from 0x03c4 in BASIC init
 0xedf3 ram_hook_for_4555    ; CALL'd from 0x4551 helper (E-ROM dispatch)

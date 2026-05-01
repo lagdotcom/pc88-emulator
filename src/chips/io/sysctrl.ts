@@ -4,7 +4,7 @@ import type { IOBus } from "../../core/IOBus.js";
 import type { u8 } from "../../flavours.js";
 import { type DIPSwitchState, PORT30, PORT31 } from "../../machines/config.js";
 import type { PC88MemoryMap } from "../../machines/pc88-memory.js";
-import { byte } from "../../tools.js";
+import { byte, nibble } from "../../tools.js";
 import type { Beeper } from "./beeper.js";
 
 const log = logLib.get("sysctrl");
@@ -307,9 +307,7 @@ export class SystemController {
     // selected slot maps in is decided by applyEROMEnable() the next
     // time port 0x71 or port 0x31 changes (or right now, since the
     // slot index is part of "what enable means").
-    this.memoryMap.setEROMSlot(
-      (eromsl & PORT32.EROMSL_MASK) as 0 | 1 | 2 | 3,
-    );
+    this.memoryMap.setEROMSlot((eromsl & PORT32.EROMSL_MASK) as 0 | 1 | 2 | 3);
     this.applyEROMEnable();
   }
 
@@ -320,7 +318,7 @@ export class SystemController {
     // expose the 1 KB at 0x8000-0x83FF when MMODE=0 && RMODE=0.
     this.textWindow = v;
     log.warn(
-      `0x70 write: textWindow=${byte(v)} (1 KB at ${byte(v)}00-${byte(v)}3FF) — mapping not yet implemented`,
+      `0x70 write: textWindow=${byte(v)} (1 KB at ${byte(v)}00-${nibble(v)}3FF) — mapping not yet implemented`,
     );
   }
 

@@ -6,15 +6,24 @@
 
 # --- Reset / boot vectors ---
 0x0000 reset_vector         ; DI; LD SP,0xe1a0; JP boot_prologue
+0x0018 rst18_print_dispatch ; PUSH AF; CALL ram_print_hook (0xED42); JP print_handler
 0x0038 irq_im1_vector       ; JP 0xe669 (default RAM IRQ handler)
 0x0142 erom_dispatch        ; OUT (0x71),A; check 'R4' sig at HL; JP into E-ROM
 
 # --- Banner / startup print sequence ---
 0x7968 print_banner_seq     ; banner / "Bytes free" / Copyright sequence
 0x5550 print_string         ; print NUL-terminated string at HL via RST 18
+0x54fc print_string_setup   ; CALL'd from print_string entry; pre-loop string scan/setup
+0x56cc print_string_setup2  ; second pre-loop CALL from print_string (line/cursor prep)
+0x5372 print_redirect_check ; CALL ram_hook (0xed99); returns Z if (0xec88)==0
 0x5925 print_handler        ; main char-print path entered from RST 18
-0x4B52 print_alt_handler    ; alt path when (0xEC88) != 0 (console redirect?)
-0x59A5 print_to_tvram       ; the actual write-to-TVRAM target (not yet reached)
+0x5935 print_handler_ctrl   ; control-char handler entry (BS=08, TAB=09, CR=0d)
+0x4B52 print_alt_handler    ; alt path when (0xEC88) != 0 (console redirect)
+0x4B54 print_alt_handler_2  ; entry+2 for direct call from print_to_tvram main path
+0x59A5 print_to_tvram       ; reached on N80; on N88 the (0xe6a0) bit-7 flag routes to print_to_tvram_alt
+0x59D0 print_to_tvram_alt   ; (0xe6a0) bit 7 set → cursor-tab/space handling branch
+0x5A69 print_crlf           ; CALL ram_hook (0xed0c); print CR via RST 18; print LF via RST 18
+0x5A72 print_check_after_cr ; called after CR; checks (0xec88) and (0xe64c) state
 
 # --- Banner string data ---
 0x79B2 str_bytes_free       ; " Bytes free\0"

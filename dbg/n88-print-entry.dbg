@@ -1,20 +1,27 @@
-# Catch the call into N88's print routine and inspect what BASIC has
-# done to the RAM hooks (0xEC88 / 0xED42 / 0xED99 / 0xE64C) so far.
+# Catch the call into N88's print routine and inspect the RAM cells
+# the print path dispatches through.
 #
 #   yarn pc88 --basic=n88 --script=dbg/n88-print-entry.dbg
 #
-# Expectation: stops at 0x5550 with the auto-trace showing the path
-# in (e.g. CALL print_string from 0x78ad), call stack showing the
-# enclosing routine, and a peek of the four RAM hooks. Initial port
-# 0x71 reads / writes are logged inline while boot runs through
-# EROM gating.
+# Expectation: stops at 0x5550 (print_string entry) with the auto-
+# trace showing the call in (e.g. CALL print_string from 0x78ad), the
+# call stack showing the enclosing routine, and peeks of the print-
+# path state. Initial port 0x71 reads / writes are logged inline
+# while boot runs through EROM gating.
+#
+# Note: 0xED42 (rst18 hook) and 0xED99 (redirect-check hook) reading
+# back as `c9 00` is normal — those are user-replaceable hooks whose
+# default state is intentionally `RET`. The RST 18h dispatch itself
+# is at ROM 0x0018 (PUSH AF; CALL 0xED42; JP print_handler) and is
+# always present. (For history: this recipe originally existed to
+# diagnose a "hooks not installed" theory that turned out to be
+# wrong — the real banner blocker was the IRQ-mask bit layout.)
 
 bp 0x71 rw log
 break 0x5550
 continue 10000000
 
-# At the breakpoint, dump the four RAM cells the print path
-# dispatches through (per README diagnosis).
+# Dump the four RAM cells the print path consults.
 peek 0xEC88 4
 peek 0xED42 2
 peek 0xED99 2

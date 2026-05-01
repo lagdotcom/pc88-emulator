@@ -33,10 +33,12 @@ export const VBL_HZ = 60;
 const VBL_PERIOD_CYCLES = Math.round(Z80_HZ / VBL_HZ);
 const VBL_PULSE_CYCLES = Math.round(Z80_HZ * 0.0008); // ~0.8 ms VBL pulse
 // Vector byte the VBL source asserts on the data bus during IM 2 IRQ
-// acknowledge. PC-88 BIOS lays its IM 2 jump table at I:0x00 with
-// VBL as the first entry, so the source byte is 0x00. Sub-CPU /
-// USART / etc. use different bytes; not modelled this branch.
-const VBL_IRQ_VECTOR = 0x00;
+// acknowledge. The μPD8214 priority encoder on PC-88 emits 2 × source
+// index, so RTC=0x00, SOUND=0x02, VBL=0x04, USART-Rx=0x06,
+// USART-Tx/AUX=0x08 (matching MAME's pc8801.cpp). The BIOS lays its
+// IM 2 jump table at I:0x00 + vector; reading PC from I:0x04 means
+// VBL handlers live at the third pair of bytes.
+const VBL_IRQ_VECTOR = 0x04;
 
 export interface PC88MachineParts {
   cpu: Z80;

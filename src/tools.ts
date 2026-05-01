@@ -1,3 +1,7 @@
+export function nibble(n: number) {
+  return n.toString(16);
+}
+
 export function byte(n: number) {
   return n.toString(16).padStart(2, "0");
 }
