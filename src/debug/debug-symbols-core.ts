@@ -22,9 +22,9 @@ import {
   type SymbolFile,
 } from "../chips/z80/symbols.js";
 import type { MD5Sum, ROMID } from "../flavours.js";
-import type { ROMDescriptor } from "./config.js";
-import type { PC88Machine } from "./pc88.js";
-import type { LoadedROMs } from "./pc88-memory.js";
+import type { ROMDescriptor } from "../machines/config.js";
+import type { PC88Machine } from "../machines/pc88.js";
+import type { LoadedROMs } from "../machines/pc88-memory.js";
 
 const SYMS_DIR = "syms";
 

@@ -9,6 +9,13 @@ import type {
   u16,
 } from "../flavours.js";
 import { getLogger } from "../log.js";
+import {
+  makeVblState,
+  PC88Machine,
+  pumpVbl,
+  stepOneInstruction,
+} from "../machines/pc88.js";
+import type { LoadedROMs } from "../machines/pc88-memory.js";
 import { byte, word } from "../tools.js";
 import {
   addLabel,
@@ -18,13 +25,6 @@ import {
   deletePortLabel,
   renderLabelList,
 } from "./debug-symbols.js";
-import {
-  makeVblState,
-  PC88Machine,
-  pumpVbl,
-  stepOneInstruction,
-} from "./pc88.js";
-import type { LoadedROMs } from "./pc88-memory.js";
 
 const log = getLogger("debug");
 

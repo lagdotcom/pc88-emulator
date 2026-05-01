@@ -181,9 +181,10 @@ src/
                       (write-through to mainRam under ROM)
     pc88-display.ts   text-frame capture + ASCII dump
     display-regs.ts   palette + layer-mask + plane-select register block
-    debug.ts          interactive REPL debugger
-    debug-symbols.ts  per-variant symbol-file routing
     rom-loader.ts     md5-validating fs ROM resolver
+  debug/            interactive REPL debugger + per-ROM symbol routing
+                    (split out from machines/ — see "Web UI architecture"
+                    below for the full file list)
 refs/             references for chip behaviour cross-referenced
                   during reverse-engineering — D88 format,
                   Z80 undocumented, MAME PC-8801 port handlers,
@@ -327,12 +328,13 @@ src/
   chips/z80/
     symbols.ts                 # pure parse / serialise / mutate
     symbols-fs.ts              # node:fs load / save (Node-only)
-  machines/
+  debug/
     debug.ts                   # dispatch + DebugState (browser-safe)
     debug-cli.ts               # runDebug + runScript (Node-only)
     debug-symbols-core.ts      # shared label-file logic (browser-safe)
     debug-symbols.ts           # fs + node:crypto backend (Node-only)
     debug-symbols-browser.ts   # OPFS + js-md5 backend
+  machines/
     rom-loader-browser.ts      # in-memory map path
   md5.ts                       # MD5Sum-branded wrapper over js-md5
   web/

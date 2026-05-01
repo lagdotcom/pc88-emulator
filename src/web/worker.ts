@@ -1,6 +1,4 @@
 import { disassemble } from "../chips/z80/disasm.js";
-import type { ROMID, u16 } from "../flavours.js";
-import { getLogger } from "../log.js";
 import {
   callOpLength,
   type DebugState,
@@ -9,11 +7,10 @@ import {
   makeDebugState,
   setDebugWriter,
   trackedStep,
-} from "../machines/debug.js";
-import {
-  type DebugSymbols,
-  loadDebugSymbols,
-} from "../machines/debug-symbols.js";
+} from "../debug/debug.js";
+import { type DebugSymbols, loadDebugSymbols } from "../debug/debug-symbols.js";
+import type { ROMID, u16 } from "../flavours.js";
+import { getLogger } from "../log.js";
 import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
 import { md5 } from "../md5.js";

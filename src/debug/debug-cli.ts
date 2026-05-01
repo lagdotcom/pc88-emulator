@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 
 import type { FilesystemPath } from "../flavours.js";
+import type { PC88Machine } from "../machines/pc88.js";
 import {
   type DebugOptions,
   type DebugState,
@@ -13,7 +14,6 @@ import {
   setDebugWriter,
 } from "./debug.js";
 import { type DebugSymbols, loadDebugSymbols } from "./debug-symbols.js";
-import type { PC88Machine } from "./pc88.js";
 
 // Default writer for the CLI: write straight to stdout. Installed
 // before any debugger output so the user sees the banner.

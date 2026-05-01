@@ -10,10 +10,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { MD5Sum } from "../flavours.js";
+import type { PC88Machine } from "../machines/pc88.js";
+import type { LoadedROMs } from "../machines/pc88-memory.js";
 import type { DebugSymbols, SymbolBackend } from "./debug-symbols-core.js";
 import * as core from "./debug-symbols-core.js";
-import type { PC88Machine } from "./pc88.js";
-import type { LoadedROMs } from "./pc88-memory.js";
 
 const SYMS_DIR = "syms";
 

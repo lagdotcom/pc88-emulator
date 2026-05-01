@@ -79,7 +79,7 @@ async function buildWebBundle() {
         name: "debug-symbols-browser",
         setup(build) {
           const stub = fileURLToPath(
-            new URL("./src/machines/debug-symbols-browser.ts", import.meta.url),
+            new URL("./src/debug/debug-symbols-browser.ts", import.meta.url),
           );
           build.onResolve({ filter: /\/debug-symbols\.js$/ }, () => ({
             path: stub,

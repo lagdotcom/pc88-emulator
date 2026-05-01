@@ -9,11 +9,11 @@
 // debug.ts's import sites pick up either flavour based on which
 // entry point is being built.
 
+import type { PC88Machine } from "../machines/pc88.js";
+import type { LoadedROMs } from "../machines/pc88-memory.js";
 import { md5 as md5sum } from "../md5.js";
 import type { DebugSymbols, SymbolBackend } from "./debug-symbols-core.js";
 import * as core from "./debug-symbols-core.js";
-import type { PC88Machine } from "./pc88.js";
-import type { LoadedROMs } from "./pc88-memory.js";
 
 const SYMS_DIR = "syms";
 
