@@ -178,6 +178,11 @@ function renderRunningView(
   back.textContent = "Back to boot screen";
   back.className = "back-button";
   back.addEventListener("click", () => {
+    // Tear down the worker before re-rendering the boot screen.
+    // Without this the worker keeps running in the background and a
+    // second boot would spawn another one alongside it, multiplying
+    // the CPU load every time the user round-trips.
+    worker.terminate();
     void main();
   });
   root.appendChild(back);
