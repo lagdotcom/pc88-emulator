@@ -97,6 +97,21 @@ The required mkI files have ids declared in `src/machines/variants/mk1.ts`
 POSIX and Windows shells. The dev environment is Windows; if you add
 new scripts that need an env var, route them through `cross-env`.
 
+The same applies to **any command line you write for the user to
+copy-and-paste** — PR descriptions, test plans, README snippets,
+chat messages telling them how to repro something. The bare
+`FOO=bar yarn x` POSIX syntax doesn't work in Windows `cmd.exe`,
+so always prefix with `cross-env` (or `npx cross-env`) when an env
+var is involved:
+
+```
+cross-env PC88_REAL_ROMS=1 yarn test
+npx cross-env Z80_SAMPLE=full yarn test:z80
+```
+
+`-noEmit`/-style flags and pure `yarn ...` commands are fine
+unprefixed.
+
 The Z80 harness fetches per-opcode JSON test cases from
 [SingleStepTests/z80](https://github.com/SingleStepTests/z80) on first run
 and caches them under `tests/z80/data/v1/` (gitignored — they total
