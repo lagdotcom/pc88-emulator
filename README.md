@@ -302,11 +302,12 @@ Roughly ordered by what's blocking what.
   is gated on `PC88_REAL_ROMS=1` and runs the mkI N-BASIC boot
   against the real ROM image, asserting the banner ("NEC PC-8001
   BASIC", "Copyright 1979 (C) by Microsoft", "Ok") appears in the
-  CRTC+DMAC visible region. A second case asserts `--basic=n88`
-  reaches CRTC/DMAC programming + IRQ-mask programming (it
-  currently stalls there on the missing sub-CPU PPI handshake;
-  tighten the assertion to require the N88 banner once sub-CPU
-  emulation lands). ROMs go in `roms/` (gitignored) — see
+  CRTC+DMAC visible region. A second case runs `--basic=n88` to the
+  "How many files(0-15)?" disk-config prompt and asserts the prompt
+  string in the visible region; boot stalls past that on keyboard
+  input (no input source wired to the key matrix yet). When that
+  lands, tighten the assertion to require the N88 banner past the
+  prompt. ROMs go in `roms/` (gitignored) — see
   `src/machines/variants/mk1.ts` for filenames + md5s.
 - [x] **N88-BASIC print path reaches TVRAM**. Root cause was the
   IRQ controller bit layout: real PC-88 wires port 0xE6 as
