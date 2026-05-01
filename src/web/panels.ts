@@ -1,3 +1,4 @@
+import { byte as b, word as w } from "../tools.js";
 import type {
   CallFrameSnapshot,
   CPUSnapshot,
@@ -5,16 +6,6 @@ import type {
   PortWatch,
   RamWatch,
 } from "./protocol.js";
-
-// Hex helpers — duplicated from src/tools.ts since the web bundle
-// already pays for this small format work and importing the Node-
-// flavoured helper drags in unrelated branding noise.
-function w(v: number): string {
-  return v.toString(16).padStart(4, "0");
-}
-function b(v: number): string {
-  return v.toString(16).padStart(2, "0");
-}
 
 // 8-letter flag string for an F byte. Order matches the Z80
 // convention (S Z Y H X P/V N C, MSB→LSB) so it scans like a

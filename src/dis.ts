@@ -40,7 +40,7 @@ import {
 } from "./chips/z80/symbols.js";
 import { loadSymbolFile } from "./chips/z80/symbols-fs.js";
 import type { FilesystemPath, u8, u16 } from "./flavours.js";
-import { byte, hex, word } from "./tools.js";
+import { byte, hex, parseAddrFlag, word } from "./tools.js";
 
 const HELP = `\
 yarn dis — disassemble bytes from a raw ROM file as Z80 code
@@ -69,19 +69,6 @@ Examples:
   yarn dis --base=0x6000 roms/mkI-e0.rom 0x6010 16
   yarn dis --syms=off roms/mkI-n88.rom 0x5550 8
 `;
-
-function parseAddrFlag(raw: string): u16 | null {
-  const s = raw.trim().toLowerCase();
-  if (s.startsWith("0x")) {
-    const n = parseInt(s.slice(2), 16);
-    return Number.isFinite(n) ? n & 0xffff : null;
-  }
-  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
-    return parseInt(s, 16) & 0xffff;
-  }
-  const n = parseInt(s, 10);
-  return Number.isFinite(n) ? n & 0xffff : null;
-}
 
 // Map a ROM-file path to its default symbol-file path:
 //   roms/mkI-n88.rom  →  syms/mkI-n88.sym

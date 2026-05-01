@@ -45,6 +45,7 @@
     "vitest": "^4.1.5"
   },
   "dependencies": {
-    "debug-level": "^4.1.1"
+    "debug-level": "^4.1.1",
+    "js-md5": "^0.8.3"
   }
 }

@@ -7,7 +7,7 @@ import {
   type ROMManifest,
 } from "../machines/config.js";
 import { VARIANTS, variantSlug } from "../machines/variants/index.js";
-import { md5 } from "./md5.js";
+import { md5 } from "../md5.js";
 import { type BootSettings, type OpfsStore, type RomIndex } from "./opfs.js";
 
 // Bit-name labels for the DIP-switch checkboxes on the boot screen.

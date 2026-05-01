@@ -20,7 +20,7 @@ import {
   setSymbol,
   type SymbolFile,
 } from "../chips/z80/symbols.js";
-import { md5 as md5sum } from "../web/md5.js";
+import { md5 as md5sum } from "../md5.js";
 import type { ROMDescriptor } from "./config.js";
 import type { PC88Machine } from "./pc88.js";
 import type { LoadedROMs } from "./pc88-memory.js";

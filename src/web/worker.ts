@@ -16,7 +16,8 @@ import {
 } from "../machines/debug-symbols.js";
 import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
-import { md5 } from "./md5.js";
+import { md5 } from "../md5.js";
+import { word } from "../tools.js";
 import type {
   CPUSnapshot,
   DebugSnapshot,
@@ -211,21 +212,17 @@ function runFrame(s: State): void {
     if (s.debug.stepOverTarget !== null && pc === s.debug.stepOverTarget) {
       s.debug.stepOverTarget = null;
       stopRunning(s);
-      postTick(s, "stopped", `step-over @ ${hex4(pc)}`);
+      postTick(s, "stopped", `step-over @ ${word(pc)}`);
       return;
     }
     if (s.debug.breakpoints.has(pc)) {
       stopRunning(s);
-      postTick(s, "stopped", `breakpoint @ ${hex4(pc)}`);
+      postTick(s, "stopped", `breakpoint @ ${word(pc)}`);
       return;
     }
   }
   postTick(s, "tick");
   s.loopHandle = setTimeout(() => runFrame(s), FRAME_INTERVAL_MS);
-}
-
-function hex4(v: number): string {
-  return v.toString(16).padStart(4, "0");
 }
 
 function startRunning(s: State): void {

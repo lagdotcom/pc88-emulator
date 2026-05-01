@@ -17,7 +17,7 @@ import {
 import { loadRoms } from "./machines/rom-loader.js";
 import { VARIANTS_BY_NICKNAME } from "./machines/variants/index.js";
 import { MKI } from "./machines/variants/mk1.js";
-import { hex } from "./tools.js";
+import { hex, parseAddrFlag } from "./tools.js";
 
 const DEFAULT_MAX_OPS = kOps(15);
 
@@ -138,19 +138,6 @@ function parseCliFlags(argv: string[]): CliFlags {
     debugScript,
     config,
   };
-}
-
-function parseAddrFlag(raw: string): u16 | null {
-  const s = raw.trim().toLowerCase();
-  if (s.startsWith("0x")) {
-    const n = parseInt(s.slice(2), 16);
-    return Number.isFinite(n) ? n & 0xffff : null;
-  }
-  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
-    return parseInt(s, 16) & 0xffff;
-  }
-  const dec = parseInt(s, 10);
-  return Number.isFinite(dec) ? dec & 0xffff : null;
 }
 
 const HELP = `\

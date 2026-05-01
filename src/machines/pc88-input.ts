@@ -1,8 +1,16 @@
-// these are exposed in the i8255 at ports 0x00..0x0e
-// ...hold signal low when key is pressed
-// ...only FH and later have 0x0c..0x0e
-// ...and FH_OR_LATER is always 0 on keyboards after FH
-
+// PC-88 keyboard-matrix slot enum. Values pack `row * 8 + col` so a
+// caller can split with `>> 3` / `& 7` to drive
+// `Keyboard.pressKey(row, col)` (the chip lives at I/O ports
+// 0x00-0x0F, one row per port — earlier code mistakenly thought it
+// was a PPI; it isn't on PC-88 hardware).
+//
+// The keyboard is active-low: a `0` bit on a row read means the
+// corresponding column is held. Idle (no keys held) reads 0xFF.
+//
+// Only mkII FH / MH and later expose ports 0x0C..0x0E (extra
+// rows + extra modifiers); on earlier models those are open-bus.
+// `FH_OR_LATER` (row 14, col 7) reads 0 on FH+ and 1 on the older
+// hardware — software uses it to fork between layouts.
 export enum PC88Key {
   NUMPAD_0,
   NUMPAD_1,
