@@ -72,10 +72,14 @@ Working enough for first-light boot:
   (N88-BASIC), 2-byte cells in 40-col mode (N-BASIC).
 - Interactive debugger (`yarn pc88 -d` / `--debug`): step / next /
   continue / break / regs / chips / screen / dis / peek / poke /
-  label / portlabel / quit. Per-ROM, per-variant-RAM, and per-variant
-  port symbol files (`syms/<rom-id>.sym`, `syms/<variant>.ram.sym`,
-  `syms/<variant>.port.sym`) feed both the debugger disassembly and
-  the standalone `yarn dis` tool.
+  label / portlabel / quit, plus RAM watchpoints (`bw <addr> r|w|rw`),
+  port watchpoints (`bp <port> r|w|rw`), a synthesised CALL/RST/IRQ
+  call stack (`stack`), and a `--script=PATH` driver that replays
+  debugger commands before handing control to the REPL (omit the REPL
+  by ending the script with `quit`). Per-ROM, per-variant-RAM, and
+  per-variant port symbol files (`syms/<rom-id>.sym`,
+  `syms/<variant>.ram.sym`, `syms/<variant>.port.sym`) feed both the
+  debugger disassembly and the standalone `yarn dis` tool.
 - Standalone `yarn dis` CLI: disassembles any raw ROM file with
   optional `--base=ADDR` mount point, `--syms`/`--ram-syms`/
   `--port-syms` for label substitution, no machine emulation needed.
@@ -98,24 +102,31 @@ yarn dis <file>          # disassemble any raw ROM file (no emulation)
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
 `-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`,
 `--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
-`-d`/`--debug`, `--break=ADDR`. Each non-debug flag has an env-var
-fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`, `PC88_TRACE_IO`,
-`PC88_RAW_TVRAM`, `LOG_TO_FILE`) so values you'd want to keep
-across runs can live in a `.env`. The required mkI ROM files are
-`mkI-n80.rom`, `mkI-n88.rom`, `mkI-e0.rom` with md5s declared in
-`src/machines/variants/mk1.ts`. The `roms/` directory is gitignored
-so dumps stay local.
+`-d`/`--debug`, `--break=ADDR`, `--script=PATH`. Each non-debug flag
+has an env-var fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`,
+`PC88_TRACE_IO`, `PC88_RAW_TVRAM`, `LOG_TO_FILE`, `PC88_SCRIPT`) so
+values you'd want to keep across runs can live in a `.env`. The
+required mkI ROM files are `mkI-n80.rom`, `mkI-n88.rom`,
+`mkI-e0.rom` with md5s declared in `src/machines/variants/mk1.ts`.
+The `roms/` directory is gitignored so dumps stay local.
 
 `yarn pc88 --debug` drops into an interactive REPL before any
 instructions execute. Commands: step / next (step-over) /
 continue [cycles] / break / unbreak / breaks / regs / chips /
-screen (renders the live CRTC+DMAC visible region) / dis [count] /
-peek / peekw / poke / label / unlabel / labels / portlabel /
-unportlabel / quit / help. Initial breakpoints can be set with
-`--break=ADDR` (repeatable). The `chips` command renders a
-machine-wide snapshot — the same plumbing intended to feed disk
-savestates when those land. Disassembly + label/portlabel commands
-read and write the per-ROM / RAM / port symbol files under `syms/`.
+screen (renders the live CRTC+DMAC visible region) / stack /
+dis [count] / peek / peekw / poke / label / unlabel / labels /
+portlabel / unportlabel / bw / unbw / bwl / bp / unbp / bpl /
+quit / help. Initial breakpoints can be set with `--break=ADDR`
+(repeatable). The `chips` command renders a machine-wide snapshot —
+the same plumbing intended to feed disk savestates when those land.
+Disassembly + label/portlabel commands read and write the per-ROM /
+RAM / port symbol files under `syms/`. RAM (`bw 0xed72 w`) and port
+(`bp 0x71 rw`) watchpoints fire on access and stop the run loop
+between instructions; the synthesised `stack` is built from SP
+deltas (CALL/RST = SP-2, RET = SP+2) and tracks IRQ acceptance via
+the IFF1 transition. `--script=PATH` (implies `--debug`) replays a
+file of debugger commands before the REPL — handy for canned boot
+recipes; ending the script with `quit` skips the REPL entirely.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the

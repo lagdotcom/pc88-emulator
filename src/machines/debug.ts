@@ -1,10 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 
 import logLib from "log";
 
 import { disassemble } from "../chips/z80/disasm.js";
 import { mOps } from "../flavour.makers.js";
-import type { Bytes, Cycles, Operations, u8, u16 } from "../flavours.js";
+import type { Bytes, Cycles, FilesystemPath, Operations, u8, u16 } from "../flavours.js";
 import { byte, word } from "../tools.js";
 import {
   addLabel,
@@ -38,10 +39,48 @@ export interface DebugOptions {
   // headers for newly-created files. Optional so synthetic-ROM
   // tests can pass `undefined` and skip symbol loading entirely.
   loadedRoms?: LoadedROMs;
+  // Path to a debugger-command script to run before dropping into
+  // the REPL. Each non-blank, non-`#` line is dispatched as if the
+  // user typed it. If the script ends with `quit`, the REPL is
+  // skipped — handy for "run boot, dump state, exit" automation.
+  script?: FilesystemPath;
 }
 
+// One call-stack frame, recorded each time we observe a CALL / RST
+// / IRQ acceptance (= SP-2 transition) and popped on RET (= SP+2).
+// Synthesised by watching SP deltas around each instruction; not
+// drawn from anywhere on real silicon (Z80 has no architectural
+// call stack — it's just stack-pushed return addresses).
+export type CallVia = "CALL" | "RST" | "IRQ";
+export interface CallFrame {
+  fromPC: u16; // PC of the CALL/RST/instruction-being-interrupted
+  target: u16; // where execution went (= the routine entry / IM vector)
+  expectedReturn: u16; // address pushed onto the stack
+  spAtCall: u16; // SP value AFTER the push
+  via: CallVia;
+}
+
+// What a watchpoint matches: read, write, or both. Passed at
+// register-time, not per-fire.
+export type WatchMode = "r" | "w" | "rw";
+
 interface DebugState {
-  breakpoints: Set<number>;
+  breakpoints: Set<u16>;
+  // RAM-address watchpoints: key is the address, value is the
+  // direction(s) that fire. memBus.read/write checks this on every
+  // access while the debugger is active.
+  ramWatches: Map<u16, WatchMode>;
+  // I/O port watchpoints: key is the port low byte (the debugger
+  // inspects `port & 0xff` to match how chips dispatch).
+  portWatches: Map<u8, WatchMode>;
+  // Synthesised call stack. Pushed on CALL/RST/IRQ, popped on RET.
+  // Bounded depth to keep runaway recursion from eating memory in
+  // pathological boot loops; oldest frame is dropped when the cap
+  // is hit so the deepest N frames stay visible.
+  callStack: CallFrame[];
+  // Set by trackedStep when a watchpoint fires. The run loop
+  // checks this between instructions and stops when set.
+  stopReason: string | null;
   ops: Operations;
   vbl: ReturnType<typeof makeVblState>;
   // Set during step-over: target PC where execution should pause if
@@ -50,36 +89,60 @@ interface DebugState {
   stepOverTarget: u16 | null;
 }
 
+const MAX_CALL_STACK_DEPTH = 256;
+
 const HELP = `\
 Debugger commands (anything in <> takes a hex address; "0x" optional):
 
+Stepping / running:
   s, step                 single-step one instruction
   n, next                 step over (CALL/RST → run until after the call)
-  c, continue [cycles]    run until breakpoint / halt / op cap; with a
-                          numeric arg, also stop after N CPU cycles
-  b, break <addr>         add a breakpoint at <addr>
-  bd, unbreak <addr>      remove a breakpoint
-  bl, breaks              list breakpoints
+  c, continue [cycles]    run until breakpoint / watch / halt / op cap;
+                          with a numeric arg, also stop after N CPU cycles
+  q, quit, exit           leave the debugger / end script
+
+Code breakpoints:
+  b, break <addr>         add a code breakpoint at <addr>
+  bd, unbreak <addr>      remove a code breakpoint
+  bl, breaks              list code breakpoints
+
+RAM watchpoints (stop on access):
+  bw <addr> [r|w|rw]      watch a RAM address (default rw)
+  unbw <addr>             remove a RAM watchpoint
+  bwl                     list RAM watchpoints
+
+Port watchpoints (stop on IN/OUT):
+  bp <port> [r|w|rw]      watch an I/O port (default rw)
+  unbp <port>             remove a port watchpoint
+  bpl                     list port watchpoints
+
+Inspection:
   r, regs                 show CPU registers
   chips                   show CRTC / DMAC / IRQ / sysctrl / DIP state
   screen                  render the CRTC+DMAC visible region
+  stack                   show the synthesised CALL/RST/IRQ call stack
   dis [count]             disassemble the next [count] instructions
                           (default 8) starting at PC
-  label <addr> <name>     add or rename a symbol; ROM addresses go
-                          to syms/<rom-id>.sym (live-map dispatch),
-                          RAM addresses to syms/<variant>.ram.sym
-  unlabel <addr-or-name>  remove a symbol; addr → live-map dispatch,
-                          name → search ROM/RAM/port files
-  portlabel <num> <name>  add or rename a port symbol; writes
-                          syms/<variant>.port.sym; surfaces in
-                          IN A,(n) / OUT (n),A disassembly
-  unportlabel <n-or-name> remove a port symbol
-  labels                  list every loaded symbol grouped by scope
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
   pw, peekw <addr>        read 16-bit little-endian word at <addr>
   poke <addr> <value>     write a byte
-  q, quit                 exit
+
+Symbols:
+  label <addr> <name>     add or rename a ROM/RAM symbol
+  unlabel <addr-or-name>  remove a symbol
+  portlabel <num> <name>  add or rename a port symbol
+  unportlabel <n-or-name> remove a port symbol
+  labels                  list every loaded symbol grouped by scope
+
+Misc:
   h, ?, help              this help
+  # any line              comment (in scripts; ignored in REPL)
+
+Watchpoint examples:
+  bw 0xed72 w             stop the next time anything writes to 0xed72
+  bw 0xed72 r             stop on read
+  bw 0xed72               stop on either (= "rw")
+  bp 0x71 rw              stop on any IN/OUT against port 0x71
 `;
 
 // Parse a cycle-count argument (no u16 wrap, can be larger than
@@ -128,6 +191,150 @@ function callOpLength(opcode: u8): Bytes | null {
   if ((opcode & 0xc7) === 0xc4) return 3;
   // RST p: 0xC7 / CF / D7 / DF / E7 / EF / F7 / FF, 1 byte
   if ((opcode & 0xc7) === 0xc7) return 1;
+  return null;
+}
+
+function classifyCallOp(opcode: u8): CallVia | null {
+  if (opcode === 0xcd) return "CALL";
+  if ((opcode & 0xc7) === 0xc4) return "CALL"; // CALL cc, nn
+  if ((opcode & 0xc7) === 0xc7) return "RST";
+  return null;
+}
+
+function isRetOp(opcode: u8): boolean {
+  // Unconditional RET: 0xC9, 1 byte. Conditional RET Cc:
+  // 0xC0 / 0xC8 / 0xD0 / 0xD8 / 0xE0 / 0xE8 / 0xF0 / 0xF8.
+  // RETI / RETN are ED-prefix (we don't see the prefix byte at PC
+  // when this function runs because stepOneInstruction has consumed
+  // the prefix already).
+  if (opcode === 0xc9) return true;
+  if ((opcode & 0xc7) === 0xc0) return true;
+  return false;
+}
+
+function pushFrame(state: DebugState, frame: CallFrame): void {
+  if (state.callStack.length >= MAX_CALL_STACK_DEPTH) {
+    // Drop oldest so the newest frames stay visible. Boot loops
+    // would otherwise eat memory through pathological recursion.
+    state.callStack.shift();
+  }
+  state.callStack.push(frame);
+}
+
+// One instruction with bookkeeping: pumps VBL, runs the op, then
+// observes SP delta + PC change to maintain the call-stack model.
+// Watchpoints are checked inside memBus.read / write / ioBus.tracer
+// hooks installed by installWatchHooks(); they set state.stopReason
+// which the run loop drains between instructions.
+function trackedStep(machine: PC88Machine, state: DebugState): void {
+  pumpVbl(machine, state.vbl);
+  if (machine.cpu.halted && !machine.cpu.iff1) return;
+
+  const prePC = machine.cpu.regs.PC;
+  const preSP = machine.cpu.regs.SP;
+  const preOp = machine.memBus.read(prePC);
+  const preIff = machine.cpu.iff1;
+
+  stepOneInstruction(machine);
+  state.ops++;
+
+  const postPC = machine.cpu.regs.PC;
+  const postSP = machine.cpu.regs.SP;
+
+  // SP-2 + PC moved off-instruction → either CALL/RST (PC at op
+  // determined the target) or IRQ acceptance (CPU pushed PC and
+  // jumped to a vector). Discriminate by whether the pre-op opcode
+  // was a CALL/RST: if yes, that's the explicit branch; if no but
+  // SP went down by 2, the CPU accepted an IRQ.
+  if (postSP === ((preSP - 2) & 0xffff)) {
+    const via = classifyCallOp(preOp);
+    if (via !== null) {
+      const opLen = via === "RST" ? 1 : 3;
+      pushFrame(state, {
+        fromPC: prePC,
+        target: postPC,
+        expectedReturn: (prePC + opLen) & 0xffff,
+        spAtCall: postSP,
+        via,
+      });
+    } else if (preIff && !machine.cpu.iff1) {
+      // IFF1 cleared → IRQ accepted. The CPU pushed prePC (the
+      // about-to-execute insn) and jumped to its vector.
+      pushFrame(state, {
+        fromPC: prePC,
+        target: postPC,
+        expectedReturn: prePC,
+        spAtCall: postSP,
+        via: "IRQ",
+      });
+    }
+  } else if (postSP === ((preSP + 2) & 0xffff) && isRetOp(preOp)) {
+    // RET-like — drop the top frame if our model has one. Pop is
+    // best-effort: BASIC code can use PUSH/RET as gosub or unwind
+    // the stack out from under us, in which case we'll bottom out
+    // at depth 0 and stay there until the next CALL.
+    if (state.callStack.length > 0) state.callStack.pop();
+  }
+}
+
+interface WatchHooks {
+  uninstall: () => void;
+}
+
+// Wrap memBus.read/write and ioBus.tracer so RAM and port watches
+// fire when the CPU touches a watched address. Set state.stopReason
+// on a fire — the run loop checks this between instructions and
+// halts cleanly. Returns an `uninstall` callback that restores the
+// originals (used at REPL exit).
+function installWatchHooks(
+  machine: PC88Machine,
+  state: DebugState,
+): WatchHooks {
+  const origRead = machine.memBus.read.bind(machine.memBus);
+  const origWrite = machine.memBus.write.bind(machine.memBus);
+  const origTracer = machine.ioBus.tracer;
+
+  machine.memBus.read = (addr: u16): u8 => {
+    const v = origRead(addr);
+    const mode = state.ramWatches.get(addr & 0xffff);
+    if (mode && (mode === "r" || mode === "rw")) {
+      state.stopReason = `RAM read @ ${word(addr)} = ${byte(v)}`;
+    }
+    return v;
+  };
+  machine.memBus.write = (addr: u16, value: u8): void => {
+    const mode = state.ramWatches.get(addr & 0xffff);
+    if (mode && (mode === "w" || mode === "rw")) {
+      state.stopReason = `RAM write @ ${word(addr)} <- ${byte(value)}`;
+    }
+    origWrite(addr, value);
+  };
+  machine.ioBus.tracer = (kind, port, value) => {
+    if (origTracer) origTracer(kind, port, value);
+    const mode = state.portWatches.get(port & 0xff);
+    if (
+      mode &&
+      ((kind === "r" && (mode === "r" || mode === "rw")) ||
+        (kind === "w" && (mode === "w" || mode === "rw")))
+    ) {
+      const dir = kind === "r" ? "IN " : "OUT";
+      state.stopReason = `port ${dir} ${byte(port & 0xff)} = ${byte(value)}`;
+    }
+  };
+
+  return {
+    uninstall: () => {
+      machine.memBus.read = origRead;
+      machine.memBus.write = origWrite;
+      machine.ioBus.tracer = origTracer;
+    },
+  };
+}
+
+function parseWatchMode(arg: string | undefined): WatchMode | null {
+  if (arg === undefined) return "rw";
+  const s = arg.trim().toLowerCase();
+  if (s === "r" || s === "w" || s === "rw") return s;
   return null;
 }
 
@@ -253,21 +460,25 @@ function doPeekWord(machine: PC88Machine, addr: u16): void {
 
 // One step (instruction granularity, with prefixes consumed). Pumps
 // VBL once before the op so timing-sensitive code sees IRQs at the
-// expected instruction boundaries.
+// expected instruction boundaries. Watchpoint hits during the
+// instruction are reported but don't stop a single step (the user
+// asked for one instruction, and a watch fired during it — let the
+// next `step` / `continue` see the watch state).
 function singleStep(machine: PC88Machine, state: DebugState): void {
-  pumpVbl(machine, state.vbl);
   if (machine.cpu.halted && !machine.cpu.iff1) {
     process.stdout.write("  (HALT with IFF1=0; CPU is stuck)\n");
     return;
   }
-  stepOneInstruction(machine);
-  state.ops++;
+  trackedStep(machine, state);
+  if (state.stopReason) {
+    process.stdout.write(`  ${state.stopReason}\n`);
+    state.stopReason = null;
+  }
 }
 
-// Run instructions until one of: breakpoint hit, step-over target
-// hit, halt-no-irq, op cap reached, or (when `maxCycles` is set)
-// the cycle budget exhausted. Without a cycle budget, behaves the
-// same as before — caller-supplied cycle limit is the new bit.
+// Run instructions until one of: breakpoint hit, watchpoint hit,
+// step-over target hit, halt-no-irq, op cap reached, or (when
+// `maxCycles` is set) the cycle budget exhausted.
 function runUntilStop(
   machine: PC88Machine,
   state: DebugState,
@@ -284,14 +495,17 @@ function runUntilStop(
       );
       return;
     }
-    pumpVbl(machine, state.vbl);
     if (machine.cpu.halted && !machine.cpu.iff1) {
       process.stdout.write(`  (stopped: HALT with IFF1=0)\n`);
       return;
     }
-    stepOneInstruction(machine);
-    state.ops++;
+    trackedStep(machine, state);
     const pc = machine.cpu.regs.PC;
+    if (state.stopReason) {
+      process.stdout.write(`  (stopped: ${state.stopReason})\n`);
+      state.stopReason = null;
+      return;
+    }
     if (state.stepOverTarget !== null && pc === state.stepOverTarget) {
       state.stepOverTarget = null;
       process.stdout.write(`  (stopped: step-over target ${word(pc)})\n`);
@@ -316,14 +530,488 @@ function listBreaks(state: DebugState): void {
   process.stdout.write(`  ${sorted.map((a) => word(a)).join(" ")}\n`);
 }
 
+function listRamWatches(state: DebugState): void {
+  if (state.ramWatches.size === 0) {
+    process.stdout.write("  (no RAM watchpoints)\n");
+    return;
+  }
+  const sorted = [...state.ramWatches.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [addr, mode] of sorted) {
+    process.stdout.write(`  ${word(addr)} ${mode}\n`);
+  }
+}
+
+function listPortWatches(state: DebugState): void {
+  if (state.portWatches.size === 0) {
+    process.stdout.write("  (no port watchpoints)\n");
+    return;
+  }
+  const sorted = [...state.portWatches.entries()].sort((a, b) => a[0] - b[0]);
+  for (const [port, mode] of sorted) {
+    process.stdout.write(`  ${byte(port)} ${mode}\n`);
+  }
+}
+
+// Render the synthesised call stack with the most-recent frame at
+// the top (the "current" frame). Each line shows the via-kind
+// (CALL / RST / IRQ), the routine entry, the call site, the return
+// address that's actually pushed on the Z80 stack, and the SP value
+// at push time — useful for matching frames against a hardware
+// stack-dump in the same window.
+function printCallStack(
+  state: DebugState,
+  syms: DebugSymbols | null,
+): void {
+  if (state.callStack.length === 0) {
+    process.stdout.write("  (call stack empty)\n");
+    return;
+  }
+  for (let i = state.callStack.length - 1; i >= 0; i--) {
+    const f = state.callStack[i]!;
+    const tLabel = syms?.exactResolver(f.target);
+    const fLabel = syms?.exactResolver(f.fromPC);
+    const tStr = tLabel ? `${word(f.target)} <${tLabel}>` : word(f.target);
+    const fStr = fLabel ? `${word(f.fromPC)} <${fLabel}>` : word(f.fromPC);
+    const depth = (state.callStack.length - 1 - i).toString().padStart(2);
+    process.stdout.write(
+      `  #${depth} ${f.via.padEnd(4)} ${tStr} <- ${fStr} ` +
+        `(ret=${word(f.expectedReturn)} sp=${word(f.spAtCall)})\n`,
+    );
+  }
+}
+
+interface DispatchCtx {
+  machine: PC88Machine;
+  state: DebugState;
+  syms: DebugSymbols | null;
+  opts: DebugOptions;
+}
+
+// Single command dispatcher. Shared between the interactive REPL and
+// the script-file runner: each line goes through here so the two
+// paths can never drift. Returns `{ quit: true }` when the command
+// asks to leave the debugger; the caller decides what that means
+// (REPL: close readline and return; script: stop reading further
+// lines).
+async function dispatch(
+  raw: string,
+  ctx: DispatchCtx,
+): Promise<{ quit: boolean }> {
+  const line = raw.trim();
+  if (!line) return { quit: false };
+  // `#` is a script-comment marker. Treat the same way in the REPL
+  // (a no-op) so script lines pasted interactively still work.
+  if (line.startsWith("#")) return { quit: false };
+  const [cmd, ...args] = line.split(/\s+/);
+  if (cmd === undefined) return { quit: false };
+
+  const { machine, state, syms, opts } = ctx;
+
+  try {
+    switch (cmd.toLowerCase()) {
+      case "s":
+      case "step":
+        singleStep(machine, state);
+        return { quit: false };
+
+      case "n":
+      case "next": {
+        // Step-over: peek the byte at PC; if it's CALL/RST, set a
+        // target = PC + opLen and `continue` until we hit it. For
+        // anything else, just single-step.
+        const pc = machine.cpu.regs.PC;
+        const op = machine.memBus.read(pc);
+        const callLen = callOpLength(op);
+        if (callLen !== null) {
+          state.stepOverTarget = (pc + callLen) & 0xffff;
+          runUntilStop(machine, state, "step-over");
+        } else {
+          singleStep(machine, state);
+        }
+        return { quit: false };
+      }
+
+      case "c":
+      case "cont":
+      case "continue": {
+        // `continue` with no arg: existing behaviour (run until
+        // breakpoint / watch / halt / op cap). `continue N` adds
+        // an N-cycle stop condition on top — useful for "step
+        // forward by ~one frame's worth" without setting a PC
+        // breakpoint. Hex (0x... or trailing hex chars) and
+        // decimal both work.
+        let cycleBudget: Cycles | undefined;
+        if (args[0] !== undefined) {
+          const n = parseCycleArg(args[0]);
+          if (n === null) {
+            process.stdout.write(`  usage: continue [cycles]\n`);
+            return { quit: false };
+          }
+          cycleBudget = n;
+        }
+        runUntilStop(machine, state, "continue", cycleBudget);
+        return { quit: false };
+      }
+
+      case "b":
+      case "break": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: break <addr>\n`);
+          return { quit: false };
+        }
+        state.breakpoints.add(a);
+        process.stdout.write(`  break @ ${word(a)}\n`);
+        return { quit: false };
+      }
+
+      case "bd":
+      case "unbreak": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: unbreak <addr>\n`);
+          return { quit: false };
+        }
+        state.breakpoints.delete(a);
+        process.stdout.write(`  unbreak ${word(a)}\n`);
+        return { quit: false };
+      }
+
+      case "bl":
+      case "breaks":
+        listBreaks(state);
+        return { quit: false };
+
+      case "bw": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: bw <addr> [r|w|rw]\n`);
+          return { quit: false };
+        }
+        const mode = parseWatchMode(args[1]);
+        if (mode === null) {
+          process.stdout.write(`  bad watch mode "${args[1]}" (want r|w|rw)\n`);
+          return { quit: false };
+        }
+        state.ramWatches.set(a, mode);
+        process.stdout.write(`  watch RAM ${word(a)} ${mode}\n`);
+        return { quit: false };
+      }
+
+      case "unbw": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: unbw <addr>\n`);
+          return { quit: false };
+        }
+        if (state.ramWatches.delete(a)) {
+          process.stdout.write(`  unwatched RAM ${word(a)}\n`);
+        } else {
+          process.stdout.write(`  no RAM watch at ${word(a)}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "bwl":
+        listRamWatches(state);
+        return { quit: false };
+
+      case "bp": {
+        const p = parseAddr(args[0]);
+        if (p === null) {
+          process.stdout.write(`  usage: bp <port> [r|w|rw]\n`);
+          return { quit: false };
+        }
+        const mode = parseWatchMode(args[1]);
+        if (mode === null) {
+          process.stdout.write(`  bad watch mode "${args[1]}" (want r|w|rw)\n`);
+          return { quit: false };
+        }
+        const port = p & 0xff;
+        state.portWatches.set(port, mode);
+        process.stdout.write(`  watch port ${byte(port)} ${mode}\n`);
+        return { quit: false };
+      }
+
+      case "unbp": {
+        const p = parseAddr(args[0]);
+        if (p === null) {
+          process.stdout.write(`  usage: unbp <port>\n`);
+          return { quit: false };
+        }
+        const port = p & 0xff;
+        if (state.portWatches.delete(port)) {
+          process.stdout.write(`  unwatched port ${byte(port)}\n`);
+        } else {
+          process.stdout.write(`  no port watch at ${byte(port)}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "bpl":
+        listPortWatches(state);
+        return { quit: false };
+
+      case "r":
+      case "regs":
+        printRegs(machine);
+        return { quit: false };
+
+      case "chips":
+        printChips(machine);
+        return { quit: false };
+
+      case "screen":
+        // Same surface as the headless runner's "--- Visible screen
+        // ---" block. Renders the CRTC+DMAC region; falls back to a
+        // placeholder string before SET MODE has run so the user
+        // doesn't have to remember which init step gates it.
+        process.stdout.write(machine.display.toASCIIDump() + "\n");
+        return { quit: false };
+
+      case "stack":
+        printCallStack(state, syms);
+        return { quit: false };
+
+      case "dis":
+      case "l":
+      case "list": {
+        // Default to 8 instructions ahead — enough to spot a CALL
+        // / loop / branch without flooding the screen. Counts
+        // larger than 256 are clamped (debugger should stay
+        // responsive even if the user fat-fingers a big number).
+        const count = Math.min(
+          256,
+          Math.max(1, args[0] ? parseInt(args[0], 10) || 8 : 8),
+        );
+        printDisassembly(machine, syms, count);
+        return { quit: false };
+      }
+
+      case "label": {
+        // `label <addr> <name> [comment...]`. The trailing args
+        // are joined into a single comment so users can write
+        // free-form descriptions without needing to quote.
+        if (!syms || !opts.loadedRoms) {
+          process.stdout.write(
+            `  symbols not loaded (need ROM bytes to compute md5 headers)\n`,
+          );
+          return { quit: false };
+        }
+        const a = parseAddr(args[0]);
+        const name = args[1];
+        if (a === null || !name) {
+          process.stdout.write(`  usage: label <addr> <name> [comment...]\n`);
+          return { quit: false };
+        }
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          process.stdout.write(
+            `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
+          );
+          return { quit: false };
+        }
+        const comment = args.slice(2).join(" ").trim() || undefined;
+        try {
+          const r = await addLabel(
+            machine,
+            opts.loadedRoms,
+            syms,
+            a,
+            name,
+            comment,
+          );
+          process.stdout.write(`  label ${word(a)} = ${name} → ${r.path}\n`);
+        } catch (e) {
+          process.stdout.write(`  label failed: ${(e as Error).message}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "unlabel": {
+        if (!syms) {
+          process.stdout.write(`  symbols not loaded\n`);
+          return { quit: false };
+        }
+        const arg = args[0];
+        if (!arg) {
+          process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
+          return { quit: false };
+        }
+        const target = /^[A-Za-z_]/.test(arg)
+          ? arg
+          : (parseAddr(arg) ?? null);
+        if (target === null) {
+          process.stdout.write(`  bad address or name: ${arg}\n`);
+          return { quit: false };
+        }
+        const r = await deleteLabel(machine, syms, target);
+        if (r) {
+          process.stdout.write(`  unlabelled in ${r.path}\n`);
+        } else {
+          process.stdout.write(`  no symbol matches ${arg}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "portlabel": {
+        // `portlabel <num> <name> [comment...]`. Lives in the
+        // variant-wide port file; appears in disassembly for
+        // `IN A,(n)` / `OUT (n),A` operands.
+        if (!syms) {
+          process.stdout.write(`  symbols not loaded\n`);
+          return { quit: false };
+        }
+        const p = parseAddr(args[0]);
+        const name = args[1];
+        if (p === null || !name) {
+          process.stdout.write(
+            `  usage: portlabel <num> <name> [comment...]\n`,
+          );
+          return { quit: false };
+        }
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          process.stdout.write(
+            `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
+          );
+          return { quit: false };
+        }
+        const comment = args.slice(2).join(" ").trim() || undefined;
+        const r = await addPortLabel(machine, syms, p, name, comment);
+        process.stdout.write(`  port ${byte(p)} = ${name} → ${r.path}\n`);
+        return { quit: false };
+      }
+
+      case "unportlabel": {
+        if (!syms) {
+          process.stdout.write(`  symbols not loaded\n`);
+          return { quit: false };
+        }
+        const arg = args[0];
+        if (!arg) {
+          process.stdout.write(`  usage: unportlabel <num-or-name>\n`);
+          return { quit: false };
+        }
+        const target = /^[A-Za-z_]/.test(arg)
+          ? arg
+          : (parseAddr(arg) ?? null);
+        if (target === null) {
+          process.stdout.write(`  bad port or name: ${arg}\n`);
+          return { quit: false };
+        }
+        const r = await deletePortLabel(syms, target);
+        if (r) process.stdout.write(`  unlabelled in ${r.path}\n`);
+        else process.stdout.write(`  no port symbol matches ${arg}\n`);
+        return { quit: false };
+      }
+
+      case "labels":
+        if (!syms) {
+          process.stdout.write(`  symbols not loaded\n`);
+          return { quit: false };
+        }
+        process.stdout.write(renderLabelList(syms) + "\n");
+        return { quit: false };
+
+      case "p":
+      case "peek": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: peek <addr> [count]\n`);
+          return { quit: false };
+        }
+        const count = args[1] ? Math.max(1, parseInt(args[1], 10)) : 1;
+        doPeek(machine, a, count);
+        return { quit: false };
+      }
+
+      case "pw":
+      case "peekw": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          process.stdout.write(`  usage: peekw <addr>\n`);
+          return { quit: false };
+        }
+        doPeekWord(machine, a);
+        return { quit: false };
+      }
+
+      case "poke": {
+        const a = parseAddr(args[0]);
+        const v = parseAddr(args[1]);
+        if (a === null || v === null) {
+          process.stdout.write(`  usage: poke <addr> <value>\n`);
+          return { quit: false };
+        }
+        machine.memBus.write(a, v & 0xff);
+        process.stdout.write(`  ${word(a)} <- ${byte(v & 0xff)}\n`);
+        return { quit: false };
+      }
+
+      case "q":
+      case "quit":
+      case "exit":
+        return { quit: true };
+
+      case "h":
+      case "?":
+      case "help":
+        process.stdout.write(HELP);
+        return { quit: false };
+
+      default:
+        process.stdout.write(
+          `  unknown command "${cmd}" — type "help" for the command list\n`,
+        );
+        return { quit: false };
+    }
+  } catch (e) {
+    log.error(`command "${line}" failed: ${e}`);
+    return { quit: false };
+  }
+}
+
+// Replay a debugger script through the same dispatcher the REPL
+// uses. Blank lines are skipped silently. Each non-blank line is
+// echoed with a `script>` prefix so the captured output can be
+// matched against the input later. If the script issues `quit`
+// the runner stops reading and signals the caller to skip the REPL.
+async function runScript(
+  path: FilesystemPath,
+  ctx: DispatchCtx,
+): Promise<{ quit: boolean }> {
+  let text: string;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (e) {
+    process.stdout.write(
+      `  failed to read script ${path}: ${(e as Error).message}\n`,
+    );
+    return { quit: false };
+  }
+  for (const rawLine of text.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+    process.stdout.write(`script> ${trimmed}\n`);
+    const result = await dispatch(rawLine, ctx);
+    if (result.quit) return { quit: true };
+  }
+  return { quit: false };
+}
+
 // REPL — reads commands, dispatches, re-prompts. Returns when the
-// user types `quit` or stdin closes (e.g. Ctrl-D).
+// user types `quit` or stdin closes (e.g. Ctrl-D). When opts.script
+// is set, that script runs first; if it ends with `quit`, the REPL
+// is skipped — handy for "boot, dump state, exit" automation.
 export async function runDebug(
   machine: PC88Machine,
   opts: DebugOptions = {},
 ): Promise<void> {
   const state: DebugState = {
     breakpoints: new Set(opts.initialBreakpoints ?? []),
+    ramWatches: new Map(),
+    portWatches: new Map(),
+    callStack: [],
+    stopReason: null,
     ops: 0,
     vbl: makeVblState(),
     stepOverTarget: null,
@@ -349,301 +1037,26 @@ export async function runDebug(
     );
   }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const hooks = installWatchHooks(machine, state);
+  try {
+    const ctx: DispatchCtx = { machine, state, syms, opts };
 
-  while (true) {
-    printPromptSummary(machine, syms);
-    const raw = await rl.question("> ");
-    const line = raw.trim();
-    if (!line) continue;
-    const [cmd, ...args] = line.split(/\s+/);
-    if (cmd === undefined) continue;
-
-    try {
-      switch (cmd.toLowerCase()) {
-        case "s":
-        case "step":
-          singleStep(machine, state);
-          break;
-
-        case "n":
-        case "next": {
-          // Step-over: peek the byte at PC; if it's CALL/RST, set a
-          // target = PC + opLen and `continue` until we hit it. For
-          // anything else, just single-step.
-          const pc = machine.cpu.regs.PC;
-          const op = machine.memBus.read(pc);
-          const callLen = callOpLength(op);
-          if (callLen !== null) {
-            state.stepOverTarget = (pc + callLen) & 0xffff;
-            runUntilStop(machine, state, "step-over");
-          } else {
-            singleStep(machine, state);
-          }
-          break;
-        }
-
-        case "c":
-        case "cont":
-        case "continue": {
-          // `continue` with no arg: existing behaviour (run until
-          // breakpoint / halt / op cap). `continue N` adds an
-          // N-cycle stop condition on top — useful for "step
-          // forward by ~one frame's worth" without setting a PC
-          // breakpoint. Hex (0x... or trailing hex chars) and
-          // decimal both work.
-          let cycleBudget: Cycles | undefined;
-          if (args[0] !== undefined) {
-            const n = parseCycleArg(args[0]);
-            if (n === null) {
-              process.stdout.write(`  usage: continue [cycles]\n`);
-              break;
-            }
-            cycleBudget = n;
-          }
-          runUntilStop(machine, state, "continue", cycleBudget);
-          break;
-        }
-
-        case "b":
-        case "break": {
-          const a = parseAddr(args[0]);
-          if (a === null) {
-            process.stdout.write(`  usage: break <addr>\n`);
-            break;
-          }
-          state.breakpoints.add(a);
-          process.stdout.write(`  break @ ${word(a)}\n`);
-          break;
-        }
-
-        case "bd":
-        case "unbreak": {
-          const a = parseAddr(args[0]);
-          if (a === null) {
-            process.stdout.write(`  usage: unbreak <addr>\n`);
-            break;
-          }
-          state.breakpoints.delete(a);
-          process.stdout.write(`  unbreak ${word(a)}\n`);
-          break;
-        }
-
-        case "bl":
-        case "breaks":
-          listBreaks(state);
-          break;
-
-        case "r":
-        case "regs":
-          printRegs(machine);
-          break;
-
-        case "chips":
-          printChips(machine);
-          break;
-
-        case "screen":
-          // Same surface as the headless runner's "--- Visible screen
-          // ---" block. Renders the CRTC+DMAC region; falls back to a
-          // placeholder string before SET MODE has run so the user
-          // doesn't have to remember which init step gates it.
-          process.stdout.write(machine.display.toASCIIDump() + "\n");
-          break;
-
-        case "dis":
-        case "l":
-        case "list": {
-          // Default to 8 instructions ahead — enough to spot a CALL
-          // / loop / branch without flooding the screen. Counts
-          // larger than 256 are clamped (debugger should stay
-          // responsive even if the user fat-fingers a big number).
-          const count = Math.min(
-            256,
-            Math.max(1, args[0] ? parseInt(args[0], 10) || 8 : 8),
-          );
-          printDisassembly(machine, syms, count);
-          break;
-        }
-
-        case "label": {
-          // `label <addr> <name> [comment...]`. The trailing args
-          // are joined into a single comment so users can write
-          // free-form descriptions without needing to quote.
-          if (!syms || !opts.loadedRoms) {
-            process.stdout.write(
-              `  symbols not loaded (need ROM bytes to compute md5 headers)\n`,
-            );
-            break;
-          }
-          const a = parseAddr(args[0]);
-          const name = args[1];
-          if (a === null || !name) {
-            process.stdout.write(`  usage: label <addr> <name> [comment...]\n`);
-            break;
-          }
-          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-            process.stdout.write(
-              `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
-            );
-            break;
-          }
-          const comment = args.slice(2).join(" ").trim() || undefined;
-          try {
-            const r = await addLabel(
-              machine,
-              opts.loadedRoms,
-              syms,
-              a,
-              name,
-              comment,
-            );
-            process.stdout.write(`  label ${word(a)} = ${name} → ${r.path}\n`);
-          } catch (e) {
-            process.stdout.write(`  label failed: ${(e as Error).message}\n`);
-          }
-          break;
-        }
-
-        case "unlabel": {
-          if (!syms) {
-            process.stdout.write(`  symbols not loaded\n`);
-            break;
-          }
-          const arg = args[0];
-          if (!arg) {
-            process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
-            break;
-          }
-          const target = /^[A-Za-z_]/.test(arg)
-            ? arg
-            : (parseAddr(arg) ?? null);
-          if (target === null) {
-            process.stdout.write(`  bad address or name: ${arg}\n`);
-            break;
-          }
-          const r = await deleteLabel(machine, syms, target);
-          if (r) {
-            process.stdout.write(`  unlabelled in ${r.path}\n`);
-          } else {
-            process.stdout.write(`  no symbol matches ${arg}\n`);
-          }
-          break;
-        }
-
-        case "portlabel": {
-          // `portlabel <num> <name> [comment...]`. Lives in the
-          // variant-wide port file; appears in disassembly for
-          // `IN A,(n)` / `OUT (n),A` operands.
-          if (!syms) {
-            process.stdout.write(`  symbols not loaded\n`);
-            break;
-          }
-          const p = parseAddr(args[0]);
-          const name = args[1];
-          if (p === null || !name) {
-            process.stdout.write(
-              `  usage: portlabel <num> <name> [comment...]\n`,
-            );
-            break;
-          }
-          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-            process.stdout.write(
-              `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
-            );
-            break;
-          }
-          const comment = args.slice(2).join(" ").trim() || undefined;
-          const r = await addPortLabel(machine, syms, p, name, comment);
-          process.stdout.write(`  port ${byte(p)} = ${name} → ${r.path}\n`);
-          break;
-        }
-
-        case "unportlabel": {
-          if (!syms) {
-            process.stdout.write(`  symbols not loaded\n`);
-            break;
-          }
-          const arg = args[0];
-          if (!arg) {
-            process.stdout.write(`  usage: unportlabel <num-or-name>\n`);
-            break;
-          }
-          const target = /^[A-Za-z_]/.test(arg)
-            ? arg
-            : (parseAddr(arg) ?? null);
-          if (target === null) {
-            process.stdout.write(`  bad port or name: ${arg}\n`);
-            break;
-          }
-          const r = await deletePortLabel(syms, target);
-          if (r) process.stdout.write(`  unlabelled in ${r.path}\n`);
-          else process.stdout.write(`  no port symbol matches ${arg}\n`);
-          break;
-        }
-
-        case "labels":
-          if (!syms) {
-            process.stdout.write(`  symbols not loaded\n`);
-            break;
-          }
-          process.stdout.write(renderLabelList(syms) + "\n");
-          break;
-
-        case "p":
-        case "peek": {
-          const a = parseAddr(args[0]);
-          if (a === null) {
-            process.stdout.write(`  usage: peek <addr> [count]\n`);
-            break;
-          }
-          const count = args[1] ? Math.max(1, parseInt(args[1], 10)) : 1;
-          doPeek(machine, a, count);
-          break;
-        }
-
-        case "pw":
-        case "peekw": {
-          const a = parseAddr(args[0]);
-          if (a === null) {
-            process.stdout.write(`  usage: peekw <addr>\n`);
-            break;
-          }
-          doPeekWord(machine, a);
-          break;
-        }
-
-        case "poke": {
-          const a = parseAddr(args[0]);
-          const v = parseAddr(args[1]);
-          if (a === null || v === null) {
-            process.stdout.write(`  usage: poke <addr> <value>\n`);
-            break;
-          }
-          machine.memBus.write(a, v & 0xff);
-          process.stdout.write(`  ${word(a)} <- ${byte(v & 0xff)}\n`);
-          break;
-        }
-
-        case "q":
-        case "quit":
-        case "exit":
-          rl.close();
-          return;
-
-        case "h":
-        case "?":
-        case "help":
-          process.stdout.write(HELP);
-          break;
-
-        default:
-          process.stdout.write(
-            `  unknown command "${cmd}" — type "help" for the command list\n`,
-          );
-      }
-    } catch (e) {
-      log.error(`command "${line}" failed: ${e}`);
+    if (opts.script) {
+      const result = await runScript(opts.script, ctx);
+      if (result.quit) return;
     }
+
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    while (true) {
+      printPromptSummary(machine, syms);
+      const raw = await rl.question("> ");
+      const result = await dispatch(raw, ctx);
+      if (result.quit) {
+        rl.close();
+        return;
+      }
+    }
+  } finally {
+    hooks.uninstall();
   }
 }

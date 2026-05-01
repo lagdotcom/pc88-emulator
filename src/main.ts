@@ -57,6 +57,10 @@ interface CliFlags {
   debug: boolean;
   // Initial breakpoints to install when --debug is set.
   initialBreakpoints: u16[];
+  // Optional debugger-command script. When set, --debug is implied —
+  // running boot scripts without entering the REPL would otherwise
+  // be a confusing no-op flag.
+  debugScript: FilesystemPath | null;
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -78,6 +82,7 @@ function parseCliFlags(argv: string[]): CliFlags {
       "log-file": { type: "string" },
       debug: { type: "boolean", short: "d" },
       break: { type: "string", multiple: true },
+      script: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -132,6 +137,10 @@ function parseCliFlags(argv: string[]): CliFlags {
     initialBreakpoints.push(a);
   }
 
+  const scriptArg = values["script"] ?? process.env.PC88_SCRIPT ?? null;
+  const debugScript: FilesystemPath | null =
+    typeof scriptArg === "string" && scriptArg.length > 0 ? scriptArg : null;
+
   return {
     romDir,
     maxOps,
@@ -140,8 +149,12 @@ function parseCliFlags(argv: string[]): CliFlags {
     logFile,
     basicOverride,
     help: !!values.help,
-    debug: !!values["debug"],
+    // --script implies --debug: the only thing the script can drive
+    // is the debugger REPL, so allowing them to be set independently
+    // would be a footgun.
+    debug: !!values["debug"] || debugScript !== null,
     initialBreakpoints,
+    debugScript,
     config: config ?? MKI,
   };
 }
@@ -180,6 +193,10 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       break / peek / poke / regs / chips / quit)
   --break=ADDR        install an initial breakpoint at ADDR (hex
                       or decimal); repeatable
+  --script=PATH       replay a debugger-command script before
+                      handing control to the REPL; if the script
+                      ends with \`quit\` the REPL is skipped (implies
+                      --debug; env: PC88_SCRIPT)
   -h, --help          show this help
 `;
 
@@ -341,10 +358,12 @@ async function main(): Promise<void> {
     // return — skipping the diagnostics dump that the headless run
     // emits, since the user's been watching state interactively
     // anyway.
-    await runDebug(machine, {
+    const debugOpts: Parameters<typeof runDebug>[1] = {
       initialBreakpoints: flags.initialBreakpoints,
       loadedRoms: loaded,
-    });
+    };
+    if (flags.debugScript !== null) debugOpts.script = flags.debugScript;
+    await runDebug(machine, debugOpts);
     return;
   }
 

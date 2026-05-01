@@ -588,15 +588,47 @@ branch-cheap).
 
 `yarn pc88 --debug` (or `-d`) drops into a REPL before any code
 runs. Commands: `step` / `next` (step over) / `continue [cycles]`
-(stops on breakpoint / halt / op cap, or after N CPU cycles when
-the optional arg is given) / `break <addr>` / `unbreak <addr>` /
-`breaks` / `regs` / `chips` / `screen` (renders the live CRTC+DMAC
-visible region) / `dis [count]` (disassembles N instructions
+(stops on breakpoint / watchpoint / halt / op cap, or after N CPU
+cycles when the optional arg is given) / `break <addr>` /
+`unbreak <addr>` / `breaks` / `regs` / `chips` / `screen`
+(renders the live CRTC+DMAC visible region) / `stack` (synthesised
+CALL/RST/IRQ frames) / `dis [count]` (disassembles N instructions
 starting at PC, default 8) / `peek <addr> [count]` /
 `peekw <addr>` / `poke <addr> <val>` / `quit` / `help`. Initial
 breakpoints can be installed up-front with `--break=ADDR`
 (repeatable). Addresses accept `0xff`, `ff`, or decimal;
 out-of-range values are masked to u16.
+
+Watchpoints stop the run loop on access:
+
+- `bw <addr> [r|w|rw]` — RAM read/write watch (default `rw`); fires
+  via a `memBus.read` / `memBus.write` monkey-patch installed for
+  the lifetime of the debug session.
+- `bp <port> [r|w|rw]` — IN/OUT port watch (default `rw`); fires
+  via `IOBus.tracer`. Port low byte only — chips dispatch on
+  `port & 0xff`, the watch matches the same way.
+- `unbw <addr>` / `unbp <port>` remove a watch. `bwl` / `bpl` list
+  the active watches.
+
+The synthesised `stack` is bookkept by `trackedStep` from SP
+deltas + the IFF1 transition: CALL / conditional CALL / RST push
+a frame (`via = "CALL"` or `"RST"`), RET pops one, and a
+non-CALL instruction whose IFF1 went from 1→0 with SP-2 is
+recorded as `via = "IRQ"`. Bounded at 256 frames; oldest is
+dropped on overflow so the deepest frames stay visible. Best-
+effort: BASIC stack-mungery (PUSH/RET as gosub, manual SP
+unwinds) makes the model imperfect, but it's right for normal
+code paths and hugely useful when stepping through the BIOS init.
+
+`--script=PATH` replays a file of debugger commands through the
+same dispatcher the REPL uses, then drops into the REPL. Lines
+are echoed with a `script>` prefix so the captured output can be
+matched against the input. Blank lines and lines starting with
+`#` are skipped. `--script=PATH` implies `--debug`, and an
+ending `quit` skips the REPL entirely (canned "boot, dump
+state, exit" automation). The script-file driver and the REPL
+both feed lines through `dispatch(line, ctx)` so behaviour can
+never drift between them.
 
 Disassembly is driven by `src/chips/z80/disasm.ts` which walks the
 existing `opCodes` / `cbOpCodes` / `edOpCodes` / `ddOpCodes` /
