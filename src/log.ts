@@ -8,10 +8,15 @@ export function getLogger(namespace: string) {
   return log;
 }
 
-export function logToStream(stream: NodeJS.WriteStream, colors = false) {
-  Log.options({ stream, colors });
+// debug-level's stream slot is typed `NodeJS.WriteStream` (the
+// process.stdout/stderr flavour with TTY methods) but only `.write()`
+// is actually called. Accept the broader `NodeJS.WritableStream` so
+// `fs.createWriteStream(...)` returns slot in cleanly.
+export function logToStream(stream: NodeJS.WritableStream, colors = false) {
+  const writeStream = stream as NodeJS.WriteStream;
+  Log.options({ stream: writeStream, colors });
   for (const log of activeLoggers) {
-    log.stream = stream;
+    log.stream = writeStream;
     log.opts.colors = colors;
   }
 }
