@@ -232,16 +232,30 @@ code path.
 - "Reset" button returns to the boot screen with the same
   selections pre-filled from `/settings.json`.
 
-### Phase 6: Keyboard input
+### Phase 6: Keyboard input ✓ (committed)
 
-- `KeyboardEvent.code` → PC-88 matrix row/bit mapping. Lives in
-  `src/web/keymap.ts` (new file). Reference: MAME's
-  `pc8801.cpp` keyboard input section.
-- UI thread posts `key` messages (`{down: bool, code: number}`).
-  Worker translates to `Keyboard.setKey(row, bit, down)`.
-- Focus handling: only forward keys when the canvas / debugger
-  pane has focus, so the user can still type into the REPL
-  `<input>` without games eating the keystrokes.
+Done. JS keyboard events flow into the PC-88 keyboard matrix
+when no form element has focus.
+
+- `src/web/keymap.ts`: `keyCodeToPC88(code)` maps
+  `KeyboardEvent.code` to the existing `PC88Key` enum (whose
+  values pack row + col as `row * 8 + col`); `rowColFromPC88Key`
+  splits them out for the chip API. Coverage: full alpha +
+  numeric rows, all standard symbol keys on a US PC layout, the
+  numpad, arrows / Home / Insert / Delete / Backspace,
+  modifiers (Shift / Ctrl / Alt = GRPH), and F1..F10.
+- protocol: `key` (inbound, `{row, col, down}`) and `keysAllUp`
+  (inbound, no payload).
+- worker: `Keyboard.pressKey(row, col)` / `releaseKey(row, col)`
+  on `key`; `releaseAll()` on `keysAllUp`.
+- main: `installKeyboardForwarder(worker)` attaches `keydown` /
+  `keyup` listeners on `window` and skips them when an
+  `INPUT` / `TEXTAREA` / `SELECT` / `contenteditable` element has
+  focus, so the REPL input and Memory peek form keep their
+  keystrokes. Auto-repeat is filtered (real PC-88 hardware
+  doesn't see host OS auto-repeat). `blur` and
+  `visibilitychange` post `keysAllUp` so a key held when focus
+  leaves doesn't stay logically pressed in the matrix.
 
 ### Phase 7: Polish
 
@@ -321,7 +335,7 @@ code path.
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 4b
+## File index after phase 6
 
 ```
 src/
@@ -340,7 +354,8 @@ src/
     worker.ts                      # emulator worker; owns PC88Machine + run loop
     protocol.ts                    # typed message union (inbound + outbound)
     canvas-renderer.ts             # CRTC chars → 8×16 cell canvas
-    panels.ts                      # Registers / Disasm / Memory / REPL panels
+    keymap.ts                      # KeyboardEvent.code → PC88Key
+    panels.ts                      # Registers / Disasm / Memory / Breakpoints / Watches / Stack / REPL
     boot-screen.ts                 # form + state
     md5.ts                         # RFC-1321
     opfs.ts                        # storage abstraction

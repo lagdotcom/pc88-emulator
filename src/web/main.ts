@@ -3,6 +3,7 @@ import { getLogger } from "../log.js";
 import { type PC88Config } from "../machines/config.js";
 import { type BootRequest, renderBootScreen } from "./boot-screen.js";
 import { CanvasTextRenderer } from "./canvas-renderer.js";
+import { keyCodeToPC88, rowColFromPC88Key } from "./keymap.js";
 import { openStore } from "./opfs.js";
 import {
   BreakpointsPanel,
@@ -110,6 +111,8 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
   ui.resetButton.addEventListener("click", () =>
     send(worker, { type: "reset" }),
   );
+
+  installKeyboardForwarder(worker);
 
   // Copy each ROM into a fresh ArrayBuffer so the boot screen's cached
   // bytes survive the transfer. Transferring detaches the buffer on
@@ -271,6 +274,66 @@ function applyDipOverrides(
   port31: number,
 ): PC88Config {
   return { ...base, dipSwitches: { port30, port31 } };
+}
+
+// Forward keydown/keyup to the worker's PC-88 keyboard matrix when
+// no form element has focus — that way typing in the REPL input or
+// Memory peek form still goes to the form, and only stray keystrokes
+// (in the canvas / panels / blank space) reach the emulated keyboard.
+// Auto-repeat is filtered: real PC-88 hardware doesn't see the host
+// OS's auto-repeat as separate down events, and the BIOS handles its
+// own typematic timing internally.
+function installKeyboardForwarder(worker: Worker): void {
+  const isFormFocused = (): boolean => {
+    const a = document.activeElement;
+    if (!a) return false;
+    const tag = a.tagName;
+    return (
+      tag === "INPUT" ||
+      tag === "TEXTAREA" ||
+      tag === "SELECT" ||
+      (a as HTMLElement).isContentEditable === true
+    );
+  };
+
+  const onDown = (ev: KeyboardEvent): void => {
+    if (isFormFocused()) return;
+    if (ev.repeat) {
+      ev.preventDefault();
+      return;
+    }
+    const key = keyCodeToPC88(ev.code);
+    if (key === null) return;
+    const { row, col } = rowColFromPC88Key(key);
+    worker.postMessage({ type: "key", row, col, down: true });
+    // Stop the browser from doing its own thing with arrow keys,
+    // Tab, Backspace, function keys, etc. while the emulator has
+    // focus. Modifiers without a base key are still let through so
+    // things like Alt-Tab keep working.
+    ev.preventDefault();
+  };
+
+  const onUp = (ev: KeyboardEvent): void => {
+    if (isFormFocused()) return;
+    const key = keyCodeToPC88(ev.code);
+    if (key === null) return;
+    const { row, col } = rowColFromPC88Key(key);
+    worker.postMessage({ type: "key", row, col, down: false });
+    ev.preventDefault();
+  };
+
+  // If the page loses focus while a key is held, we'd never see the
+  // keyup — release everything to keep the matrix consistent.
+  const onBlur = (): void => {
+    worker.postMessage({ type: "keysAllUp" });
+  };
+
+  window.addEventListener("keydown", onDown);
+  window.addEventListener("keyup", onUp);
+  window.addEventListener("blur", onBlur);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) onBlur();
+  });
 }
 
 void main();

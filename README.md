@@ -331,9 +331,14 @@ Roughly ordered by what's blocking what.
     CLI debugger uses, via a writer-callback split of `debug.ts`.
   - [x] Dedicated Breakpoints / Watches / Stack panels driven
     from typed `DebugSnapshot` on `tick` / `stopped`.
+  - [x] Keyboard input wired through the `Keyboard` matrix —
+    `src/web/keymap.ts` maps `KeyboardEvent.code` to the
+    `PC88Key` row/col enum; the UI thread forwards keydown / keyup
+    when no form element has focus, with `keysAllUp` on blur /
+    visibility-change so a key held when focus leaves doesn't
+    stay logically pressed.
   - [ ] OPFS-backed symbol-file persistence so `label` / `unlabel`
     work in the browser (currently no-ops via the browser stub).
-  - [ ] Keyboard input wired through `Keyboard` matrix.
   - [ ] Symbol-file resolution in disassembly (decide: fetch
     `syms/*.sym` as static assets, or inline at build time).
 - [x] **`build` script type-checks `src/machines/` errors** — the

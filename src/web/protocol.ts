@@ -17,7 +17,20 @@ export type WorkerInbound =
   | { type: "step" }
   | { type: "reset" }
   | { type: "peek"; addr: u16; count: number }
-  | { type: "command"; line: string };
+  | { type: "command"; line: string }
+  | {
+      // PC-88 keyboard matrix slot (row 0..15, col 0..7) plus
+      // press/release direction. The UI thread translates JS
+      // KeyboardEvent.code via keymap.ts before posting.
+      type: "key";
+      row: number;
+      col: number;
+      down: boolean;
+    }
+  // "Drop all currently-held keys" — fired when the canvas loses
+  // focus or the page is hidden, so a key that was being held when
+  // focus left doesn't stay logically pressed in the matrix.
+  | { type: "keysAllUp" };
 
 // CPU state snapshot. Subset of PC88Machine.snapshot().cpu — the same
 // shape but extracted into its own type so the UI panels can refer

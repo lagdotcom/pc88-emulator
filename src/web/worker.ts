@@ -349,6 +349,15 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
       case "peek":
         if (state) postPeek(state, msg.addr, msg.count);
         break;
+      case "key":
+        if (state) {
+          if (msg.down) state.machine.keyboard.pressKey(msg.row, msg.col);
+          else state.machine.keyboard.releaseKey(msg.row, msg.col);
+        }
+        break;
+      case "keysAllUp":
+        if (state) state.machine.keyboard.releaseAll();
+        break;
       case "command":
         if (state) {
           // Fire-and-forget — handleCommand awaits dispatch then
