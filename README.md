@@ -296,7 +296,7 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
-- [ ] **Web UI** — phases 1-3 landed. `yarn build:web` produces
+- [ ] **Web UI** — phases 1-4a landed. `yarn build:web` produces
   `web/app.js` + `web/worker.js` (UI bundle + emulator Worker
   bundle) referenced from `web/index.html`. The boot screen
   reads/writes OPFS for ROM storage (content-addressed by md5) +
@@ -304,21 +304,26 @@ Roughly ordered by what's blocking what.
   OPFS is unavailable. ROM upload validates size + md5 against the
   variant descriptor. Boot transfers ROM bytes into a dedicated
   Worker that owns the CPU loop and emits `tick` snapshots at
-  60 Hz; each tick ships the CRTC `chars` buffer as a transferable
-  ArrayBuffer plus an ASCII fallback string. The UI thread paints
+  60 Hz; each tick ships the CRTC `chars` buffer (transferable
+  ArrayBuffer), the ASCII fallback string, a typed `CPUSnapshot`,
+  and 16 lines of disassembly around PC. The UI thread paints
   the chars into an 8×16 cell `<canvas>` (CSS-scaled to 960 px,
-  pixel-aligned) and drives Run / Pause / Step / Reset buttons.
-  Native monospace font for now; phase 7 swaps to a CG-ROM glyph
-  atlas. Debugger panels still TODO. See `WEB_GUI_PLAN.md` for
-  phasing.
+  pixel-aligned), renders Registers / Disassembly / Memory panels,
+  and drives Run / Pause / Step / Reset buttons. The Memory panel
+  posts `peek` requests; the worker replies with a transferable
+  bytes buffer. Native monospace font for now; phase 7 swaps to
+  a CG-ROM glyph atlas. See `WEB_GUI_PLAN.md` for phasing.
   Sub-items still open:
   - [x] Move emulator into a Web Worker; 60 Hz frame pump.
   - [x] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
-  - [ ] Debugger panels (registers, disasm, memory, breakpoints,
-    watches, stack) driven by snapshot + `dispatch()` over the
-    worker channel.
-  - [ ] On-page REPL pane mirroring the existing CLI debugger.
+  - [x] Registers / Disassembly / Memory-peek panels driven from
+    typed snapshot in `tick` / `stopped` messages.
+  - [ ] Breakpoints / watches panel + `dispatch()`-style REPL pane
+    over the worker channel (requires `debug.ts` to learn a write
+    callback so it doesn't hard-write `process.stdout`).
   - [ ] Keyboard input wired through `Keyboard` matrix.
+  - [ ] Symbol-file resolution in disassembly (decide: fetch
+    `syms/*.sym` as static assets, or inline at build time).
 - [x] **`build` script type-checks `src/machines/` errors** — the
   `DipSwitchState`/`dipSwitches`/`disk` cases above are now placeholders
   that compile cleanly. They still need real shapes (see machine layer

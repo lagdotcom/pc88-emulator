@@ -138,24 +138,47 @@ pixelated`. Full repaint per tick.
   non-null. The same protocol slot will carry that buffer when
   graphics planes land.
 
-### Phase 4: Debugger panels
+### Phase 4a: Read-only debugger panels ✓ (committed)
 
-All driven by a single `state` object the UI thread updates from
-`stopped` / `snapshot` messages. No framework — direct DOM updates.
+Done. Registers, Disassembly, and Memory panels render directly
+off typed snapshot data in `tick` / `stopped` messages. No
+framework — `panels.ts` exposes three classes that own a DOM
+subtree and a `render()` method.
+
+- `protocol.ts`: `CPUSnapshot` + `DisasmLine[]` ride on every
+  `tick` / `stopped`. `peek` request / `memory` response added.
+- `worker.ts`: `snapshotCpu()` extracts the same shape
+  `PC88Machine.snapshot()` uses; `disasmAround(pc, lines)` walks
+  `disassemble()` 16 instructions forward from PC. Cost is
+  microseconds per tick. `peek` reads `memBus.read` into a
+  transferable buffer.
+- `panels.ts`:
+  - `RegistersPanel`: 4-column grid of named slots + flag string
+    (S Z Y H X P N C, MSB→LSB).
+  - `DisasmPanel`: `<pre>` listing with `►` marker on the row whose
+    PC matches the current PC. Symbol resolution still TODO.
+  - `MemoryPanel`: addr + count form, posts `peek`, renders a
+    classic hex/ASCII dump.
+
+### Phase 4b: Breakpoints / watches + REPL pane
+
+The CLI debugger's `dispatch(line, ctx)` is the canonical command
+surface, but `debug.ts` writes directly to `process.stdout`.
+Phase 4b's first job is to refactor that into a write callback
+the worker can capture into `out` messages — once that's done,
+buttons + the `<input>` REPL all flow through the same dispatcher
+and the web UI hits parity with the CLI debugger. Remaining
+panels (Breakpoints / watches, Stack) come along for free since
+their state lives in `DebugState`.
 
 | Panel | Source | Update cadence |
 |-------|--------|----------------|
 | Run controls | Buttons → cmd messages (`step`, `next`, `continue`, `pause`, `reset`) | on click |
-| Registers | `snapshot.cpu` | on pause/step |
-| Disassembly | worker runs `disassemble()` around PC; ships strings | on pause/step |
-| Memory hex | `peek` messages | on submit |
+| Registers | `snapshot.cpu` | every tick (4a) |
+| Disassembly | `disasmAround(pc, 16)` in worker; ships strings | every tick (4a) |
+| Memory hex | `peek` messages | on submit (4a) |
 | Breakpoints / watches | List from `DebugState`; `dispatch("break 0x1234")` etc. | on change |
 | Stack | `state.callStack` | on pause/step |
-
-REPL pane: `<input>` posts raw lines via `cmd`, `<pre>` mirrors
-`out` messages. From this point on, the web UI is at parity with
-the CLI debugger because every command flows through the same
-`dispatch()`.
 
 ### Phase 5: Persistence
 
@@ -255,7 +278,7 @@ the CLI debugger because every command flows through the same
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 3
+## File index after phase 4a
 
 ```
 src/
@@ -270,6 +293,7 @@ src/
     worker.ts                      # emulator worker; owns PC88Machine + run loop
     protocol.ts                    # typed message union (inbound + outbound)
     canvas-renderer.ts             # CRTC chars → 8×16 cell canvas
+    panels.ts                      # Registers / Disasm / Memory panels
     boot-screen.ts                 # form + state
     md5.ts                         # RFC-1321
     opfs.ts                        # storage abstraction

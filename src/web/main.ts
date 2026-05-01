@@ -4,6 +4,7 @@ import { type PC88Config } from "../machines/config.js";
 import { type BootRequest, renderBootScreen } from "./boot-screen.js";
 import { CanvasTextRenderer } from "./canvas-renderer.js";
 import { openStore } from "./opfs.js";
+import { DisasmPanel, MemoryPanel, RegistersPanel } from "./panels.js";
 import type { WorkerInbound, WorkerOutbound } from "./protocol.js";
 
 const log = getLogger("web");
@@ -35,18 +36,21 @@ interface RunningUI {
   pauseButton: HTMLButtonElement;
   stepButton: HTMLButtonElement;
   resetButton: HTMLButtonElement;
+  registers: RegistersPanel;
+  disasm: DisasmPanel;
+  memory: MemoryPanel;
 }
 
 async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
   const config = applyDipOverrides(req.config, req.port30, req.port31);
   log.info(`booting ${config.model}`);
 
-  root.innerHTML = "";
-  const ui = renderRunningView(root, config);
-
   const worker = new Worker(new URL("./worker.js", import.meta.url), {
     type: "module",
   });
+
+  root.innerHTML = "";
+  const ui = renderRunningView(root, config, worker);
 
   worker.addEventListener("message", (ev: MessageEvent<WorkerOutbound>) => {
     const msg = ev.data;
@@ -55,13 +59,20 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
         break;
       case "tick":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
+        ui.registers.render(msg.cpu);
+        ui.disasm.render(msg.pc, msg.disasm);
         ui.status.textContent = `${msg.running ? "running" : "paused"} pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}${msg.halted ? " halted" : ""}`;
         setRunUi(ui, msg.running);
         break;
       case "stopped":
         renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
+        ui.registers.render(msg.cpu);
+        ui.disasm.render(msg.pc, msg.disasm);
         ui.status.textContent = `stopped (${msg.reason}) pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}`;
         setRunUi(ui, false);
+        break;
+      case "memory":
+        ui.memory.render(msg.addr, new Uint8Array(msg.bytes));
         break;
       case "error":
         ui.status.textContent = `worker error: ${msg.message}`;
@@ -99,7 +110,11 @@ function send(w: Worker, msg: WorkerInbound): void {
   w.postMessage(msg);
 }
 
-function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
+function renderRunningView(
+  root: HTMLElement,
+  config: PC88Config,
+  worker: Worker,
+): RunningUI {
   root.classList.remove("boot-screen");
   root.classList.add("running");
 
@@ -129,6 +144,21 @@ function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
   screen.className = "screen";
   root.appendChild(screen);
   const renderer = new CanvasTextRenderer(screen);
+
+  // Debugger panels live in a side-by-side row under the canvas so
+  // the screen stays the focal point and the panels share a stable
+  // monospace lane width.
+  const panels = document.createElement("div");
+  panels.className = "panels";
+  const registers = new RegistersPanel();
+  const disasm = new DisasmPanel();
+  const memory = new MemoryPanel((req) => {
+    send(worker, { type: "peek", addr: req.addr & 0xffff, count: req.count });
+  });
+  panels.appendChild(registers.element);
+  panels.appendChild(disasm.element);
+  panels.appendChild(memory.element);
+  root.appendChild(panels);
 
   // ASCII fallback panel — same content the canvas renders, but as
   // selectable text. Useful for copy-paste of BASIC banners and for
@@ -160,6 +190,9 @@ function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
     pauseButton,
     stepButton,
     resetButton,
+    registers,
+    disasm,
+    memory,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { ROMID, u16 } from "../flavours.js";
+import type { ROMID, u8, u16 } from "../flavours.js";
 import type { PC88Config } from "../machines/config.js";
 
 // Message protocol between web main thread (UI) and the emulator
@@ -15,7 +15,39 @@ export type WorkerInbound =
   | { type: "run" }
   | { type: "pause" }
   | { type: "step" }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "peek"; addr: u16; count: number };
+
+// CPU state snapshot. Subset of PC88Machine.snapshot().cpu — the same
+// shape but extracted into its own type so the UI panels can refer
+// to it without importing the whole MachineSnapshot.
+export interface CPUSnapshot {
+  PC: u16;
+  SP: u16;
+  AF: u16;
+  BC: u16;
+  DE: u16;
+  HL: u16;
+  IX: u16;
+  IY: u16;
+  AF_: u16;
+  BC_: u16;
+  DE_: u16;
+  HL_: u16;
+  I: u8;
+  R: u8;
+  iff1: boolean;
+  iff2: boolean;
+  im: number;
+  halted: boolean;
+  cycles: number;
+}
+
+export interface DisasmLine {
+  pc: u16;
+  bytes: u8[];
+  mnemonic: string;
+}
 
 export type WorkerOutbound =
   | { type: "ready" }
@@ -34,6 +66,8 @@ export type WorkerOutbound =
       ops: number;
       running: boolean;
       halted: boolean;
+      cpu: CPUSnapshot;
+      disasm: DisasmLine[];
     }
   | {
       type: "stopped";
@@ -46,5 +80,14 @@ export type WorkerOutbound =
       cycles: number;
       ops: number;
       halted: boolean;
+      cpu: CPUSnapshot;
+      disasm: DisasmLine[];
+    }
+  | {
+      type: "memory";
+      addr: u16;
+      // Memory bytes shipped as a transferable buffer; the UI re-views
+      // as Uint8Array and renders a hex line.
+      bytes: ArrayBuffer;
     }
   | { type: "error"; message: string };

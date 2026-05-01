@@ -1,4 +1,5 @@
-import type { ROMID } from "../flavours.js";
+import { disassemble } from "../chips/z80/disasm.js";
+import type { ROMID, u16 } from "../flavours.js";
 import { getLogger } from "../log.js";
 import {
   makeVblState,
@@ -10,7 +11,12 @@ import {
 } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
 import { md5 } from "./md5.js";
-import type { WorkerInbound, WorkerOutbound } from "./protocol.js";
+import type {
+  CPUSnapshot,
+  DisasmLine,
+  WorkerInbound,
+  WorkerOutbound,
+} from "./protocol.js";
 
 const log = getLogger("web/worker");
 
@@ -39,6 +45,52 @@ function post(msg: WorkerOutbound, transfer: Transferable[] = []): void {
   workerSelf.postMessage(msg, transfer);
 }
 
+// Number of disassembled instructions to ship around PC on every
+// tick. Cheap (a few microseconds even at 60 Hz) and gives the UI
+// a stable scroll region without round-tripping per-instruction.
+const DISASM_LINES = 16;
+
+function snapshotCpu(machine: PC88Machine): CPUSnapshot {
+  const { cpu } = machine;
+  return {
+    PC: cpu.regs.PC,
+    SP: cpu.regs.SP,
+    AF: cpu.regs.AF,
+    BC: cpu.regs.BC,
+    DE: cpu.regs.DE,
+    HL: cpu.regs.HL,
+    IX: cpu.regs.IX,
+    IY: cpu.regs.IY,
+    AF_: cpu.regs.AF_,
+    BC_: cpu.regs.BC_,
+    DE_: cpu.regs.DE_,
+    HL_: cpu.regs.HL_,
+    I: cpu.regs.I,
+    R: cpu.regs.R,
+    iff1: cpu.iff1,
+    iff2: cpu.iff2,
+    im: cpu.im,
+    halted: cpu.halted,
+    cycles: cpu.cycles,
+  };
+}
+
+function disasmAround(
+  machine: PC88Machine,
+  pc: u16,
+  lines: number,
+): DisasmLine[] {
+  const read = (addr: u16) => machine.memBus.read(addr & 0xffff);
+  const out: DisasmLine[] = [];
+  let addr: u16 = pc & 0xffff;
+  for (let i = 0; i < lines; i++) {
+    const r = disassemble(read, addr);
+    out.push({ pc: addr, bytes: r.bytes, mnemonic: r.mnemonic });
+    addr = (addr + r.length) & 0xffff;
+  }
+  return out;
+}
+
 function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
   const ascii = s.machine.display.toASCIIDump();
   const frame = s.machine.display.getTextFrame();
@@ -56,12 +108,23 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     cycles: s.machine.cpu.cycles,
     ops: s.ops,
     halted: s.machine.cpu.halted,
+    cpu: snapshotCpu(s.machine),
+    disasm: disasmAround(s.machine, s.machine.cpu.regs.PC, DISASM_LINES),
   };
   const msg: WorkerOutbound =
     type === "stopped"
       ? { type: "stopped", reason: reason ?? "stopped", ...common }
       : { type: "tick", ...common, running: s.running };
   post(msg, [charsBuf]);
+}
+
+function postPeek(s: State, addr: u16, count: number): void {
+  const c = Math.max(0, Math.min(0x10000, count));
+  const buf = new ArrayBuffer(c);
+  const view = new Uint8Array(buf);
+  for (let i = 0; i < c; i++)
+    view[i] = s.machine.memBus.read((addr + i) & 0xffff);
+  post({ type: "memory", addr: addr & 0xffff, bytes: buf }, [buf]);
 }
 
 function runFrame(s: State): void {
@@ -146,6 +209,9 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
           state.ops = 0;
           postTick(state, "tick");
         }
+        break;
+      case "peek":
+        if (state) postPeek(state, msg.addr, msg.count);
         break;
     }
   } catch (err) {
