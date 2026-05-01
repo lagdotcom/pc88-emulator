@@ -592,23 +592,47 @@ runs. Commands: `step` / `next` (step over) / `continue [cycles]`
 cycles when the optional arg is given) / `break <addr>` /
 `unbreak <addr>` / `breaks` / `regs` / `chips` / `screen`
 (renders the live CRTC+DMAC visible region) / `stack` (synthesised
-CALL/RST/IRQ frames) / `dis [count]` (disassembles N instructions
-starting at PC, default 8) / `peek <addr> [count]` /
-`peekw <addr>` / `poke <addr> <val>` / `quit` / `help`. Initial
-breakpoints can be installed up-front with `--break=ADDR`
-(repeatable). Addresses accept `0xff`, `ff`, or decimal;
-out-of-range values are masked to u16.
+CALL/RST/IRQ frames) / `trace [count]` (PC ring buffer) /
+`dis [count]` (disassembles N instructions starting at PC,
+default 8) / `peek <addr> [count]` / `peekw <addr>` /
+`poke <addr> <val>` / `quit` / `help`. Initial breakpoints can be
+installed up-front with `--break=ADDR` (repeatable). Addresses
+accept `0xff`, `ff`, or decimal; out-of-range values are masked
+to u16.
 
-Watchpoints stop the run loop on access:
+Watchpoints fire on access; the trailing `[break|log]` token
+selects what happens on hit:
 
-- `bw <addr> [r|w|rw]` — RAM read/write watch (default `rw`); fires
-  via a `memBus.read` / `memBus.write` monkey-patch installed for
-  the lifetime of the debug session.
-- `bp <port> [r|w|rw]` — IN/OUT port watch (default `rw`); fires
-  via `IOBus.tracer`. Port low byte only — chips dispatch on
-  `port & 0xff`, the watch matches the same way.
+- `bw <addr> [r|w|rw] [break|log]` — RAM read/write watch
+  (default `rw break`); fires via a `memBus.read` /
+  `memBus.write` monkey-patch installed for the lifetime of the
+  debug session.
+- `bp <port> [r|w|rw] [break|log]` — IN/OUT port watch (default
+  `rw break`); fires via `IOBus.tracer`. Port low byte only —
+  chips dispatch on `port & 0xff`, the watch matches the same way.
 - `unbw <addr>` / `unbp <port>` remove a watch. `bwl` / `bpl` list
   the active watches.
+
+Action `break` sets `state.stopReason` and the run loop halts
+between instructions; action `log` emits a `[watch] PC=... <kind>
+<body>` line (with PC label resolved through `syms.resolver`) and
+keeps running. Mode and action tokens are order-independent —
+`bw 0xed42 log w` and `bw 0xed42 w log` are equivalent. Log mode
+is the right tool for "init writes to this port hundreds of times
+but only one of those is the bug" diagnosis: pipe `--script` /
+`--log-file` output to a file and grep / diff later.
+
+The PC ring buffer (`pcTrace` in DebugState; `PC_TRACE_SIZE = 64`)
+captures the about-to-execute PC at every `trackedStep` call and
+answers "how did we get here?" when a watch fires inside a JR /
+fall-through chain that the call stack can't see. `trace [count]`
+prints the last N (default 16, capped at 64) oldest-first with
+disassembly + label resolution. Disassembly uses the LIVE memory
+map — bank swaps between trace capture and trace print can lie,
+so the `trace` header notes "captured" not "recorded", and a
+note in the helper flags it. The same trace (last 8 lines) is
+auto-printed on watch / break stops so the user doesn't have to
+ask separately.
 
 The synthesised `stack` is bookkept by `trackedStep` from SP
 deltas + the IFF1 transition: CALL / conditional CALL / RST push

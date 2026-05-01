@@ -72,14 +72,21 @@ Working enough for first-light boot:
   (N88-BASIC), 2-byte cells in 40-col mode (N-BASIC).
 - Interactive debugger (`yarn pc88 -d` / `--debug`): step / next /
   continue / break / regs / chips / screen / dis / peek / poke /
-  label / portlabel / quit, plus RAM watchpoints (`bw <addr> r|w|rw`),
-  port watchpoints (`bp <port> r|w|rw`), a synthesised CALL/RST/IRQ
-  call stack (`stack`), and a `--script=PATH` driver that replays
-  debugger commands before handing control to the REPL (omit the REPL
-  by ending the script with `quit`). Per-ROM, per-variant-RAM, and
-  per-variant port symbol files (`syms/<rom-id>.sym`,
-  `syms/<variant>.ram.sym`, `syms/<variant>.port.sym`) feed both the
-  debugger disassembly and the standalone `yarn dis` tool.
+  label / portlabel / quit, plus RAM watchpoints
+  (`bw <addr> r|w|rw [break|log]`), port watchpoints
+  (`bp <port> r|w|rw [break|log]`), a synthesised CALL/RST/IRQ
+  call stack (`stack`), a 64-entry PC ring buffer (`trace [count]`,
+  auto-printed on watch / break stops to surface JR/JP paths the
+  call stack misses), and a `--script=PATH` driver that replays
+  debugger commands before handing control to the REPL (omit the
+  REPL by ending the script with `quit`). Watches default to
+  `break` (stop the run); `log` emits a one-line trace with PC,
+  value, and PC-label and keeps running — useful when init touches
+  a port hundreds of times but only one of those is the bug.
+  Per-ROM, per-variant-RAM, and per-variant port symbol files
+  (`syms/<rom-id>.sym`, `syms/<variant>.ram.sym`,
+  `syms/<variant>.port.sym`) feed both the debugger disassembly and
+  the standalone `yarn dis` tool.
 - Standalone `yarn dis` CLI: disassembles any raw ROM file with
   optional `--base=ADDR` mount point, `--syms`/`--ram-syms`/
   `--port-syms` for label substitution, no machine emulation needed.
@@ -114,19 +121,24 @@ The `roms/` directory is gitignored so dumps stay local.
 instructions execute. Commands: step / next (step-over) /
 continue [cycles] / break / unbreak / breaks / regs / chips /
 screen (renders the live CRTC+DMAC visible region) / stack /
-dis [count] / peek / peekw / poke / label / unlabel / labels /
-portlabel / unportlabel / bw / unbw / bwl / bp / unbp / bpl /
-quit / help. Initial breakpoints can be set with `--break=ADDR`
+trace [count] / dis [count] / peek / peekw / poke / label /
+unlabel / labels / portlabel / unportlabel / bw / unbw / bwl /
+bp / unbp / bpl / quit / help. Initial breakpoints can be set with `--break=ADDR`
 (repeatable). The `chips` command renders a machine-wide snapshot —
 the same plumbing intended to feed disk savestates when those land.
 Disassembly + label/portlabel commands read and write the per-ROM /
 RAM / port symbol files under `syms/`. RAM (`bw 0xed72 w`) and port
-(`bp 0x71 rw`) watchpoints fire on access and stop the run loop
-between instructions; the synthesised `stack` is built from SP
-deltas (CALL/RST = SP-2, RET = SP+2) and tracks IRQ acceptance via
-the IFF1 transition. `--script=PATH` (implies `--debug`) replays a
-file of debugger commands before the REPL — handy for canned boot
-recipes; ending the script with `quit` skips the REPL entirely.
+(`bp 0x71 rw`) watchpoints fire on access; default action is
+`break` (stop the run), append `log` for a non-stopping one-line
+emit. The synthesised `stack` is built from SP deltas (CALL/RST =
+SP-2, RET = SP+2) and tracks IRQ acceptance via the IFF1
+transition. `trace [count]` dumps the last 16 (max 64) PCs leading
+up to the current instruction; the same trace is auto-printed
+(last 8) on watch / break stops so the JR/JP / fall-through path
+into the current function isn't lost. `--script=PATH` (implies
+`--debug`) replays a file of debugger commands before the REPL —
+handy for canned boot recipes; ending the script with `quit`
+skips the REPL entirely.
 
 The dev environment is Windows, so `test:zex` goes through `cross-env`
 to set `ZEX=1` portably; any new env-vared scripts should follow the

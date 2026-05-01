@@ -64,22 +64,35 @@ export interface CallFrame {
 // register-time, not per-fire.
 export type WatchMode = "r" | "w" | "rw";
 
+// What a watchpoint does on hit. "break" stops the run loop the
+// way the original watchpoints did; "log" emits a one-line trace
+// (with PC + value + top call-stack frame) and keeps running. Log
+// mode is the cleaner tool when init writes a port hundreds of
+// times during boot but only one of those is the bug — `--script`
+// captures the log to disk for later grep / diff.
+export type WatchAction = "break" | "log";
+
+interface WatchSpec {
+  mode: WatchMode;
+  action: WatchAction;
+}
+
 interface DebugState {
   breakpoints: Set<u16>;
   // RAM-address watchpoints: key is the address, value is the
-  // direction(s) that fire. memBus.read/write checks this on every
+  // direction(s) + action. memBus.read/write checks this on every
   // access while the debugger is active.
-  ramWatches: Map<u16, WatchMode>;
+  ramWatches: Map<u16, WatchSpec>;
   // I/O port watchpoints: key is the port low byte (the debugger
   // inspects `port & 0xff` to match how chips dispatch).
-  portWatches: Map<u8, WatchMode>;
+  portWatches: Map<u8, WatchSpec>;
   // Synthesised call stack. Pushed on CALL/RST/IRQ, popped on RET.
   // Bounded depth to keep runaway recursion from eating memory in
   // pathological boot loops; oldest frame is dropped when the cap
   // is hit so the deepest N frames stay visible.
   callStack: CallFrame[];
-  // Set by trackedStep when a watchpoint fires. The run loop
-  // checks this between instructions and stops when set.
+  // Set by trackedStep when a *break-mode* watchpoint fires. The
+  // run loop checks this between instructions and stops when set.
   stopReason: string | null;
   ops: Operations;
   vbl: ReturnType<typeof makeVblState>;
@@ -87,9 +100,23 @@ interface DebugState {
   // it returns from the called subroutine. null means "no pending
   // step-over".
   stepOverTarget: u16 | null;
+  // Ring buffer of recently-executed PCs — answers "how did we get
+  // here?" when a watch / break hit lands in a function whose entry
+  // path isn't visible from `stack` (because no CALL was involved,
+  // e.g. a JR / JP / fall-through). Updated each instruction by
+  // trackedStep; auto-printed on watch / break hits, manually
+  // dumped via the `trace` command.
+  pcTrace: Uint16Array;
+  pcTraceWrite: number; // next slot to write
+  pcTraceFilled: number; // 0..PC_TRACE_SIZE
 }
 
 const MAX_CALL_STACK_DEPTH = 256;
+const PC_TRACE_SIZE = 64;
+// How many trace lines auto-printed on a watch / break stop. Full
+// 64 is too noisy when single-stepping near the stop; 8 is the
+// sweet spot for "what got us here".
+const AUTO_TRACE_LINES = 8;
 
 const HELP = `\
 Debugger commands (anything in <> takes a hex address; "0x" optional):
@@ -107,12 +134,15 @@ Code breakpoints:
   bl, breaks              list code breakpoints
 
 RAM watchpoints (stop on access):
-  bw <addr> [r|w|rw]      watch a RAM address (default rw)
+  bw <addr> [r|w|rw] [log]  watch a RAM address; default rw, break.
+                            Add "log" to print a one-line trace and
+                            keep running instead of stopping.
   unbw <addr>             remove a RAM watchpoint
   bwl                     list RAM watchpoints
 
 Port watchpoints (stop on IN/OUT):
-  bp <port> [r|w|rw]      watch an I/O port (default rw)
+  bp <port> [r|w|rw] [log]  watch an I/O port; default rw, break.
+                            "log" runs through, "break" stops.
   unbp <port>             remove a port watchpoint
   bpl                     list port watchpoints
 
@@ -121,6 +151,9 @@ Inspection:
   chips                   show CRTC / DMAC / IRQ / sysctrl / DIP state
   screen                  render the CRTC+DMAC visible region
   stack                   show the synthesised CALL/RST/IRQ call stack
+  trace [count]           dump the last [count] PCs (default 16,
+                          max 64); auto-printed (last 8) on watch /
+                          break stops
   dis [count]             disassemble the next [count] instructions
                           (default 8) starting at PC
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
@@ -142,7 +175,9 @@ Watchpoint examples:
   bw 0xed72 w             stop the next time anything writes to 0xed72
   bw 0xed72 r             stop on read
   bw 0xed72               stop on either (= "rw")
+  bw 0xed72 w log         log every write to 0xed72 without stopping
   bp 0x71 rw              stop on any IN/OUT against port 0x71
+  bp 0x71 w log           log writes to port 0x71 (boot-init noise)
 `;
 
 // Parse a cycle-count argument (no u16 wrap, can be larger than
@@ -235,6 +270,14 @@ function trackedStep(machine: PC88Machine, state: DebugState): void {
   const preOp = machine.memBus.read(prePC);
   const preIff = machine.cpu.iff1;
 
+  // Push the about-to-execute PC into the ring buffer. This means
+  // the trace contains *executed* PCs (the last entry is the most
+  // recent instruction completed by the time we're back here);
+  // pairing well with `regs.PC` showing the *next* PC at stop.
+  state.pcTrace[state.pcTraceWrite] = prePC;
+  state.pcTraceWrite = (state.pcTraceWrite + 1) % PC_TRACE_SIZE;
+  if (state.pcTraceFilled < PC_TRACE_SIZE) state.pcTraceFilled++;
+
   stepOneInstruction(machine);
   state.ops++;
 
@@ -282,43 +325,63 @@ interface WatchHooks {
 }
 
 // Wrap memBus.read/write and ioBus.tracer so RAM and port watches
-// fire when the CPU touches a watched address. Set state.stopReason
-// on a fire — the run loop checks this between instructions and
-// halts cleanly. Returns an `uninstall` callback that restores the
+// fire when the CPU touches a watched address. break-mode watches
+// set state.stopReason — the run loop drains it between
+// instructions and halts cleanly. log-mode watches emit a one-line
+// trace (with PC, value, top-of-call-stack label if known) and
+// keep going. Returns an `uninstall` callback that restores the
 // originals (used at REPL exit).
 function installWatchHooks(
   machine: PC88Machine,
   state: DebugState,
+  syms: DebugSymbols | null,
 ): WatchHooks {
   const origRead = machine.memBus.read.bind(machine.memBus);
   const origWrite = machine.memBus.write.bind(machine.memBus);
   const origTracer = machine.ioBus.tracer;
 
+  // Format a log line with a PC label resolved through syms if
+  // available. We use the live PC, not the call-stack target,
+  // because the line's most useful question is "which instruction
+  // touched this byte?" — `stack` already exposes the calling
+  // frame for cross-reference.
+  const logHit = (kind: string, body: string): void => {
+    const pc = machine.cpu.regs.PC;
+    const pcLabel = syms?.resolver(pc);
+    const tag = pcLabel ? `${word(pc)} <${pcLabel}>` : word(pc);
+    process.stdout.write(`[watch] PC=${tag} ${kind} ${body}\n`);
+  };
+
+  const matches = (mode: WatchMode, kind: "r" | "w"): boolean =>
+    mode === "rw" || mode === kind;
+
   machine.memBus.read = (addr: u16): u8 => {
     const v = origRead(addr);
-    const mode = state.ramWatches.get(addr & 0xffff);
-    if (mode && (mode === "r" || mode === "rw")) {
-      state.stopReason = `RAM read @ ${word(addr)} = ${byte(v)}`;
+    const w = state.ramWatches.get(addr & 0xffff);
+    if (w && matches(w.mode, "r")) {
+      const body = `RAM read @ ${word(addr)} = ${byte(v)}`;
+      if (w.action === "log") logHit("r", body);
+      else state.stopReason = body;
     }
     return v;
   };
   machine.memBus.write = (addr: u16, value: u8): void => {
-    const mode = state.ramWatches.get(addr & 0xffff);
-    if (mode && (mode === "w" || mode === "rw")) {
-      state.stopReason = `RAM write @ ${word(addr)} <- ${byte(value)}`;
+    const w = state.ramWatches.get(addr & 0xffff);
+    if (w && matches(w.mode, "w")) {
+      const body = `RAM write @ ${word(addr)} <- ${byte(value)}`;
+      if (w.action === "log") logHit("w", body);
+      else state.stopReason = body;
     }
     origWrite(addr, value);
   };
   machine.ioBus.tracer = (kind, port, value) => {
     if (origTracer) origTracer(kind, port, value);
-    const mode = state.portWatches.get(port & 0xff);
-    if (
-      mode &&
-      ((kind === "r" && (mode === "r" || mode === "rw")) ||
-        (kind === "w" && (mode === "w" || mode === "rw")))
-    ) {
+    const w = state.portWatches.get(port & 0xff);
+    if (w && matches(w.mode, kind)) {
       const dir = kind === "r" ? "IN " : "OUT";
-      state.stopReason = `port ${dir} ${byte(port & 0xff)} = ${byte(value)}`;
+      const body = `port ${dir} ${byte(port & 0xff)} = ${byte(value)}`;
+      if (w.action === "log") logHit(kind, body);
+      else state.stopReason = body;
     }
   };
 
@@ -331,11 +394,20 @@ function installWatchHooks(
   };
 }
 
-function parseWatchMode(arg: string | undefined): WatchMode | null {
-  if (arg === undefined) return "rw";
-  const s = arg.trim().toLowerCase();
-  if (s === "r" || s === "w" || s === "rw") return s;
-  return null;
+// Parse the trailing tokens of a `bw` / `bp` line. Order-
+// independent: any combination of a mode (`r`/`w`/`rw`) and an
+// action (`break`/`log`) is accepted; missing tokens default to
+// `rw` + `break`. Returns null if any token doesn't fit.
+function parseWatchSpec(args: string[]): WatchSpec | null {
+  let mode: WatchMode = "rw";
+  let action: WatchAction = "break";
+  for (const raw of args) {
+    const s = raw.trim().toLowerCase();
+    if (s === "r" || s === "w" || s === "rw") mode = s;
+    else if (s === "break" || s === "log") action = s;
+    else return null;
+  }
+  return { mode, action };
 }
 
 function printRegs(machine: PC88Machine): void {
@@ -478,10 +550,14 @@ function singleStep(machine: PC88Machine, state: DebugState): void {
 
 // Run instructions until one of: breakpoint hit, watchpoint hit,
 // step-over target hit, halt-no-irq, op cap reached, or (when
-// `maxCycles` is set) the cycle budget exhausted.
+// `maxCycles` is set) the cycle budget exhausted. On a watch /
+// breakpoint stop the last AUTO_TRACE_LINES PCs are printed first
+// — typically what the user wanted next anyway, and avoids a
+// second prompt to ask "how did we get here?".
 function runUntilStop(
   machine: PC88Machine,
   state: DebugState,
+  syms: DebugSymbols | null,
   reasonHint: string,
   maxCycles?: Cycles,
 ): void {
@@ -502,6 +578,7 @@ function runUntilStop(
     trackedStep(machine, state);
     const pc = machine.cpu.regs.PC;
     if (state.stopReason) {
+      printPcTrace(machine, state, syms, AUTO_TRACE_LINES);
       process.stdout.write(`  (stopped: ${state.stopReason})\n`);
       state.stopReason = null;
       return;
@@ -512,6 +589,7 @@ function runUntilStop(
       return;
     }
     if (state.breakpoints.has(pc)) {
+      printPcTrace(machine, state, syms, AUTO_TRACE_LINES);
       process.stdout.write(`  (stopped: breakpoint @ ${word(pc)})\n`);
       return;
     }
@@ -536,8 +614,8 @@ function listRamWatches(state: DebugState): void {
     return;
   }
   const sorted = [...state.ramWatches.entries()].sort((a, b) => a[0] - b[0]);
-  for (const [addr, mode] of sorted) {
-    process.stdout.write(`  ${word(addr)} ${mode}\n`);
+  for (const [addr, w] of sorted) {
+    process.stdout.write(`  ${word(addr)} ${w.mode.padEnd(2)} ${w.action}\n`);
   }
 }
 
@@ -547,8 +625,61 @@ function listPortWatches(state: DebugState): void {
     return;
   }
   const sorted = [...state.portWatches.entries()].sort((a, b) => a[0] - b[0]);
-  for (const [port, mode] of sorted) {
-    process.stdout.write(`  ${byte(port)} ${mode}\n`);
+  for (const [port, w] of sorted) {
+    process.stdout.write(`  ${byte(port)} ${w.mode.padEnd(2)} ${w.action}\n`);
+  }
+}
+
+// Read the last `n` PC trace entries oldest-first. Uses the
+// circular layout populated by trackedStep: write index is the
+// next slot to fill, so the oldest of `count` entries lives at
+// `(write - count) mod size` and we walk forward from there.
+function readPcTrace(state: DebugState, n: number): u16[] {
+  const count = Math.min(n, state.pcTraceFilled);
+  if (count === 0) return [];
+  const start =
+    (state.pcTraceWrite - count + PC_TRACE_SIZE) % PC_TRACE_SIZE;
+  const out: u16[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push(state.pcTrace[(start + i) % PC_TRACE_SIZE]!);
+  }
+  return out;
+}
+
+// Print the most recent `n` PCs leading up to the current
+// instruction, oldest-first, with disassembly + label resolution.
+// Disassembly is rendered through the LIVE memory map — bank
+// switches that happened between the trace entry running and now
+// will lie about the instruction bytes. Acceptable for diagnosis;
+// flagged in the header so users notice if they hit a swap.
+function printPcTrace(
+  machine: PC88Machine,
+  state: DebugState,
+  syms: DebugSymbols | null,
+  n: number,
+): void {
+  const trace = readPcTrace(state, n);
+  if (trace.length === 0) {
+    process.stdout.write(
+      `  (PC trace empty — nothing executed since reset)\n`,
+    );
+    return;
+  }
+  process.stdout.write(
+    `  PC trace (last ${trace.length} of ${state.pcTraceFilled} captured, oldest first):\n`,
+  );
+  const opts = syms
+    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
+    : {};
+  let lastLabel: string | undefined;
+  for (const pc of trace) {
+    const exact = syms?.exactResolver(pc);
+    if (exact && exact !== lastLabel) {
+      process.stdout.write(`  ${exact}:\n`);
+      lastLabel = exact;
+    }
+    const d = disassemble((a) => machine.memBus.read(a), pc, opts);
+    process.stdout.write(`    ${word(pc)}  ${d.mnemonic}\n`);
   }
 }
 
@@ -624,7 +755,7 @@ async function dispatch(
         const callLen = callOpLength(op);
         if (callLen !== null) {
           state.stepOverTarget = (pc + callLen) & 0xffff;
-          runUntilStop(machine, state, "step-over");
+          runUntilStop(machine, state, syms, "step-over");
         } else {
           singleStep(machine, state);
         }
@@ -649,7 +780,7 @@ async function dispatch(
           }
           cycleBudget = n;
         }
-        runUntilStop(machine, state, "continue", cycleBudget);
+        runUntilStop(machine, state, syms, "continue", cycleBudget);
         return { quit: false };
       }
 
@@ -685,16 +816,20 @@ async function dispatch(
       case "bw": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: bw <addr> [r|w|rw]\n`);
+          process.stdout.write(`  usage: bw <addr> [r|w|rw] [break|log]\n`);
           return { quit: false };
         }
-        const mode = parseWatchMode(args[1]);
-        if (mode === null) {
-          process.stdout.write(`  bad watch mode "${args[1]}" (want r|w|rw)\n`);
+        const spec = parseWatchSpec(args.slice(1));
+        if (spec === null) {
+          process.stdout.write(
+            `  bad watch spec (want r|w|rw + optional break|log)\n`,
+          );
           return { quit: false };
         }
-        state.ramWatches.set(a, mode);
-        process.stdout.write(`  watch RAM ${word(a)} ${mode}\n`);
+        state.ramWatches.set(a, spec);
+        process.stdout.write(
+          `  watch RAM ${word(a)} ${spec.mode} ${spec.action}\n`,
+        );
         return { quit: false };
       }
 
@@ -719,17 +854,21 @@ async function dispatch(
       case "bp": {
         const p = parseAddr(args[0]);
         if (p === null) {
-          process.stdout.write(`  usage: bp <port> [r|w|rw]\n`);
+          process.stdout.write(`  usage: bp <port> [r|w|rw] [break|log]\n`);
           return { quit: false };
         }
-        const mode = parseWatchMode(args[1]);
-        if (mode === null) {
-          process.stdout.write(`  bad watch mode "${args[1]}" (want r|w|rw)\n`);
+        const spec = parseWatchSpec(args.slice(1));
+        if (spec === null) {
+          process.stdout.write(
+            `  bad watch spec (want r|w|rw + optional break|log)\n`,
+          );
           return { quit: false };
         }
         const port = p & 0xff;
-        state.portWatches.set(port, mode);
-        process.stdout.write(`  watch port ${byte(port)} ${mode}\n`);
+        state.portWatches.set(port, spec);
+        process.stdout.write(
+          `  watch port ${byte(port)} ${spec.mode} ${spec.action}\n`,
+        );
         return { quit: false };
       }
 
@@ -772,6 +911,19 @@ async function dispatch(
       case "stack":
         printCallStack(state, syms);
         return { quit: false };
+
+      case "trace": {
+        // Default 16 — long enough to cover a small function entry,
+        // short enough to scan at a glance. The ring is sized
+        // PC_TRACE_SIZE; over-large requests clamp.
+        const requested = args[0] ? parseInt(args[0], 10) : 16;
+        const count =
+          Number.isFinite(requested) && requested > 0
+            ? Math.min(requested, PC_TRACE_SIZE)
+            : 16;
+        printPcTrace(machine, state, syms, count);
+        return { quit: false };
+      }
 
       case "dis":
       case "l":
@@ -1015,6 +1167,9 @@ export async function runDebug(
     ops: 0,
     vbl: makeVblState(),
     stepOverTarget: null,
+    pcTrace: new Uint16Array(PC_TRACE_SIZE),
+    pcTraceWrite: 0,
+    pcTraceFilled: 0,
   };
 
   // Symbol files are optional — synthetic-ROM tests don't pass
@@ -1037,7 +1192,7 @@ export async function runDebug(
     );
   }
 
-  const hooks = installWatchHooks(machine, state);
+  const hooks = installWatchHooks(machine, state, syms);
   try {
     const ctx: DispatchCtx = { machine, state, syms, opts };
 
