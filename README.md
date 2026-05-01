@@ -284,10 +284,14 @@ Roughly ordered by what's blocking what.
   delta). PPI registered on the main IOBus when the SubCPU is
   present, otherwise 0xFC-0xFF stay open-bus. `MachineSnapshot`
   now includes `subcpu` + `ppi` fields (null on hasSubCpu=false).
-- [ ] **PPI-driven sub-CPU IRQ** so a fresh-data write into the
-  PPI wakes a HALTed sub-CPU instead of leaving it idle until the
-  next main-CPU step finds a non-stale byte. Lands with the FDC
-  + GPIB-style port-C handshake bits.
+- [x] **PPI-driven sub-CPU IRQ wake**. `μPD8255.onFreshForSub` /
+  `onFreshForMain` fire on each port-A write; SubCPU wires the
+  former to `cpu.requestIrq(irqVector)`. SubCPU.runCycles now
+  steps a halted CPU when an IRQ is pending, mirroring the main
+  runMachine pattern. Bus-only IPC round-trip is tested
+  end-to-end: main writes the PPI, the HALTed sub wakes via IM 1,
+  the handler at 0x0038 echoes back through the PPI, main reads
+  the response — no direct-poke API needed.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

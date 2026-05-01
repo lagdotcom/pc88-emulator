@@ -113,12 +113,9 @@ describe("runMachine schedules both CPUs", () => {
   });
 
   it("runs the full IPC round-trip end-to-end", () => {
-    // Main ROM is just a tight JR-self loop so the runner spends its
-    // ops budget on the sub-CPU. The PPI is primed via the direct
-    // poke API (the BIOS does the same thing through the bus, but
-    // the cycle alternation between two CPUs makes the bus-only
-    // version race; real silicon resolves the race with PPI status
-    // bits + IRQ wakeups, which the FDC will eventually wire up).
+    // Main ROM: a tight JR-self loop so the runner spends its ops
+    // budget on the sub-CPU. The PPI is primed via the direct-poke
+    // API; the bus-only path is exercised separately below.
     //   0x0000  18 FE        JR $
     const machine = new PC88Machine(
       MKII_LIKE,
@@ -132,5 +129,48 @@ describe("runMachine schedules both CPUs", () => {
     expect(machine.subcpu!.cpu.halted).toBe(true);
     expect(machine.ioBus.read(0xfd)).toBe(0x42);
     expect(machine.ppi!.hasFreshForMain()).toBe(false);
+  });
+
+  it("HALTed sub-CPU wakes on a bus-only PPI write and round-trips", () => {
+    // Sub-CPU disk ROM:
+    //   0x0000  ED 56        IM 1
+    //   0x0002  FB           EI
+    //   0x0003  76           HALT          ; wait for PPI wake
+    //   0x0038  DB FD        IN  A,(0xFD)  ; consume incoming byte
+    //   0x003A  3C           INC A
+    //   0x003B  D3 FC        OUT (0xFC),A  ; reply
+    //   0x003D  76           HALT
+    const sub: u8[] = new Array(0x40).fill(0);
+    sub[0x00] = 0xed; sub[0x01] = 0x56;
+    sub[0x02] = 0xfb;
+    sub[0x03] = 0x76;
+    sub[0x38] = 0xdb; sub[0x39] = 0xfd;
+    sub[0x3a] = 0x3c;
+    sub[0x3b] = 0xd3; sub[0x3c] = 0xfc;
+    sub[0x3d] = 0x76;
+
+    const subRom = new Uint8Array(2048).fill(0x00);
+    subRom.set(sub, 0);
+
+    // Main ROM:
+    //   0x0000  3E 41        LD  A,0x41
+    //   0x0002  D3 FC        OUT (0xFC),A   ; bus-only — wakes sub
+    //   0x0004  18 FE        JR $
+    const main: u8[] = [0x3e, 0x41, 0xd3, 0xfc, 0x18, 0xfe];
+
+    const n80 = filledROM(0x8000, 0x76);
+    for (let i = 0; i < main.length; i++) n80[i] = main[i]!;
+    const machine = new PC88Machine(MKII_LIKE, {
+      n80,
+      n88: filledROM(0x8000, 0x76),
+      e0: filledROM(0x2000, 0x76),
+      disk: subRom,
+    });
+    machine.reset();
+
+    runMachine(machine, { maxOps: kOps(1) });
+
+    expect(machine.subcpu!.cpu.halted).toBe(true);
+    expect(machine.ioBus.read(0xfd)).toBe(0x42);
   });
 });

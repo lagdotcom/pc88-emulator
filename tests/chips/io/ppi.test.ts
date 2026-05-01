@@ -162,3 +162,39 @@ describe("μPD8255 BIOS-style round-trip", () => {
     expect(ppi.hasFreshForMain()).toBe(false);
   });
 });
+
+describe("μPD8255 fresh-data wake hooks", () => {
+  it("calls onFreshForSub when main writes port A", () => {
+    const { main, ppi } = setup();
+    let calls = 0;
+    ppi.onFreshForSub = () => calls++;
+    main.write(0xfc, 0x42);
+    expect(calls).toBe(1);
+  });
+
+  it("calls onFreshForMain when sub writes port A", () => {
+    const { sub, ppi } = setup();
+    let calls = 0;
+    ppi.onFreshForMain = () => calls++;
+    sub.write(0xfc, 0x99);
+    expect(calls).toBe(1);
+  });
+
+  it("does not fire on port C writes (only port A is the wake source)", () => {
+    const { main, sub, ppi } = setup();
+    let subCalls = 0;
+    let mainCalls = 0;
+    ppi.onFreshForSub = () => subCalls++;
+    ppi.onFreshForMain = () => mainCalls++;
+    main.write(0xfe, 0x55);
+    sub.write(0xfe, 0xaa);
+    expect(subCalls).toBe(0);
+    expect(mainCalls).toBe(0);
+  });
+
+  it("hooks remain null by default and writes work without them", () => {
+    const { main, sub } = setup();
+    expect(() => main.write(0xfc, 0x42)).not.toThrow();
+    expect(() => sub.write(0xfc, 0x99)).not.toThrow();
+  });
+});

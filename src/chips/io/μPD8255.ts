@@ -61,6 +61,13 @@ export class μPD8255 {
   private subHasFresh = false;
   private mainHasFresh = false;
 
+  // Wake hooks fired after a port-A write on each side (rising edge
+  // of the buffer-full latch). Subscribers raise an IRQ on the
+  // receiving CPU so a HALTed sub-CPU wakes when main writes the PPI
+  // — closes the race the bus-only IPC round-trip used to lose.
+  onFreshForSub: (() => void) | null = null;
+  onFreshForMain: (() => void) | null = null;
+
   registerMain(bus: IOBus, basePort = 0xfc): void {
     bus.register(basePort, {
       name: "ppi/A(main)",
@@ -69,6 +76,7 @@ export class μPD8255 {
         this.latches[L.HostPaOut_SubPbIn] = value;
         this.subHasFresh = true;
         log.info(`A out=${byte(value)} (main→sub)`);
+        this.onFreshForSub?.();
       },
     });
     bus.register(basePort + 1, {
@@ -104,6 +112,7 @@ export class μPD8255 {
         this.latches[L.SubPaOut_HostPbIn] = value;
         this.mainHasFresh = true;
         log.info(`A out=${byte(value)} (sub→main)`);
+        this.onFreshForMain?.();
       },
     });
     bus.register(basePort + 1, {

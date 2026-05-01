@@ -105,12 +105,16 @@ export class SubCPU {
 
     this.cpu = new Z80(this.memBus, this.ioBus);
 
+    // PPI fresh-data wake: a main-side write of port A raises the
+    // sub's IRQ line so a HALTed sub-CPU resumes and reads the byte.
+    // The vector byte is whatever the sub last latched at port 0xF0
+    // (real hardware loops it back through the IRQ controller).
+    this.ppi.onFreshForSub = () => {
+      this.cpu.requestIrq(this.irqVector);
+    };
+
     if (this.fdc) {
       this.fdc.register(this.ioBus);
-      // FDC INT line: command-completion / data-ready raises an IRQ
-      // on the sub-CPU. The vector byte the FDC drives onto the data
-      // bus is whatever the sub last latched at port 0xF0 (real
-      // hardware loops it back); we forward the latched vector here.
       this.fdc.onInterrupt = () => {
         this.cpu.requestIrq(this.irqVector);
       };
@@ -139,10 +143,14 @@ export class SubCPU {
   }
 
   // Granularity is one Z80 instruction; the actual delta may overshoot
-  // by a few t-states.
+  // by a few t-states. When halted, we only step if an IRQ is pending
+  // (so runOneOp's IRQ-accept branch wakes the CPU rather than the
+  // dispatcher fetching past the HALT byte). If iff1 is set the
+  // caller's loop will give us another chance once irqLine asserts.
   runCycles(n: Cycles): Cycles {
     const start = this.cpu.cycles;
-    while (this.cpu.cycles - start < n && !this.cpu.halted) {
+    while (this.cpu.cycles - start < n) {
+      if (this.cpu.halted && !(this.cpu.irqLine && this.cpu.iff1)) break;
       this.step();
     }
     return (this.cpu.cycles - start) as Cycles;
