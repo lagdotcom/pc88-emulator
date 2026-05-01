@@ -1,11 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 
-import logLib from "log";
-
 import { disassemble } from "../chips/z80/disasm.js";
 import { mOps } from "../flavour.makers.js";
-import type { Bytes, Cycles, FilesystemPath, Operations, u8, u16 } from "../flavours.js";
+import type {
+  Bytes,
+  Cycles,
+  FilesystemPath,
+  Operations,
+  u8,
+  u16,
+} from "../flavours.js";
+import { getLogger } from "../log.js";
 import { byte, word } from "../tools.js";
 import {
   addLabel,
@@ -24,7 +30,7 @@ import {
 } from "./pc88.js";
 import type { LoadedROMs } from "./pc88-memory.js";
 
-const log = logLib.get("debug");
+const log = getLogger("debug");
 
 // Cap on instructions executed by `continue` / step-over to keep a
 // runaway BIOS from locking up the REPL. ~5M is comfortably more
@@ -637,8 +643,7 @@ function listPortWatches(state: DebugState): void {
 function readPcTrace(state: DebugState, n: number): u16[] {
   const count = Math.min(n, state.pcTraceFilled);
   if (count === 0) return [];
-  const start =
-    (state.pcTraceWrite - count + PC_TRACE_SIZE) % PC_TRACE_SIZE;
+  const start = (state.pcTraceWrite - count + PC_TRACE_SIZE) % PC_TRACE_SIZE;
   const out: u16[] = [];
   for (let i = 0; i < count; i++) {
     out.push(state.pcTrace[(start + i) % PC_TRACE_SIZE]!);
@@ -660,9 +665,7 @@ function printPcTrace(
 ): void {
   const trace = readPcTrace(state, n);
   if (trace.length === 0) {
-    process.stdout.write(
-      `  (PC trace empty — nothing executed since reset)\n`,
-    );
+    process.stdout.write(`  (PC trace empty — nothing executed since reset)\n`);
     return;
   }
   process.stdout.write(
@@ -689,10 +692,7 @@ function printPcTrace(
 // address that's actually pushed on the Z80 stack, and the SP value
 // at push time — useful for matching frames against a hardware
 // stack-dump in the same window.
-function printCallStack(
-  state: DebugState,
-  syms: DebugSymbols | null,
-): void {
+function printCallStack(state: DebugState, syms: DebugSymbols | null): void {
   if (state.callStack.length === 0) {
     process.stdout.write("  (call stack empty)\n");
     return;
@@ -989,9 +989,7 @@ async function dispatch(
           process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
           return { quit: false };
         }
-        const target = /^[A-Za-z_]/.test(arg)
-          ? arg
-          : (parseAddr(arg) ?? null);
+        const target = /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
         if (target === null) {
           process.stdout.write(`  bad address or name: ${arg}\n`);
           return { quit: false };
@@ -1043,9 +1041,7 @@ async function dispatch(
           process.stdout.write(`  usage: unportlabel <num-or-name>\n`);
           return { quit: false };
         }
-        const target = /^[A-Za-z_]/.test(arg)
-          ? arg
-          : (parseAddr(arg) ?? null);
+        const target = /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
         if (target === null) {
           process.stdout.write(`  bad port or name: ${arg}\n`);
           return { quit: false };
@@ -1201,7 +1197,10 @@ export async function runDebug(
       if (result.quit) return;
     }
 
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
     while (true) {
       printPromptSummary(machine, syms);
       const raw = await rl.question("> ");

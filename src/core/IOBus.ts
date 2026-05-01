@@ -1,9 +1,8 @@
-import logLib from "log";
-
 import type { u8, u16 } from "../flavours.js";
+import { getLogger } from "../log.js";
 import { byte } from "../tools.js";
 
-const log = logLib.get("io");
+const log = getLogger("io");
 
 export interface IOPort {
   name: string;

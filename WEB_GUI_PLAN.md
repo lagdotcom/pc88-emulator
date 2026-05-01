@@ -21,11 +21,6 @@ Branch: `claude/emulator-web-interface-MnWv7`. Never push to `main`.
 - **Pure-JS md5.** SubtleCrypto doesn't expose MD5; the variant
   descriptors are md5-keyed, so a tiny RFC-1321 implementation
   ships in the bundle. Tested in `tests/web/md5.test.ts`.
-- **`log` package shimmed.** `src/log-shim.ts` re-implements the
-  `logLib.get(name).<level>(...)` surface every chip module uses,
-  plus the `log/lib/emitter` shape `main.ts` taps for the file
-  tee. esbuild aliases both for the web bundle so medikoo/log's
-  transitive deps stay out.
 - **`process.env.X` reads.** esbuild `define` substitutes the one
   surviving reference (`process.env.LOG_CPU` in `pc88.ts`) for
   `false`. If new `process.env.X` reads creep in, add them to the
@@ -65,7 +60,6 @@ Branch: `claude/emulator-web-interface-MnWv7`. Never push to `main`.
 | `src/machines/rom-loader.ts` | Node fs + crypto + validate (Node only) |
 | `src/machines/rom-loader-browser.ts` | Validate in-memory `Map<ROMID, Uint8Array>` |
 | `src/machines/variants/index.ts` | Shared `VARIANTS`, `VARIANTS_BY_NICKNAME`, `variantSlug()` |
-| `src/log-shim.ts` | Browser-side `log`/`log/lib/emitter` replacement |
 | `src/web/md5.ts` | RFC-1321 md5 |
 | `src/web/opfs.ts` | OPFS-backed `OpfsStore` + in-memory fallback |
 | `src/web/boot-screen.ts` | Variant dropdown + ROM checklist + DIP form |
@@ -188,26 +182,20 @@ the CLI debugger because every command flows through the same
    config. If similar guards appear, add them to the define block;
    don't try `process.env: "({})"` (esbuild rejects).
 
-2. **`log` package is browser-incompatible.** Always import via
-   `import logLib from "log"` — the alias makes it work in the web
-   bundle. Don't import from `log/lib/emitter` from anywhere in
-   `src/web/` directly; use `import { onLog, emitter } from
-   "../log-shim.js"` instead.
-
-3. **`debug.ts` references `process.stdout.write` heavily.** Today
+2. **`debug.ts` references `process.stdout.write` heavily.** Today
    it's tree-shaken out of the web bundle (the boot screen doesn't
    import it). When phase 4 wires the debugger, replace
    `ctx.println` / `process.stdout.write` calls with a write
    callback the worker provides — don't import `debug.ts`'s
    stdout-using code paths into the web bundle.
 
-4. **OPFS API surface.** I used a hand-rolled type for `RootDir`
+3. **OPFS API surface.** I used a hand-rolled type for `RootDir`
    in `opfs.ts` because the standard lib types `FileSystemDirectoryHandle`
    etc. weren't available in this tsconfig. If the typing is
    awkward in phase 2 work, consider adding `"DOM.AsyncIterable"`
    to `tsconfig.json`'s `lib`.
 
-5. **Hook caching gotcha.** The session-start hook engine caches
+4. **Hook caching gotcha.** The session-start hook engine caches
    `.claude/settings.json`. If you edit the hook config inside a
    session, a session restart is needed for the change to take
    effect. The PreToolUse `Bash(git commit *)` hook in this repo
@@ -259,7 +247,6 @@ the CLI debugger because every command flows through the same
 
 ```
 src/
-  log-shim.ts                      # browser log package replacement
   machines/
     rom-validate.ts                # pure validate (size + md5)
     rom-loader.ts                  # Node fs path

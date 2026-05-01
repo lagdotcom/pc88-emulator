@@ -1,11 +1,10 @@
-import logLib from "log";
-
 import type { IOBus } from "../core/IOBus.js";
 import type { u8 } from "../flavours.js";
 import { byte } from "../tools.js";
 import type { PC88MemoryMap } from "./pc88-memory.js";
+import { getLogger } from "../log.js";
 
-const log = logLib.get("display-regs");
+const log = getLogger("display-regs");
 
 // Display-control register block. Lives inside the PC-88 system gate
 // array — there's no separate silicon part for these registers, but

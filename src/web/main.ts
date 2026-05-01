@@ -1,4 +1,4 @@
-import logShim, { installConsoleListener } from "../log-shim.js";
+import { getLogger } from "../log.js";
 import { type PC88Config } from "../machines/config.js";
 import { PC88Machine, runMachine } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
@@ -6,15 +6,14 @@ import { type BootRequest, renderBootScreen } from "./boot-screen.js";
 import { md5 } from "./md5.js";
 import { openStore } from "./opfs.js";
 
+const log = getLogger("web");
+
 // Web entry. For now this is a synchronous boot — the emulator runs
 // on the main thread. The Worker boundary lands in a follow-up
 // commit; once it's in, this file shrinks to "render the boot screen,
 // post a boot message to the worker, render snapshots".
 
-const log = logShim.get("web");
-
 async function main(): Promise<void> {
-  installConsoleListener();
   const store = await openStore();
 
   const root = document.getElementById("app");

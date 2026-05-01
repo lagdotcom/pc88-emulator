@@ -1,6 +1,6 @@
-import logLib from "log";
+import { getLogger } from "../../log.js";
 
-const log = logLib.get("beeper");
+const log = getLogger("beeper");
 
 // PC-88 mkI beeper. The actual beep is driven by toggling bit 3 of
 // port 0x40; sysctrl owns that port and forwards the toggle here.
