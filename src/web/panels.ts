@@ -181,3 +181,100 @@ function parseAddr(s: string): number | null {
   const v = t.startsWith("0x") ? parseInt(t.slice(2), 16) : parseInt(t, 16);
   return Number.isNaN(v) ? null : v & 0xffff;
 }
+
+// On-page REPL pane. Each typed line goes through the same
+// dispatch() the CLI debugger uses; output streams back as `out`
+// envelopes. The pane keeps a bounded history so a long-running
+// `continue` with chatty watch logs doesn't blow up the DOM.
+const REPL_MAX_LINES = 2000;
+
+export class ReplPanel {
+  readonly element: HTMLElement;
+  private readonly input: HTMLInputElement;
+  private readonly out: HTMLPreElement;
+  private readonly history: string[] = [];
+  private historyCursor = 0;
+
+  constructor(onCommand: (line: string) => void) {
+    this.element = document.createElement("section");
+    this.element.className = "panel repl-panel";
+
+    const heading = document.createElement("h2");
+    heading.textContent = "Debugger REPL";
+    this.element.appendChild(heading);
+
+    this.out = document.createElement("pre");
+    this.out.className = "repl-out";
+    this.element.appendChild(this.out);
+
+    const form = document.createElement("form");
+    form.className = "repl-form";
+    const prompt = document.createElement("span");
+    prompt.className = "repl-prompt";
+    prompt.textContent = ">";
+    this.input = document.createElement("input");
+    this.input.type = "text";
+    this.input.spellcheck = false;
+    this.input.autocomplete = "off";
+    form.appendChild(prompt);
+    form.appendChild(this.input);
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const line = this.input.value;
+      if (line.trim().length === 0) return;
+      this.append(`> ${line}\n`);
+      this.history.push(line);
+      this.historyCursor = this.history.length;
+      this.input.value = "";
+      onCommand(line);
+    });
+    this.input.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowUp") {
+        if (this.historyCursor > 0) {
+          this.historyCursor--;
+          this.input.value = this.history[this.historyCursor] ?? "";
+          ev.preventDefault();
+        }
+      } else if (ev.key === "ArrowDown") {
+        if (this.historyCursor < this.history.length - 1) {
+          this.historyCursor++;
+          this.input.value = this.history[this.historyCursor] ?? "";
+          ev.preventDefault();
+        } else if (this.historyCursor === this.history.length - 1) {
+          this.historyCursor = this.history.length;
+          this.input.value = "";
+          ev.preventDefault();
+        }
+      }
+    });
+    this.element.appendChild(form);
+  }
+
+  // Worker output arrives as arbitrary chunks. Append straight to
+  // the <pre> and trim from the front when we exceed the history
+  // cap — a long `continue` with chatty watch logs would otherwise
+  // grow the DOM unboundedly.
+  appendOutput(text: string): void {
+    this.append(text);
+  }
+
+  private append(text: string): void {
+    this.out.textContent = (this.out.textContent ?? "") + text;
+    this.trim();
+    this.out.scrollTop = this.out.scrollHeight;
+  }
+
+  private trim(): void {
+    const content = this.out.textContent ?? "";
+    const lines = content.split("\n");
+    if (lines.length > REPL_MAX_LINES) {
+      this.out.textContent = lines
+        .slice(lines.length - REPL_MAX_LINES)
+        .join("\n");
+    }
+  }
+
+  focus(): void {
+    this.input.focus();
+  }
+}

@@ -160,16 +160,44 @@ subtree and a `render()` method.
   - `MemoryPanel`: addr + count form, posts `peek`, renders a
     classic hex/ASCII dump.
 
-### Phase 4b: Breakpoints / watches + REPL pane
+### Phase 4b: REPL pane via the same `dispatch()` ✓ (committed)
 
-The CLI debugger's `dispatch(line, ctx)` is the canonical command
-surface, but `debug.ts` writes directly to `process.stdout`.
-Phase 4b's first job is to refactor that into a write callback
-the worker can capture into `out` messages — once that's done,
-buttons + the `<input>` REPL all flow through the same dispatcher
-and the web UI hits parity with the CLI debugger. Remaining
-panels (Breakpoints / watches, Stack) come along for free since
-their state lives in `DebugState`.
+Done. The on-page REPL flows through the same `dispatch()` the
+CLI debugger uses, so every command available in the terminal
+also works in the browser.
+
+- `debug.ts` learned a writer callback. `setDebugWriter(fn)`
+  swaps the output target; the CLI driver installs
+  `s => process.stdout.write(s)`, the worker installs
+  `s => post({ type: "out", text: s })`. Default is a no-op so
+  the browser bundle can import the module without referencing
+  `process.stdout` at runtime.
+- Node-only bits (`runDebug`, `runScript`, `node:fs/promises`,
+  `node:readline/promises`) split out into `debug-cli.ts`.
+  `src/main.ts` updated to import from there.
+- `debug-symbols.ts` uses `node:fs` / `node:crypto` at module top
+  to persist labels to disk. An esbuild `onResolve` plugin
+  redirects `./debug-symbols.js` to a browser stub
+  (`debug-symbols-browser.ts`) for the web bundles. The stub
+  exports the same surface but every label-write is a no-op —
+  the worker passes `syms = null` so dispatch never reaches
+  them. OPFS-backed persistence is its own follow-up.
+- `protocol.ts`: `command` (inbound) carries a typed REPL line;
+  `out` (outbound) buffers stdout chunks for the pane.
+- `worker.ts`: builds a `DebugState` + `installWatchHooks` at
+  boot, handles `command` by awaiting `dispatch()` and re-ticking
+  state so the panels reflect any mutations the command made.
+- `panels.ts`: `ReplPanel` with input/output, ↑/↓ history, and a
+  bounded line cap so a long `continue` with chatty watch logs
+  doesn't blow up the DOM.
+
+### Phase 4c: Dedicated breakpoints / watches / stack panels
+
+Still TODO. The state lives in `DebugState`; the typed `tick`
+payload just needs `breakpoints: u16[]`, `ramWatches: WatchSlot[]`,
+`portWatches: WatchSlot[]`, `callStack: CallFrame[]`. The panels
+are click-to-remove + form-to-add and post the corresponding
+`break` / `bw` / `bp` REPL command. Stack is read-only.
 
 | Panel | Source | Update cadence |
 |-------|--------|----------------|
@@ -177,8 +205,9 @@ their state lives in `DebugState`.
 | Registers | `snapshot.cpu` | every tick (4a) |
 | Disassembly | `disasmAround(pc, 16)` in worker; ships strings | every tick (4a) |
 | Memory hex | `peek` messages | on submit (4a) |
-| Breakpoints / watches | List from `DebugState`; `dispatch("break 0x1234")` etc. | on change |
-| Stack | `state.callStack` | on pause/step |
+| REPL | `<input>` → `command`; `<pre>` mirrors `out` | on submit / chunk (4b) |
+| Breakpoints / watches | List from `DebugState`; `dispatch("break 0x1234")` etc. | on change (4c) |
+| Stack | `state.callStack` | on pause/step (4c) |
 
 ### Phase 5: Persistence
 
@@ -278,11 +307,15 @@ their state lives in `DebugState`.
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 4a
+## File index after phase 4b
 
 ```
 src/
   machines/
+    debug.ts                       # dispatch + DebugState (browser-safe)
+    debug-cli.ts                   # runDebug + runScript (Node-only)
+    debug-symbols.ts               # syms file I/O (Node-only)
+    debug-symbols-browser.ts       # browser stub (no-op writes)
     rom-validate.ts                # pure validate (size + md5)
     rom-loader.ts                  # Node fs path
     rom-loader-browser.ts          # in-memory map path
@@ -293,7 +326,7 @@ src/
     worker.ts                      # emulator worker; owns PC88Machine + run loop
     protocol.ts                    # typed message union (inbound + outbound)
     canvas-renderer.ts             # CRTC chars → 8×16 cell canvas
-    panels.ts                      # Registers / Disasm / Memory panels
+    panels.ts                      # Registers / Disasm / Memory / REPL panels
     boot-screen.ts                 # form + state
     md5.ts                         # RFC-1321
     opfs.ts                        # storage abstraction

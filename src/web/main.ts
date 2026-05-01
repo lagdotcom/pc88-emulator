@@ -4,7 +4,12 @@ import { type PC88Config } from "../machines/config.js";
 import { type BootRequest, renderBootScreen } from "./boot-screen.js";
 import { CanvasTextRenderer } from "./canvas-renderer.js";
 import { openStore } from "./opfs.js";
-import { DisasmPanel, MemoryPanel, RegistersPanel } from "./panels.js";
+import {
+  DisasmPanel,
+  MemoryPanel,
+  RegistersPanel,
+  ReplPanel,
+} from "./panels.js";
 import type { WorkerInbound, WorkerOutbound } from "./protocol.js";
 
 const log = getLogger("web");
@@ -39,6 +44,7 @@ interface RunningUI {
   registers: RegistersPanel;
   disasm: DisasmPanel;
   memory: MemoryPanel;
+  repl: ReplPanel;
 }
 
 async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
@@ -73,6 +79,9 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
         break;
       case "memory":
         ui.memory.render(msg.addr, new Uint8Array(msg.bytes));
+        break;
+      case "out":
+        ui.repl.appendOutput(msg.text);
         break;
       case "error":
         ui.status.textContent = `worker error: ${msg.message}`;
@@ -155,9 +164,13 @@ function renderRunningView(
   const memory = new MemoryPanel((req) => {
     send(worker, { type: "peek", addr: req.addr & 0xffff, count: req.count });
   });
+  const repl = new ReplPanel((line) => {
+    send(worker, { type: "command", line });
+  });
   panels.appendChild(registers.element);
   panels.appendChild(disasm.element);
   panels.appendChild(memory.element);
+  panels.appendChild(repl.element);
   root.appendChild(panels);
 
   // ASCII fallback panel — same content the canvas renders, but as
@@ -198,6 +211,7 @@ function renderRunningView(
     registers,
     disasm,
     memory,
+    repl,
   };
 }
 

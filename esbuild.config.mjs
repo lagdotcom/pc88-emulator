@@ -70,6 +70,23 @@ async function buildWebBundle() {
       log: shimPath,
       "log/lib/emitter": shimPath,
     },
+    // debug-symbols.ts uses node:fs / node:crypto at module top to
+    // persist labels to disk. Redirect every relative import of it
+    // to the browser stub via a plugin (esbuild's `alias` rejects
+    // relative paths). OPFS-backed label persistence is a follow-up.
+    plugins: [
+      {
+        name: "debug-symbols-browser",
+        setup(build) {
+          const stub = fileURLToPath(
+            new URL("./src/machines/debug-symbols-browser.ts", import.meta.url),
+          );
+          build.onResolve({ filter: /\/debug-symbols\.js$/ }, () => ({
+            path: stub,
+          }));
+        },
+      },
+    ],
     define: {
       "process.env.LOG_CPU": "false",
     },

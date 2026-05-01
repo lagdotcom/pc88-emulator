@@ -296,7 +296,7 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
-- [ ] **Web UI** — phases 1-4a landed. `yarn build:web` produces
+- [ ] **Web UI** — phases 1-4b landed. `yarn build:web` produces
   `web/app.js` + `web/worker.js` (UI bundle + emulator Worker
   bundle) referenced from `web/index.html`. The boot screen
   reads/writes OPFS for ROM storage (content-addressed by md5) +
@@ -308,19 +308,27 @@ Roughly ordered by what's blocking what.
   ArrayBuffer), the ASCII fallback string, a typed `CPUSnapshot`,
   and 16 lines of disassembly around PC. The UI thread paints
   the chars into an 8×16 cell `<canvas>` (CSS-scaled to 960 px,
-  pixel-aligned), renders Registers / Disassembly / Memory panels,
-  and drives Run / Pause / Step / Reset buttons. The Memory panel
-  posts `peek` requests; the worker replies with a transferable
-  bytes buffer. Native monospace font for now; phase 7 swaps to
-  a CG-ROM glyph atlas. See `WEB_GUI_PLAN.md` for phasing.
+  pixel-aligned), renders Registers / Disassembly / Memory / REPL
+  panels, and drives Run / Pause / Step / Reset buttons. The REPL
+  pane flows through the same `dispatch()` the CLI debugger uses —
+  `debug.ts` writes through an injectable `setDebugWriter` callback
+  so the worker captures stdout into `out` envelopes; Node-only
+  bits (runDebug, runScript) live in `debug-cli.ts`, and an
+  esbuild plugin redirects `debug-symbols.js` to a browser stub.
+  Native monospace font for now; phase 7 swaps to a CG-ROM glyph
+  atlas. See `WEB_GUI_PLAN.md` for phasing.
   Sub-items still open:
   - [x] Move emulator into a Web Worker; 60 Hz frame pump.
   - [x] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
   - [x] Registers / Disassembly / Memory-peek panels driven from
     typed snapshot in `tick` / `stopped` messages.
-  - [ ] Breakpoints / watches panel + `dispatch()`-style REPL pane
-    over the worker channel (requires `debug.ts` to learn a write
-    callback so it doesn't hard-write `process.stdout`).
+  - [x] On-page REPL pane wired through the same `dispatch()` the
+    CLI debugger uses, via a writer-callback split of `debug.ts`.
+  - [ ] Dedicated Breakpoints / watches / Stack panels (state
+    already lives in `DebugState`; just needs typed snapshot fields
+    on `tick` / `stopped` and matching DOM panels).
+  - [ ] OPFS-backed symbol-file persistence so `label` / `unlabel`
+    work in the browser (currently no-ops via the browser stub).
   - [ ] Keyboard input wired through `Keyboard` matrix.
   - [ ] Symbol-file resolution in disassembly (decide: fetch
     `syms/*.sym` as static assets, or inline at build time).

@@ -7,7 +7,7 @@ import { kOps } from "./flavour.makers.js";
 import type { FilesystemPath, Operations, u16 } from "./flavours.js";
 import { logToStream } from "./log.js";
 import type { PC88Config } from "./machines/config.js";
-import { runDebug } from "./machines/debug.js";
+import { runDebug } from "./machines/debug-cli.js";
 import {
   PC88Machine,
   runMachine,

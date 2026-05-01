@@ -2,6 +2,13 @@ import { disassemble } from "../chips/z80/disasm.js";
 import type { ROMID, u16 } from "../flavours.js";
 import { getLogger } from "../log.js";
 import {
+  type DebugState,
+  dispatch,
+  installWatchHooks,
+  makeDebugState,
+  setDebugWriter,
+} from "../machines/debug.js";
+import {
   makeVblState,
   PC88Machine,
   pumpVbl,
@@ -35,6 +42,7 @@ interface State {
   ops: number;
   running: boolean;
   loopHandle: ReturnType<typeof setTimeout> | null;
+  debug: DebugState;
 }
 
 let state: State | null = null;
@@ -44,6 +52,10 @@ const workerSelf = self as unknown as Worker;
 function post(msg: WorkerOutbound, transfer: Transferable[] = []): void {
   workerSelf.postMessage(msg, transfer);
 }
+
+// Route every debugger output line through `out` envelopes. Installed
+// once at module init; the writer state lives on debug.ts itself.
+setDebugWriter((s) => post({ type: "out", text: s }));
 
 // Number of disassembled instructions to ship around PC on every
 // tick. Cheap (a few microseconds even at 60 Hz) and gives the UI
@@ -164,16 +176,38 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   const loaded = loadRomsFromMap(msg.config, roms, md5);
   const machine = new PC88Machine(msg.config, loaded);
   machine.reset();
+  const debug = makeDebugState();
+  // The watch-hook installer monkey-patches memBus.read/write +
+  // ioBus.tracer so RAM and port watches fire on access. No symbol
+  // file in the browser bundle — pass null and the hooks render
+  // bare hex labels in their log lines.
+  installWatchHooks(machine, debug, null);
   state = {
     machine,
     vbl: makeVblState(),
     ops: 0,
     running: false,
     loopHandle: null,
+    debug,
   };
   log.info(`booted ${msg.config.model}`);
   post({ type: "ready" });
   postTick(state, "tick");
+}
+
+async function handleCommand(s: State, line: string): Promise<void> {
+  // syms = null for now; phase 4b/c may swap in OPFS-backed labels.
+  const ctx = {
+    machine: s.machine,
+    state: s.debug,
+    syms: null,
+    opts: {},
+  };
+  await dispatch(line, ctx);
+  // The debugger may have stepped, set a breakpoint, mutated memory,
+  // etc. Re-tick so the panels reflect the new state without the
+  // user having to click anything.
+  postTick(s, "tick");
 }
 
 workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
@@ -212,6 +246,19 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
         break;
       case "peek":
         if (state) postPeek(state, msg.addr, msg.count);
+        break;
+      case "command":
+        if (state) {
+          // Fire-and-forget — handleCommand awaits dispatch then
+          // re-ticks; errors land in the catch block via the
+          // outer event handler chain below (we re-use the same
+          // try/catch around message dispatch in this listener).
+          void handleCommand(state, msg.line).catch((err: unknown) => {
+            const message = err instanceof Error ? err.message : String(err);
+            log.error(`command "${msg.line}" failed: ${message}`);
+            post({ type: "error", message });
+          });
+        }
         break;
     }
   } catch (err) {

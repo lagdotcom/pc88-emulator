@@ -1,6 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { createInterface } from "node:readline/promises";
-
 import { disassemble } from "../chips/z80/disasm.js";
 import { mOps } from "../flavour.makers.js";
 import type {
@@ -19,7 +16,6 @@ import {
   type DebugSymbols,
   deleteLabel,
   deletePortLabel,
-  loadDebugSymbols,
   renderLabelList,
 } from "./debug-symbols.js";
 import {
@@ -32,10 +28,40 @@ import type { LoadedROMs } from "./pc88-memory.js";
 
 const log = getLogger("debug");
 
+// All debugger output flows through this writer so the same dispatch
+// surface works for the CLI (writer = stdout) and the web worker
+// (writer ≡ postMessage of an `out` envelope). Defaults to no-op so
+// the browser bundle can import this module without referencing
+// `process.stdout` at runtime; the CLI entry installs an stdout
+// writer before printing anything.
+let writer: (s: string) => void = () => undefined;
+
+export function setDebugWriter(fn: (s: string) => void): void {
+  writer = fn;
+}
+
 // Cap on instructions executed by `continue` / step-over to keep a
 // runaway BIOS from locking up the REPL. ~5M is comfortably more
 // than a full N-BASIC banner takes.
 const CONTINUE_MAX_OPS = mOps(5);
+
+// Factory for a fresh `DebugState`. Used by the CLI runDebug() and
+// the web worker so both paths start from an identical shape.
+export function makeDebugState(initialBreakpoints: u16[] = []): DebugState {
+  return {
+    breakpoints: new Set(initialBreakpoints),
+    ramWatches: new Map(),
+    portWatches: new Map(),
+    callStack: [],
+    stopReason: null,
+    ops: 0,
+    vbl: makeVblState(),
+    stepOverTarget: null,
+    pcTrace: new Uint16Array(PC_TRACE_SIZE),
+    pcTraceWrite: 0,
+    pcTraceFilled: 0,
+  };
+}
 
 export interface DebugOptions {
   // Optional initial breakpoint addresses. CLI passes the parsed
@@ -83,7 +109,7 @@ interface WatchSpec {
   action: WatchAction;
 }
 
-interface DebugState {
+export interface DebugState {
   breakpoints: Set<u16>;
   // RAM-address watchpoints: key is the address, value is the
   // direction(s) + action. memBus.read/write checks this on every
@@ -118,7 +144,7 @@ interface DebugState {
 }
 
 const MAX_CALL_STACK_DEPTH = 256;
-const PC_TRACE_SIZE = 64;
+export const PC_TRACE_SIZE = 64;
 // How many trace lines auto-printed on a watch / break stop. Full
 // 64 is too noisy when single-stepping near the stop; 8 is the
 // sweet spot for "what got us here".
@@ -337,7 +363,7 @@ interface WatchHooks {
 // trace (with PC, value, top-of-call-stack label if known) and
 // keep going. Returns an `uninstall` callback that restores the
 // originals (used at REPL exit).
-function installWatchHooks(
+export function installWatchHooks(
   machine: PC88Machine,
   state: DebugState,
   syms: DebugSymbols | null,
@@ -355,7 +381,7 @@ function installWatchHooks(
     const pc = machine.cpu.regs.PC;
     const pcLabel = syms?.resolver(pc);
     const tag = pcLabel ? `${word(pc)} <${pcLabel}>` : word(pc);
-    process.stdout.write(`[watch] PC=${tag} ${kind} ${body}\n`);
+    writer(`[watch] PC=${tag} ${kind} ${body}\n`);
   };
 
   const matches = (mode: WatchMode, kind: "r" | "w"): boolean =>
@@ -428,7 +454,7 @@ function printRegs(machine: PC88Machine): void {
     (f & 0x04 ? "P" : "-") +
     (f & 0x02 ? "N" : "-") +
     (f & 0x01 ? "C" : "-");
-  process.stdout.write(
+  writer(
     `  PC=${word(snap.PC)} SP=${word(snap.SP)} AF=${word(snap.AF)} (${flagStr})\n` +
       `  BC=${word(snap.BC)} DE=${word(snap.DE)} HL=${word(snap.HL)} IX=${word(snap.IX)} IY=${word(snap.IY)}\n` +
       `  AF'=${word(snap.AF_)} BC'=${word(snap.BC_)} DE'=${word(snap.DE_)} HL'=${word(snap.HL_)}\n` +
@@ -443,7 +469,7 @@ function printChips(machine: PC88Machine): void {
   const snap = machine.snapshot();
   const dmac = machine.dmac;
   const cfg = machine.config;
-  process.stdout.write(
+  writer(
     `  variant      : ${cfg.model}\n` +
       `  basic mode   : ${snap.memoryMap.basicMode} (rom enabled=${snap.memoryMap.basicRomEnabled}, eromSlot=${snap.memoryMap.eromSlot})\n` +
       `  vram window  : ${snap.memoryMap.vramEnabled ? "on" : "off"}\n` +
@@ -467,7 +493,7 @@ function printChips(machine: PC88Machine): void {
 // the next instruction occupies, and the disassembled mnemonic. The
 // disassembler reads through `machine.memBus` so bank-switched
 // pages are interpreted as the CPU sees them.
-function printPromptSummary(
+export function printPromptSummary(
   machine: PC88Machine,
   syms: DebugSymbols | null,
 ): void {
@@ -486,8 +512,8 @@ function printPromptSummary(
   // their own header, otherwise every mid-function step would be
   // prefixed with a noisy `name+2:` / `name+4:` / etc. line.
   const labelHere = syms?.exactResolver(pc);
-  if (labelHere) process.stdout.write(`${labelHere}:\n`);
-  process.stdout.write(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
+  if (labelHere) writer(`${labelHere}:\n`);
+  writer(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
 }
 
 // Multi-line disassembly listing for the `dis` command. Walks
@@ -504,13 +530,13 @@ function printDisassembly(
     : {};
   for (let i = 0; i < count; i++) {
     const labelHere = syms?.exactResolver(pc);
-    if (labelHere) process.stdout.write(`${labelHere}:\n`);
+    if (labelHere) writer(`${labelHere}:\n`);
     const d = disassemble((a) => machine.memBus.read(a), pc, opts);
     const bytesStr = d.bytes
       .map((b) => byte(b))
       .join(" ")
       .padEnd(11);
-    process.stdout.write(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
+    writer(`  ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
     pc = (pc + d.length) & 0xffff;
   }
 }
@@ -519,21 +545,19 @@ function doPeek(machine: PC88Machine, addr: u16, count: Bytes): void {
   let line = `  ${word(addr)}:`;
   for (let i = 0; i < count; i++) {
     if (i > 0 && i % 16 === 0) {
-      process.stdout.write(line + "\n");
+      writer(line + "\n");
       line = `  ${word((addr + i) & 0xffff)}:`;
     }
     line += " " + byte(machine.memBus.read((addr + i) & 0xffff));
   }
-  process.stdout.write(line + "\n");
+  writer(line + "\n");
 }
 
 function doPeekWord(machine: PC88Machine, addr: u16): void {
   const lo = machine.memBus.read(addr & 0xffff);
   const hi = machine.memBus.read((addr + 1) & 0xffff);
   const w = ((hi << 8) | lo) & 0xffff;
-  process.stdout.write(
-    `  ${word(addr)}: ${byte(lo)} ${byte(hi)}  (LE word: ${word(w)})\n`,
-  );
+  writer(`  ${word(addr)}: ${byte(lo)} ${byte(hi)}  (LE word: ${word(w)})\n`);
 }
 
 // One step (instruction granularity, with prefixes consumed). Pumps
@@ -544,12 +568,12 @@ function doPeekWord(machine: PC88Machine, addr: u16): void {
 // next `step` / `continue` see the watch state).
 function singleStep(machine: PC88Machine, state: DebugState): void {
   if (machine.cpu.halted && !machine.cpu.iff1) {
-    process.stdout.write("  (HALT with IFF1=0; CPU is stuck)\n");
+    writer("  (HALT with IFF1=0; CPU is stuck)\n");
     return;
   }
   trackedStep(machine, state);
   if (state.stopReason) {
-    process.stdout.write(`  ${state.stopReason}\n`);
+    writer(`  ${state.stopReason}\n`);
     state.stopReason = null;
   }
 }
@@ -572,67 +596,67 @@ function runUntilStop(
   const cycleBudget = maxCycles !== undefined ? maxCycles : Infinity;
   while (state.ops - startOps < CONTINUE_MAX_OPS) {
     if (machine.cpu.cycles - startCycles >= cycleBudget) {
-      process.stdout.write(
+      writer(
         `  (stopped: ${(machine.cpu.cycles - startCycles).toLocaleString()} cycles run)\n`,
       );
       return;
     }
     if (machine.cpu.halted && !machine.cpu.iff1) {
-      process.stdout.write(`  (stopped: HALT with IFF1=0)\n`);
+      writer(`  (stopped: HALT with IFF1=0)\n`);
       return;
     }
     trackedStep(machine, state);
     const pc = machine.cpu.regs.PC;
     if (state.stopReason) {
       printPcTrace(machine, state, syms, AUTO_TRACE_LINES);
-      process.stdout.write(`  (stopped: ${state.stopReason})\n`);
+      writer(`  (stopped: ${state.stopReason})\n`);
       state.stopReason = null;
       return;
     }
     if (state.stepOverTarget !== null && pc === state.stepOverTarget) {
       state.stepOverTarget = null;
-      process.stdout.write(`  (stopped: step-over target ${word(pc)})\n`);
+      writer(`  (stopped: step-over target ${word(pc)})\n`);
       return;
     }
     if (state.breakpoints.has(pc)) {
       printPcTrace(machine, state, syms, AUTO_TRACE_LINES);
-      process.stdout.write(`  (stopped: breakpoint @ ${word(pc)})\n`);
+      writer(`  (stopped: breakpoint @ ${word(pc)})\n`);
       return;
     }
   }
-  process.stdout.write(
+  writer(
     `  (stopped: hit ${CONTINUE_MAX_OPS.toLocaleString()}-op ${reasonHint} cap)\n`,
   );
 }
 
 function listBreaks(state: DebugState): void {
   if (state.breakpoints.size === 0) {
-    process.stdout.write("  (no breakpoints set)\n");
+    writer("  (no breakpoints set)\n");
     return;
   }
   const sorted = [...state.breakpoints].sort((a, b) => a - b);
-  process.stdout.write(`  ${sorted.map((a) => word(a)).join(" ")}\n`);
+  writer(`  ${sorted.map((a) => word(a)).join(" ")}\n`);
 }
 
 function listRamWatches(state: DebugState): void {
   if (state.ramWatches.size === 0) {
-    process.stdout.write("  (no RAM watchpoints)\n");
+    writer("  (no RAM watchpoints)\n");
     return;
   }
   const sorted = [...state.ramWatches.entries()].sort((a, b) => a[0] - b[0]);
   for (const [addr, w] of sorted) {
-    process.stdout.write(`  ${word(addr)} ${w.mode.padEnd(2)} ${w.action}\n`);
+    writer(`  ${word(addr)} ${w.mode.padEnd(2)} ${w.action}\n`);
   }
 }
 
 function listPortWatches(state: DebugState): void {
   if (state.portWatches.size === 0) {
-    process.stdout.write("  (no port watchpoints)\n");
+    writer("  (no port watchpoints)\n");
     return;
   }
   const sorted = [...state.portWatches.entries()].sort((a, b) => a[0] - b[0]);
   for (const [port, w] of sorted) {
-    process.stdout.write(`  ${byte(port)} ${w.mode.padEnd(2)} ${w.action}\n`);
+    writer(`  ${byte(port)} ${w.mode.padEnd(2)} ${w.action}\n`);
   }
 }
 
@@ -665,10 +689,10 @@ function printPcTrace(
 ): void {
   const trace = readPcTrace(state, n);
   if (trace.length === 0) {
-    process.stdout.write(`  (PC trace empty — nothing executed since reset)\n`);
+    writer(`  (PC trace empty — nothing executed since reset)\n`);
     return;
   }
-  process.stdout.write(
+  writer(
     `  PC trace (last ${trace.length} of ${state.pcTraceFilled} captured, oldest first):\n`,
   );
   const opts = syms
@@ -678,11 +702,11 @@ function printPcTrace(
   for (const pc of trace) {
     const exact = syms?.exactResolver(pc);
     if (exact && exact !== lastLabel) {
-      process.stdout.write(`  ${exact}:\n`);
+      writer(`  ${exact}:\n`);
       lastLabel = exact;
     }
     const d = disassemble((a) => machine.memBus.read(a), pc, opts);
-    process.stdout.write(`    ${word(pc)}  ${d.mnemonic}\n`);
+    writer(`    ${word(pc)}  ${d.mnemonic}\n`);
   }
 }
 
@@ -694,7 +718,7 @@ function printPcTrace(
 // stack-dump in the same window.
 function printCallStack(state: DebugState, syms: DebugSymbols | null): void {
   if (state.callStack.length === 0) {
-    process.stdout.write("  (call stack empty)\n");
+    writer("  (call stack empty)\n");
     return;
   }
   for (let i = state.callStack.length - 1; i >= 0; i--) {
@@ -704,14 +728,14 @@ function printCallStack(state: DebugState, syms: DebugSymbols | null): void {
     const tStr = tLabel ? `${word(f.target)} <${tLabel}>` : word(f.target);
     const fStr = fLabel ? `${word(f.fromPC)} <${fLabel}>` : word(f.fromPC);
     const depth = (state.callStack.length - 1 - i).toString().padStart(2);
-    process.stdout.write(
+    writer(
       `  #${depth} ${f.via.padEnd(4)} ${tStr} <- ${fStr} ` +
         `(ret=${word(f.expectedReturn)} sp=${word(f.spAtCall)})\n`,
     );
   }
 }
 
-interface DispatchCtx {
+export interface DispatchCtx {
   machine: PC88Machine;
   state: DebugState;
   syms: DebugSymbols | null;
@@ -724,7 +748,7 @@ interface DispatchCtx {
 // asks to leave the debugger; the caller decides what that means
 // (REPL: close readline and return; script: stop reading further
 // lines).
-async function dispatch(
+export async function dispatch(
   raw: string,
   ctx: DispatchCtx,
 ): Promise<{ quit: boolean }> {
@@ -775,7 +799,7 @@ async function dispatch(
         if (args[0] !== undefined) {
           const n = parseCycleArg(args[0]);
           if (n === null) {
-            process.stdout.write(`  usage: continue [cycles]\n`);
+            writer(`  usage: continue [cycles]\n`);
             return { quit: false };
           }
           cycleBudget = n;
@@ -788,11 +812,11 @@ async function dispatch(
       case "break": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: break <addr>\n`);
+          writer(`  usage: break <addr>\n`);
           return { quit: false };
         }
         state.breakpoints.add(a);
-        process.stdout.write(`  break @ ${word(a)}\n`);
+        writer(`  break @ ${word(a)}\n`);
         return { quit: false };
       }
 
@@ -800,11 +824,11 @@ async function dispatch(
       case "unbreak": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: unbreak <addr>\n`);
+          writer(`  usage: unbreak <addr>\n`);
           return { quit: false };
         }
         state.breakpoints.delete(a);
-        process.stdout.write(`  unbreak ${word(a)}\n`);
+        writer(`  unbreak ${word(a)}\n`);
         return { quit: false };
       }
 
@@ -816,33 +840,29 @@ async function dispatch(
       case "bw": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: bw <addr> [r|w|rw] [break|log]\n`);
+          writer(`  usage: bw <addr> [r|w|rw] [break|log]\n`);
           return { quit: false };
         }
         const spec = parseWatchSpec(args.slice(1));
         if (spec === null) {
-          process.stdout.write(
-            `  bad watch spec (want r|w|rw + optional break|log)\n`,
-          );
+          writer(`  bad watch spec (want r|w|rw + optional break|log)\n`);
           return { quit: false };
         }
         state.ramWatches.set(a, spec);
-        process.stdout.write(
-          `  watch RAM ${word(a)} ${spec.mode} ${spec.action}\n`,
-        );
+        writer(`  watch RAM ${word(a)} ${spec.mode} ${spec.action}\n`);
         return { quit: false };
       }
 
       case "unbw": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: unbw <addr>\n`);
+          writer(`  usage: unbw <addr>\n`);
           return { quit: false };
         }
         if (state.ramWatches.delete(a)) {
-          process.stdout.write(`  unwatched RAM ${word(a)}\n`);
+          writer(`  unwatched RAM ${word(a)}\n`);
         } else {
-          process.stdout.write(`  no RAM watch at ${word(a)}\n`);
+          writer(`  no RAM watch at ${word(a)}\n`);
         }
         return { quit: false };
       }
@@ -854,35 +874,31 @@ async function dispatch(
       case "bp": {
         const p = parseAddr(args[0]);
         if (p === null) {
-          process.stdout.write(`  usage: bp <port> [r|w|rw] [break|log]\n`);
+          writer(`  usage: bp <port> [r|w|rw] [break|log]\n`);
           return { quit: false };
         }
         const spec = parseWatchSpec(args.slice(1));
         if (spec === null) {
-          process.stdout.write(
-            `  bad watch spec (want r|w|rw + optional break|log)\n`,
-          );
+          writer(`  bad watch spec (want r|w|rw + optional break|log)\n`);
           return { quit: false };
         }
         const port = p & 0xff;
         state.portWatches.set(port, spec);
-        process.stdout.write(
-          `  watch port ${byte(port)} ${spec.mode} ${spec.action}\n`,
-        );
+        writer(`  watch port ${byte(port)} ${spec.mode} ${spec.action}\n`);
         return { quit: false };
       }
 
       case "unbp": {
         const p = parseAddr(args[0]);
         if (p === null) {
-          process.stdout.write(`  usage: unbp <port>\n`);
+          writer(`  usage: unbp <port>\n`);
           return { quit: false };
         }
         const port = p & 0xff;
         if (state.portWatches.delete(port)) {
-          process.stdout.write(`  unwatched port ${byte(port)}\n`);
+          writer(`  unwatched port ${byte(port)}\n`);
         } else {
-          process.stdout.write(`  no port watch at ${byte(port)}\n`);
+          writer(`  no port watch at ${byte(port)}\n`);
         }
         return { quit: false };
       }
@@ -905,7 +921,7 @@ async function dispatch(
         // ---" block. Renders the CRTC+DMAC region; falls back to a
         // placeholder string before SET MODE has run so the user
         // doesn't have to remember which init step gates it.
-        process.stdout.write(machine.display.toASCIIDump() + "\n");
+        writer(machine.display.toASCIIDump() + "\n");
         return { quit: false };
 
       case "stack":
@@ -945,7 +961,7 @@ async function dispatch(
         // are joined into a single comment so users can write
         // free-form descriptions without needing to quote.
         if (!syms || !opts.loadedRoms) {
-          process.stdout.write(
+          writer(
             `  symbols not loaded (need ROM bytes to compute md5 headers)\n`,
           );
           return { quit: false };
@@ -953,11 +969,11 @@ async function dispatch(
         const a = parseAddr(args[0]);
         const name = args[1];
         if (a === null || !name) {
-          process.stdout.write(`  usage: label <addr> <name> [comment...]\n`);
+          writer(`  usage: label <addr> <name> [comment...]\n`);
           return { quit: false };
         }
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-          process.stdout.write(
+          writer(
             `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
           );
           return { quit: false };
@@ -972,33 +988,33 @@ async function dispatch(
             name,
             comment,
           );
-          process.stdout.write(`  label ${word(a)} = ${name} → ${r.path}\n`);
+          writer(`  label ${word(a)} = ${name} → ${r.path}\n`);
         } catch (e) {
-          process.stdout.write(`  label failed: ${(e as Error).message}\n`);
+          writer(`  label failed: ${(e as Error).message}\n`);
         }
         return { quit: false };
       }
 
       case "unlabel": {
         if (!syms) {
-          process.stdout.write(`  symbols not loaded\n`);
+          writer(`  symbols not loaded\n`);
           return { quit: false };
         }
         const arg = args[0];
         if (!arg) {
-          process.stdout.write(`  usage: unlabel <addr-or-name>\n`);
+          writer(`  usage: unlabel <addr-or-name>\n`);
           return { quit: false };
         }
         const target = /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
         if (target === null) {
-          process.stdout.write(`  bad address or name: ${arg}\n`);
+          writer(`  bad address or name: ${arg}\n`);
           return { quit: false };
         }
         const r = await deleteLabel(machine, syms, target);
         if (r) {
-          process.stdout.write(`  unlabelled in ${r.path}\n`);
+          writer(`  unlabelled in ${r.path}\n`);
         } else {
-          process.stdout.write(`  no symbol matches ${arg}\n`);
+          writer(`  no symbol matches ${arg}\n`);
         }
         return { quit: false };
       }
@@ -1008,63 +1024,61 @@ async function dispatch(
         // variant-wide port file; appears in disassembly for
         // `IN A,(n)` / `OUT (n),A` operands.
         if (!syms) {
-          process.stdout.write(`  symbols not loaded\n`);
+          writer(`  symbols not loaded\n`);
           return { quit: false };
         }
         const p = parseAddr(args[0]);
         const name = args[1];
         if (p === null || !name) {
-          process.stdout.write(
-            `  usage: portlabel <num> <name> [comment...]\n`,
-          );
+          writer(`  usage: portlabel <num> <name> [comment...]\n`);
           return { quit: false };
         }
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-          process.stdout.write(
+          writer(
             `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
           );
           return { quit: false };
         }
         const comment = args.slice(2).join(" ").trim() || undefined;
         const r = await addPortLabel(machine, syms, p, name, comment);
-        process.stdout.write(`  port ${byte(p)} = ${name} → ${r.path}\n`);
+        writer(`  port ${byte(p)} = ${name} → ${r.path}\n`);
         return { quit: false };
       }
 
       case "unportlabel": {
         if (!syms) {
-          process.stdout.write(`  symbols not loaded\n`);
+          writer(`  symbols not loaded\n`);
           return { quit: false };
         }
         const arg = args[0];
         if (!arg) {
-          process.stdout.write(`  usage: unportlabel <num-or-name>\n`);
+          writer(`  usage: unportlabel <num-or-name>\n`);
           return { quit: false };
         }
         const target = /^[A-Za-z_]/.test(arg) ? arg : (parseAddr(arg) ?? null);
         if (target === null) {
-          process.stdout.write(`  bad port or name: ${arg}\n`);
+          writer(`  bad port or name: ${arg}\n`);
           return { quit: false };
         }
         const r = await deletePortLabel(syms, target);
-        if (r) process.stdout.write(`  unlabelled in ${r.path}\n`);
-        else process.stdout.write(`  no port symbol matches ${arg}\n`);
+        if (r) writer(`  unlabelled in ${r.path}\n`);
+        else writer(`  no port symbol matches ${arg}\n`);
         return { quit: false };
       }
 
       case "labels":
         if (!syms) {
-          process.stdout.write(`  symbols not loaded\n`);
+          writer(`  symbols not loaded\n`);
           return { quit: false };
         }
-        process.stdout.write(renderLabelList(syms) + "\n");
+        writer(renderLabelList(syms) + "\n");
         return { quit: false };
 
       case "p":
       case "peek": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: peek <addr> [count]\n`);
+          writer(`  usage: peek <addr> [count]\n`);
           return { quit: false };
         }
         const count = args[1] ? Math.max(1, parseInt(args[1], 10)) : 1;
@@ -1076,7 +1090,7 @@ async function dispatch(
       case "peekw": {
         const a = parseAddr(args[0]);
         if (a === null) {
-          process.stdout.write(`  usage: peekw <addr>\n`);
+          writer(`  usage: peekw <addr>\n`);
           return { quit: false };
         }
         doPeekWord(machine, a);
@@ -1087,11 +1101,11 @@ async function dispatch(
         const a = parseAddr(args[0]);
         const v = parseAddr(args[1]);
         if (a === null || v === null) {
-          process.stdout.write(`  usage: poke <addr> <value>\n`);
+          writer(`  usage: poke <addr> <value>\n`);
           return { quit: false };
         }
         machine.memBus.write(a, v & 0xff);
-        process.stdout.write(`  ${word(a)} <- ${byte(v & 0xff)}\n`);
+        writer(`  ${word(a)} <- ${byte(v & 0xff)}\n`);
         return { quit: false };
       }
 
@@ -1103,11 +1117,11 @@ async function dispatch(
       case "h":
       case "?":
       case "help":
-        process.stdout.write(HELP);
+        writer(HELP);
         return { quit: false };
 
       default:
-        process.stdout.write(
+        writer(
           `  unknown command "${cmd}" — type "help" for the command list\n`,
         );
         return { quit: false };
@@ -1115,102 +1129,5 @@ async function dispatch(
   } catch (e) {
     log.error(`command "${line}" failed: ${e}`);
     return { quit: false };
-  }
-}
-
-// Replay a debugger script through the same dispatcher the REPL
-// uses. Blank lines are skipped silently. Each non-blank line is
-// echoed with a `script>` prefix so the captured output can be
-// matched against the input later. If the script issues `quit`
-// the runner stops reading and signals the caller to skip the REPL.
-async function runScript(
-  path: FilesystemPath,
-  ctx: DispatchCtx,
-): Promise<{ quit: boolean }> {
-  let text: string;
-  try {
-    text = await readFile(path, "utf8");
-  } catch (e) {
-    process.stdout.write(
-      `  failed to read script ${path}: ${(e as Error).message}\n`,
-    );
-    return { quit: false };
-  }
-  for (const rawLine of text.split(/\r?\n/)) {
-    const trimmed = rawLine.trim();
-    if (!trimmed) continue;
-    process.stdout.write(`script> ${trimmed}\n`);
-    const result = await dispatch(rawLine, ctx);
-    if (result.quit) return { quit: true };
-  }
-  return { quit: false };
-}
-
-// REPL — reads commands, dispatches, re-prompts. Returns when the
-// user types `quit` or stdin closes (e.g. Ctrl-D). When opts.script
-// is set, that script runs first; if it ends with `quit`, the REPL
-// is skipped — handy for "boot, dump state, exit" automation.
-export async function runDebug(
-  machine: PC88Machine,
-  opts: DebugOptions = {},
-): Promise<void> {
-  const state: DebugState = {
-    breakpoints: new Set(opts.initialBreakpoints ?? []),
-    ramWatches: new Map(),
-    portWatches: new Map(),
-    callStack: [],
-    stopReason: null,
-    ops: 0,
-    vbl: makeVblState(),
-    stepOverTarget: null,
-    pcTrace: new Uint16Array(PC_TRACE_SIZE),
-    pcTraceWrite: 0,
-    pcTraceFilled: 0,
-  };
-
-  // Symbol files are optional — synthetic-ROM tests don't pass
-  // `loadedRoms`. When present, the resolver feeds disassembly and
-  // the `label` / `unlabel` / `labels` commands; when absent,
-  // those commands print a friendly diagnostic instead of crashing.
-  const syms: DebugSymbols | null = opts.loadedRoms
-    ? await loadDebugSymbols(machine, opts.loadedRoms)
-    : null;
-  if (syms) {
-    let count = 0;
-    for (const e of syms.byRomId.values()) count += e.file.byAddr.size;
-    process.stdout.write(
-      `pc88 debugger — paused at reset. ${count} labels loaded across ${syms.byRomId.size} ROMs. ` +
-        `Type "help" for commands.\n`,
-    );
-  } else {
-    process.stdout.write(
-      `pc88 debugger — paused at reset. Type "help" for commands.\n`,
-    );
-  }
-
-  const hooks = installWatchHooks(machine, state, syms);
-  try {
-    const ctx: DispatchCtx = { machine, state, syms, opts };
-
-    if (opts.script) {
-      const result = await runScript(opts.script, ctx);
-      if (result.quit) return;
-    }
-
-    const rl = createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-    while (true) {
-      printPromptSummary(machine, syms);
-      const raw = await rl.question("> ");
-      const result = await dispatch(raw, ctx);
-      if (result.quit) {
-        rl.close();
-        return;
-      }
-    }
-  } finally {
-    hooks.uninstall();
   }
 }

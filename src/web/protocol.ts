@@ -16,7 +16,8 @@ export type WorkerInbound =
   | { type: "pause" }
   | { type: "step" }
   | { type: "reset" }
-  | { type: "peek"; addr: u16; count: number };
+  | { type: "peek"; addr: u16; count: number }
+  | { type: "command"; line: string };
 
 // CPU state snapshot. Subset of PC88Machine.snapshot().cpu — the same
 // shape but extracted into its own type so the UI panels can refer
@@ -90,4 +91,7 @@ export type WorkerOutbound =
       // as Uint8Array and renders a hex line.
       bytes: ArrayBuffer;
     }
+  // Buffered stdout from the worker's debugger dispatch — flushed in
+  // chunks so the REPL pane can append plain text.
+  | { type: "out"; text: string }
   | { type: "error"; message: string };
