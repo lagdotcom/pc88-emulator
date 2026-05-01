@@ -22,6 +22,13 @@ export type WorkerOutbound =
   | {
       type: "tick";
       ascii: string;
+      // TextFrame chars (cols * rows bytes) shipped as a transferable
+      // ArrayBuffer so 60 Hz frame updates don't structured-clone an
+      // 80×20 array into the UI thread. The UI re-views as Uint8Array
+      // and feeds it to the canvas renderer.
+      chars: ArrayBuffer;
+      cols: number;
+      rows: number;
       pc: u16;
       cycles: number;
       ops: number;
@@ -32,6 +39,9 @@ export type WorkerOutbound =
       type: "stopped";
       reason: string;
       ascii: string;
+      chars: ArrayBuffer;
+      cols: number;
+      rows: number;
       pc: u16;
       cycles: number;
       ops: number;

@@ -296,21 +296,24 @@ Roughly ordered by what's blocking what.
 
 ### Tooling
 
-- [ ] **Web UI** — phases 1-2 landed. `yarn build:web` produces
+- [ ] **Web UI** — phases 1-3 landed. `yarn build:web` produces
   `web/app.js` + `web/worker.js` (UI bundle + emulator Worker
   bundle) referenced from `web/index.html`. The boot screen
   reads/writes OPFS for ROM storage (content-addressed by md5) +
   last-used variant + DIP overrides; falls back to in-memory if
   OPFS is unavailable. ROM upload validates size + md5 against the
   variant descriptor. Boot transfers ROM bytes into a dedicated
-  Worker that owns the CPU loop and emits `tick` snapshots
-  (`toASCIIDump()` + PC + cycles) at 60 Hz; the UI thread renders
-  them and drives Run / Pause / Step / Reset buttons via the
-  protocol in `src/web/protocol.ts`. Canvas renderer + debugger
-  panels are still TODO. See `WEB_GUI_PLAN.md` for phasing.
+  Worker that owns the CPU loop and emits `tick` snapshots at
+  60 Hz; each tick ships the CRTC `chars` buffer as a transferable
+  ArrayBuffer plus an ASCII fallback string. The UI thread paints
+  the chars into an 8×16 cell `<canvas>` (CSS-scaled to 960 px,
+  pixel-aligned) and drives Run / Pause / Step / Reset buttons.
+  Native monospace font for now; phase 7 swaps to a CG-ROM glyph
+  atlas. Debugger panels still TODO. See `WEB_GUI_PLAN.md` for
+  phasing.
   Sub-items still open:
   - [x] Move emulator into a Web Worker; 60 Hz frame pump.
-  - [ ] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
+  - [x] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
   - [ ] Debugger panels (registers, disasm, memory, breakpoints,
     watches, stack) driven by snapshot + `dispatch()` over the
     worker channel.

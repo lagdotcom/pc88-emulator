@@ -35,36 +35,33 @@ let state: State | null = null;
 
 const workerSelf = self as unknown as Worker;
 
-function post(msg: WorkerOutbound): void {
-  workerSelf.postMessage(msg);
+function post(msg: WorkerOutbound, transfer: Transferable[] = []): void {
+  workerSelf.postMessage(msg, transfer);
 }
 
-function makeTick(
-  s: State,
-  type: "tick" | "stopped",
-  reason?: string,
-): WorkerOutbound {
+function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
   const ascii = s.machine.display.toASCIIDump();
-  if (type === "stopped") {
-    return {
-      type: "stopped",
-      reason: reason ?? "stopped",
-      ascii,
-      pc: s.machine.cpu.regs.PC,
-      cycles: s.machine.cpu.cycles,
-      ops: s.ops,
-      halted: s.machine.cpu.halted,
-    };
-  }
-  return {
-    type: "tick",
+  const frame = s.machine.display.getTextFrame();
+  // Copy chars into a fresh ArrayBuffer so the transfer doesn't
+  // detach the live TVRAM-backed Uint8Array (it's a subarray of
+  // mainRam; detaching would break the next frame).
+  const charsBuf = new ArrayBuffer(frame.chars.length);
+  new Uint8Array(charsBuf).set(frame.chars);
+  const common = {
     ascii,
+    chars: charsBuf,
+    cols: frame.cols,
+    rows: frame.rows,
     pc: s.machine.cpu.regs.PC,
     cycles: s.machine.cpu.cycles,
     ops: s.ops,
-    running: s.running,
     halted: s.machine.cpu.halted,
   };
+  const msg: WorkerOutbound =
+    type === "stopped"
+      ? { type: "stopped", reason: reason ?? "stopped", ...common }
+      : { type: "tick", ...common, running: s.running };
+  post(msg, [charsBuf]);
 }
 
 function runFrame(s: State): void {
@@ -74,13 +71,13 @@ function runFrame(s: State): void {
     pumpVbl(s.machine, s.vbl);
     if (s.machine.cpu.halted && !s.machine.cpu.iff1) {
       s.running = false;
-      post(makeTick(s, "stopped", "halted-no-irq"));
+      postTick(s, "stopped", "halted-no-irq");
       return;
     }
     s.machine.cpu.runOneOp();
     s.ops++;
   }
-  post(makeTick(s, "tick"));
+  postTick(s, "tick");
   s.loopHandle = setTimeout(() => runFrame(s), FRAME_INTERVAL_MS);
 }
 
@@ -113,7 +110,7 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   };
   log.info(`booted ${msg.config.model}`);
   post({ type: "ready" });
-  post(makeTick(state, "tick"));
+  postTick(state, "tick");
 }
 
 workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
@@ -130,7 +127,7 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
       case "pause":
         if (state) {
           stopRunning(state);
-          post(makeTick(state, "tick"));
+          postTick(state, "tick");
         }
         break;
       case "step":
@@ -138,7 +135,7 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
           pumpVbl(state.machine, state.vbl);
           stepOneInstruction(state.machine);
           state.ops++;
-          post(makeTick(state, "tick"));
+          postTick(state, "tick");
         }
         break;
       case "reset":
@@ -147,7 +144,7 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
           state.machine.reset();
           state.vbl = makeVblState();
           state.ops = 0;
-          post(makeTick(state, "tick"));
+          postTick(state, "tick");
         }
         break;
     }

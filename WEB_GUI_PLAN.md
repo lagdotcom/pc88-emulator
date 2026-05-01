@@ -119,16 +119,24 @@ messages.
   `FileSystemSyncAccessHandle` actually buys something (probably
   phase 5 for savestate writes).
 
-### Phase 3: Canvas text-mode renderer
+### Phase 3: Canvas text-mode renderer ✓ (committed)
 
-- 8×16 ASCII font baked into the bundle (PNG → base64, or
-  hand-written `Uint8Array` of glyphs).
-- `<canvas>` sized to 80×20 cells × cell pixels. Full repaint per
-  rAF on the dirty bit.
-- Replace the `<pre>` in `boot()` with the canvas. Keep
-  `toASCIIDump()` as a fallback panel for text copy/paste.
+Done. `<canvas>` sized to cols×8 by rows×16 (the CRTC's live
+geometry), CSS-scaled to 960 px wide with `image-rendering:
+pixelated`. Full repaint per tick.
+
+- `src/web/canvas-renderer.ts`: `CanvasTextRenderer.render(chars,
+  cols, rows)`. Builds each row as a single string and draws with
+  one `fillText` call (1200 calls/sec at 60 Hz × 20 rows; per-cell
+  would have been 96k/sec). Native monospace font for glyphs —
+  phase 7 swaps for a CG-ROM glyph atlas. Empty frames (cols=0
+  before SET MODE) leave the previous content rather than clearing.
+- Worker ships `chars` as a transferable `ArrayBuffer` so 80×20 =
+  1600 bytes/frame doesn't structured-clone. ASCII string still
+  rides on `tick` for the `<details>` fallback panel.
 - Pixel mode stays a no-op until `getPixelFrame()` returns
-  non-null.
+  non-null. The same protocol slot will carry that buffer when
+  graphics planes land.
 
 ### Phase 4: Debugger panels
 
@@ -247,7 +255,7 @@ the CLI debugger because every command flows through the same
   the commands to in-memory only and add an "Export symbols"
   button. Decide before wiring the REPL pane.
 
-## File index after phase 2
+## File index after phase 3
 
 ```
 src/
@@ -261,6 +269,7 @@ src/
     main.ts                        # UI entry; spawns worker, renders ticks
     worker.ts                      # emulator worker; owns PC88Machine + run loop
     protocol.ts                    # typed message union (inbound + outbound)
+    canvas-renderer.ts             # CRTC chars → 8×16 cell canvas
     boot-screen.ts                 # form + state
     md5.ts                         # RFC-1321
     opfs.ts                        # storage abstraction

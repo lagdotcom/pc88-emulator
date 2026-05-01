@@ -2,6 +2,7 @@ import type { ROMID } from "../flavours.js";
 import { getLogger } from "../log.js";
 import { type PC88Config } from "../machines/config.js";
 import { type BootRequest, renderBootScreen } from "./boot-screen.js";
+import { CanvasTextRenderer } from "./canvas-renderer.js";
 import { openStore } from "./opfs.js";
 import type { WorkerInbound, WorkerOutbound } from "./protocol.js";
 
@@ -27,6 +28,7 @@ async function main(): Promise<void> {
 }
 
 interface RunningUI {
+  renderer: CanvasTextRenderer;
   asciiPre: HTMLPreElement;
   status: HTMLElement;
   runButton: HTMLButtonElement;
@@ -52,12 +54,12 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
       case "ready":
         break;
       case "tick":
-        ui.asciiPre.textContent = msg.ascii;
+        renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.status.textContent = `${msg.running ? "running" : "paused"} pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}${msg.halted ? " halted" : ""}`;
         setRunUi(ui, msg.running);
         break;
       case "stopped":
-        ui.asciiPre.textContent = msg.ascii;
+        renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
         ui.status.textContent = `stopped (${msg.reason}) pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}`;
         setRunUi(ui, false);
         break;
@@ -123,9 +125,23 @@ function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
   status.textContent = "booting…";
   root.appendChild(status);
 
+  const screen = document.createElement("canvas");
+  screen.className = "screen";
+  root.appendChild(screen);
+  const renderer = new CanvasTextRenderer(screen);
+
+  // ASCII fallback panel — same content the canvas renders, but as
+  // selectable text. Useful for copy-paste of BASIC banners and for
+  // sanity-checking that the canvas matches the underlying frame.
+  const fallback = document.createElement("details");
+  fallback.className = "ascii-fallback";
+  const summary = document.createElement("summary");
+  summary.textContent = "ASCII dump (selectable)";
+  fallback.appendChild(summary);
   const pre = document.createElement("pre");
   pre.className = "tvram-dump";
-  root.appendChild(pre);
+  fallback.appendChild(pre);
+  root.appendChild(fallback);
 
   const back = document.createElement("button");
   back.type = "button";
@@ -137,6 +153,7 @@ function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
   root.appendChild(back);
 
   return {
+    renderer,
     asciiPre: pre,
     status,
     runButton,
@@ -144,6 +161,17 @@ function renderRunningView(root: HTMLElement, config: PC88Config): RunningUI {
     stepButton,
     resetButton,
   };
+}
+
+function renderFrame(
+  ui: RunningUI,
+  charsBuf: ArrayBuffer,
+  cols: number,
+  rows: number,
+  ascii: string,
+): void {
+  ui.renderer.render(new Uint8Array(charsBuf), cols, rows);
+  ui.asciiPre.textContent = ascii;
 }
 
 function makeButton(label: string): HTMLButtonElement {
