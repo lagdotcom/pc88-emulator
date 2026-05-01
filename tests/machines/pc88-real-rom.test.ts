@@ -49,11 +49,12 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     expect(dump).toContain("Ok");
   });
 
-  it("--basic=n88 path: BIOS programs CRTC + DMAC then waits on sub-CPU", async () => {
-    // Locks in the current "N88 boots far enough to set up the
-    // screen but stalls without a sub-CPU PPI" finding. When sub-CPU
-    // emulation lands, this assertion will need to be tightened to
-    // require the actual N88 banner.
+  it("--basic=n88 path: BIOS reaches the disk-files prompt", async () => {
+    // Locks in N88 boot reaching its first user-visible output: the
+    // "How many files(0-15)?" disk-config prompt. Boot then stalls
+    // waiting for keyboard input (no input source wired to the key
+    // matrix yet) — when that lands, this assertion can be extended
+    // to cover the full banner past the prompt.
     const loaded = await loadRoms(MKI, { dir: ROM_DIR });
     if (!loaded.n80 || !loaded.n88) return;
     const config = {
@@ -65,7 +66,7 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     };
     const machine = new PC88Machine(config, loaded as LoadedROMs);
     machine.reset();
-    runMachine(machine, { maxOps: kOps(150) });
+    runMachine(machine, { maxOps: kOps(250) });
 
     expect(machine.memoryMap.basicMode).toBe("n88");
     expect(machine.crtc.charsPerRow).toBe(80);
@@ -74,5 +75,7 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     // factory default 0xff). Capturing this so we notice if the
     // boot path changes.
     expect(machine.irq.programmed).toBe(true);
+
+    expect(machine.display.toASCIIDump()).toContain("How many files(0-15)?");
   });
 });
