@@ -14,5 +14,7 @@
 /out
 /roms/*
 !/roms/.gitkeep
+/disks/*
+!/disks/.gitkeep
 *.log
 .env

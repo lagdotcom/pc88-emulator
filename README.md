@@ -187,6 +187,9 @@ src/
   debug/            interactive REPL debugger + per-ROM symbol routing
                     (split out from machines/ — see "Web UI architecture"
                     below for the full file list)
+  disk/             format-agnostic Disk interface + D88 parser /
+                    serialiser (FDC will consume this; never sees D88
+                    directly)
 refs/             references for chip behaviour cross-referenced
                   during reverse-engineering — D88 format,
                   Z80 undocumented, MAME PC-8801 port handlers,
@@ -196,14 +199,22 @@ tests/
   programs/         hand-assembled programs + zexdoc runner +
                     IM 1 / IM 2 IRQ-acceptance tests
   chips/io/         per-chip I/O port unit tests (CRTC, DMAC, sysctrl)
+  disk/             D88 parse / serialise round-trip + real-disk
+                    smoke test (skipped unless `disks/rogue.d88` exists)
   machines/         memory-map, synthetic-ROM boot, visible-region
                     rendering, runner / IRQ-mask gating
 ```
 
-Disk formats are intended to live separately from the FDC behind a
-`Disk` interface that exposes per-sector metadata (C/H/R/N, deleted
-mark, CRC OK/error, density). The interface needs to land before the
-FDC because flattening the format loses state the FDC depends on.
+The `Disk` interface lives in `src/disk/types.ts`; D88Disk in
+`src/disk/d88.ts` is the only implementation today. Per-sector
+metadata (C/H/R/N, density, deleted mark, FDC status, raw data
+length) round-trips byte-for-byte through `parseD88` → `toBytes()`,
+including the "weird" cases copy protections rely on (sector data
+fields whose length differs from `128 << N`, deliberate CRC error
+status, mid-track deleted marks). Multi-image D88 concatenation is
+parsed into separate `D88Disk` instances. Real disk dumps go in
+`disks/` (gitignored, parallel to `roms/`); the test fixture is
+`disks/rogue.d88`.
 
 ## TODO
 
@@ -221,9 +232,15 @@ Roughly ordered by what's blocking what.
 
 ### Machine layer
 
-- [ ] **`Disk` interface** in `src/chips/` (or `src/core/`?). Tracks
-  + per-sector metadata, density, deleted-mark, CRC status. D88
-  parser bolts on top.
+- [x] **`Disk` interface** in `src/disk/`. Tracks + per-sector
+  metadata (C/H/R/N, density, deleted-mark, CRC status), variable
+  data-field length for copy-protected sectors, multi-image D88
+  concatenation. D88Disk round-trips byte-for-byte against the
+  Rogue (1986 ASCII) fixture.
+- [ ] **`FloppyDrive` layer** — owns inserted disk + motor / cylinder /
+  head / rotation cursor. The FDC will hold a `FloppyDrive[4]` and
+  never touch a `Disk` directly; this seam is where seek time, step
+  rate, and motor spin-up live.
 - [ ] **`ROMManifest.disk` is still optional** — once at least one
   chip needs the disk ROM at runtime, lift the field to required.
 - [ ] **Sub-CPU model** for mkII (`hasSubCpu: true`). Two Z80

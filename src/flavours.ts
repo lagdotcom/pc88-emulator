@@ -30,3 +30,9 @@ export type WebURI = Flavour<string, "WebURI">;
 export type MD5Sum = Flavour<string, "MD5Sum">;
 
 export type ROMID = Flavour<string, "ROMID">;
+
+export type Cylinder = Flavour<number, "Cylinder">;
+export type Head = Flavour<number, "Head">;
+export type Record = Flavour<number, "Record">;
+export type SizeCode = Flavour<number, "SizeCode">;
+export type SectorIndex = Flavour<number, "SectorIndex">;
