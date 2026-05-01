@@ -139,7 +139,12 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     // string literal alone.
     expect(dump).toContain('10 PRINT "hello world"');
     expect(dump).toContain("run");
-    expect(dump).toContain("hello world");
+    // "hello world" should appear three times: in the typed line, in
+    // the LIST canonical re-print, and as RUN's standalone output.
+    // Counting catches the case where RUN runs but produces no output
+    // (the bare-toContain check would still pass on the typed/LIST
+    // copies).
+    expect(dump.match(/hello world/g)?.length).toBe(3);
   });
 
   it("--basic=n88 path: BIOS reaches the disk-files prompt", async () => {
