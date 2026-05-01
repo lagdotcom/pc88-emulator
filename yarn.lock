@@ -1325,6 +1325,14 @@ lightningcss@^1.32.0:
     lightningcss-win32-arm64-msvc "1.32.0"
     lightningcss-win32-x64-msvc "1.32.0"
 
+local-server@^0.1.8:
+  version "0.1.8"
+  resolved "https://registry.yarnpkg.com/local-server/-/local-server-0.1.8.tgz#30649dd5dfddcd6b40fdccbc8ee05a5590900045"
+  integrity sha512-DHgXerSdhi6jyt+kIcjyS0GUeIsevEaLPRuNzRKVR0CZCdAweykNhypF4VElyYWA1DQoQTw0nsbGengPtj5HjQ==
+  dependencies:
+    mime "~1.2.11"
+    minimist "^0.2.0"
+
 locate-path@^6.0.0:
   version "6.0.0"
   resolved "https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz"
@@ -1387,6 +1395,11 @@ memoizee@^0.4.15:
     next-tick "^1.1.0"
     timers-ext "^0.1.7"
 
+mime@~1.2.11:
+  version "1.2.11"
+  resolved "https://registry.yarnpkg.com/mime/-/mime-1.2.11.tgz#58203eed86e3a5ef17aed2b7d9ebd47f0a60dd10"
+  integrity sha512-Ysa2F/nqTNGHhhm9MV8ure4+Hc+Y8AWiqUdHxsO7xu8zc92ND9f3kpALHjaP026Ft17UfxrMt95c50PLUeynBw==
+
 minimatch@^10.2.2:
   version "10.2.4"
   resolved "https://registry.npmjs.org/minimatch/-/minimatch-10.2.4.tgz"
@@ -1400,6 +1413,11 @@ minimatch@^10.2.4:
   integrity sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg==
   dependencies:
     brace-expansion "^5.0.5"
+
+minimist@^0.2.0:
+  version "0.2.4"
+  resolved "https://registry.yarnpkg.com/minimist/-/minimist-0.2.4.tgz#0085d5501e29033748a2f2a4da0180142697a475"
+  integrity sha512-Pkrrm8NjyQ8yVt8Am9M+yUt74zE3iokhzbG1bFVNjLB92vwM71hf40RkEsryg98BujhVOncKm/C1xROxZ030LQ==
 
 mrmime@^2.0.0:
   version "2.0.1"
