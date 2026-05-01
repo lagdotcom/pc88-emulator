@@ -1,18 +1,7 @@
-import logLib from "log";
-
 import { IOBus } from "../../core/IOBus.js";
 import { MemoryBus } from "../../core/MemoryBus.js";
 import type { Cycles, s8, u8 } from "../../flavours.js";
-import { byte, isDefined, word } from "../../tools.js";
-import {
-  cbOpCodes,
-  ddCbOpCodes,
-  ddOpCodes,
-  edOpCodes,
-  fdCbOpCodes,
-  fdOpCodes,
-  opCodes,
-} from "./ops.js";
+import { isDefined } from "../../tools.js";
 import {
   dispatchBase,
   dispatchCB,
@@ -35,8 +24,6 @@ import {
   type Z80Regs,
 } from "./regs.js";
 
-const log = logLib.get("z80");
-
 export type Prefix =
   | { type: "CB" }
   | { type: "ED" }
@@ -44,15 +31,6 @@ export type Prefix =
   | { type: "FD" }
   | { type: "DDCB"; displacement: s8 }
   | { type: "FDCB"; displacement: s8 };
-
-const opTables = {
-  CB: cbOpCodes,
-  DD: ddOpCodes,
-  DDCB: ddCbOpCodes,
-  ED: edOpCodes,
-  FD: fdOpCodes,
-  FDCB: fdCbOpCodes,
-};
 
 export class Z80 {
   cycles: Cycles;
@@ -68,19 +46,6 @@ export class Z80 {
   // runOneOp (i.e. instruction boundaries), which is the standard
   // simplification for any emulator not modelling t-state-level timing.
   irqLine: boolean;
-  // Set by an MCycle that wants the rest of an opcode's cycle list to be
-  // skipped (the conditional branch in JP/CALL/RET, etc). Read and reset
-  // by the per-opcode compiled `execute` function.
-  aborted: boolean;
-  // When true, runOneOp routes the unprefixed opcode through ops2's
-  // hand-written giant switch instead of the table-driven dispatcher.
-  // The two paths agree on SingleStepTests, but ops2 is the path that
-  // passes Frank Cringle's zexdoc *and* zexall cleanly while the table
-  // path fails four CRC families (cpd<r>, <inc,dec> (hl), <inc,dec>
-  // (<ix,iy>+1), <rrd,rld>). ops2 is also ~4.5× faster on a full
-  // zexdoc workload (~36 Mops/s vs ~8 Mops/s on Windows V8). Default
-  // is on; flip to false to A/B against the legacy path.
-  useDispatchBase: boolean;
   prefix: Prefix | undefined;
   // Q is a latch of "the F value last written by an instruction." It's read
   // by SCF and CCF to compute their X/Y bits as (A | Q) & {X,Y}. The value
@@ -101,8 +66,6 @@ export class Z80 {
     this.iff2 = false;
     this.im = 0;
     this.irqLine = false;
-    this.aborted = false;
-    this.useDispatchBase = true;
     this.q = 0;
     this.qWritten = false;
     this.regs = makeRegs();
@@ -207,17 +170,13 @@ export class Z80 {
     // The compiled execute function resets it on early return, but the
     // last-cycle abort case never gets there (it returns through the
     // bottom of the body), so we reset here too.
-    this.aborted = false;
-    // Inline the universal M1 work: read the opcode byte, advance PC,
-    // increment R, charge 4 t-states. compile() relies on this — it drops
-    // the leading "plain opcode_fetch" MCycle from each opcode's compiled
-    // execute body so simple ops like NOP have an empty body.
-    //
-    // DDCB / FDCB are the exception: by the time we get here the prefix
-    // has already been resolved to {type:"DDCB",...} and what remains is
-    // the operation byte, which on real Z80 is read as MR (not M1) — no
-    // R increment, no 4-state charge. Those ops account their own cycle
-    // cost in the per-opcode body.
+    // Universal M1 work: read the opcode byte, advance PC, increment
+    // R, charge 4 t-states. DDCB/FDCB are the exception — by the
+    // time we get here the prefix has already been resolved to
+    // {type:"DDCB",...} and what remains is the operation byte, read
+    // as MR (not M1) on real silicon — no R increment, no 4-state
+    // charge. Those ops account their own cycle cost in the
+    // dispatcher body.
     const regs = this.regs;
     const pc = regs.PC;
     regs.OP = this.mem.read(pc);
@@ -229,45 +188,19 @@ export class Z80 {
       this.cycles += 4;
     }
 
-    // ops2 now covers all seven prefix tables. The decode() fallback is
-    // only kept for the (off-by-default) useDispatchBase=false path so
-    // changes can be A/B-compared against the original table dispatcher.
-    if (this.useDispatchBase) {
-      this.prefix = undefined;
-      // prettier-ignore
-      switch (prefixType) {
-        case undefined: dispatchBase(this); break;
-        case "ED": dispatchED(this); break;
-        case "CB": dispatchCB(this); break;
-        case "DD": dispatchDD(this); break;
-        case "FD": dispatchFD(this); break;
-        case "DDCB":
-        case "FDCB": dispatchIndexedCB(this); break;
-      }
-    } else {
-      const inst = this.decode();
-      if (inst) {
-        inst.execute(this);
-      } else {
-        log.warn(`${word(pc)}: INVALID ${byte(regs.OP)}`);
-      }
+    this.prefix = undefined;
+    // prettier-ignore
+    switch (prefixType) {
+      case undefined: dispatchBase(this); break;
+      case "ED": dispatchED(this); break;
+      case "CB": dispatchCB(this); break;
+      case "DD": dispatchDD(this); break;
+      case "FD": dispatchFD(this); break;
+      case "DDCB":
+      case "FDCB": dispatchIndexedCB(this); break;
     }
 
     if (!this.qWritten) this.q = 0;
-  }
-
-  decode() {
-    // Look up the op in the prefix-specific table and consume the prefix
-    // on success. Clearing here (rather than on every entry) means that an
-    // unknown opcode inside a prefix table falls through to the base
-    // table and the prefix is naturally discarded — both branches end
-    // with prefix = undefined.
-    const prefix = this.prefix?.type;
-    this.prefix = undefined;
-    if (prefix && opTables[prefix][this.regs.OP]) {
-      return opTables[prefix][this.regs.OP];
-    }
-    return opCodes[this.regs.OP];
   }
 
   incR() {

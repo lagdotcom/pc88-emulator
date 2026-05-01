@@ -15,7 +15,7 @@ import {
   fdCbOpCodes,
   fdOpCodes,
   opCodes,
-} from "../../src/chips/z80/ops.js";
+} from "../../src/chips/z80/mnemonics.js";
 import type { FilesystemPath } from "../../src/flavours.js";
 import { byte } from "../../src/tools.js";
 import { loadTests } from "./fetch.js";

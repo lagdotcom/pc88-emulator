@@ -67,7 +67,7 @@ import {
   rrca,
   scf,
   xor_a,
-} from "./ops.js";
+} from "./alu.js";
 import { FLAG_C, FLAG_PV, FLAG_S, FLAG_X, FLAG_Y, FLAG_Z } from "./regs.js";
 
 // Local helper for the JR/JR cc displacement step. Returns the new PC

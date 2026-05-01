@@ -19,7 +19,7 @@ import {
   fdOpCodes,
   type OpCode,
   opCodes,
-} from "./ops.js";
+} from "./mnemonics.js";
 
 export interface DisasmResult {
   // Formatted mnemonic with operand bytes substituted (e.g.

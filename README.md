@@ -206,25 +206,12 @@ Roughly ordered by what's blocking what.
 
 ### CPU
 
-- [ ] **zexdoc/zexall failures (table dispatcher only)**. The
-  table-driven dispatch path fails four CRC families in both zexdoc
-  and zexall: `cpd<r>`, `<inc,dec> (hl)`, `<inc,dec> (<ix,iy>+1)`,
-  and `<rrd,rld>`. The same workload runs cleanly on the ops2
-  giant-switch dispatcher (see perf TODO below), so the bugs are
-  somewhere in the MCycle composition or closure layer rather than
-  the underlying flag math the helpers compute. Reproduce with
-  `Z80_OP="<op>" Z80_SAMPLE=full yarn test:z80` (or
-  `Z80_SAMPLE=200`). The block-IO repeat-iteration flag failures
-  the table path used to share with this list were fixed by the
-  Banks/MAME formula and now pass cleanly on both dispatchers.
-  Diagnosing the table path is no longer urgent now that ops2 is
-  correct end-to-end.
-
-- [x] **Block-instruction repeat-iteration flags** — fully resolved
-  on both dispatchers. INIR/INDR/OTIR/OTDR now apply the 5 T-state
-  PC-decrement fix-up to H and PF per David Banks's analysis
-  (matching MAME's `block_io_interrupted_flags`). 40132/40132
-  SingleStepTests cases pass.
+- [x] **Block-instruction repeat-iteration flags** — fully resolved.
+  INIR/INDR/OTIR/OTDR (and CPIR/CPDR, LDIR/LDDR via the same
+  PC.high logic) apply the 5 T-state PC-decrement fix-up to H and
+  PF per David Banks's analysis (matching MAME's
+  `block_io_interrupted_flags`). 1604/1604 opcodes × full 1000-case
+  SingleStepTests pass.
 - [x] **IM 2 acceptance**. `requestIrq(vector)` carries the data-bus
   byte; on accept the CPU reads PC from `(I << 8) | (vector & 0xFE)`.
   The runner asserts vector 0x00 for VBL. PC-88 BIOS programs IM 2
@@ -236,36 +223,17 @@ Roughly ordered by what's blocking what.
   mkI but the FDD-IF on later models can drive it.
 - [ ] **Run zexdoc/zexall to a clean exit** at least once and
   refresh the `APPROX_TOTAL_OPS` constants.
-- [x] **Performance: per-opcode switch dispatcher** — landed as
-  `ops2.ts`, six dispatchers (`dispatchBase` / `dispatchED` /
-  `dispatchCB` / `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`),
-  one per prefix table. **Default-on** as of validation against
-  Frank Cringle's full exerciser:
-  - **zexdoc**: all CRC sections clean.
-  - **zexall**: all CRC sections clean (this is the documented +
-    undocumented X/Y test, the stronger of the two).
-  - Throughput: ~36 Mops/s on Windows V8 vs ~8 Mops/s on the legacy
-    table path — a ~4.5× speedup, full zexdoc run ~2.5 min vs
-    ~12 min.
-
-  `cpu.useDispatchBase` is the kill-switch; flip to `false` (or
-  set `DISPATCH=table` in the test harness env) to run the legacy
-  table path for A/B comparison. The legacy path still fails four
-  CRC families in zexdoc — `cpd<r>`, `<inc,dec> (hl)`, `<inc,dec>
-  (<ix,iy>+1)`, `<rrd,rld>` — and the CPIR/CPDR/INIR/OTIR/INDR/OTDR
-  block-flag failures appear there at higher SingleStepTests sample
-  sizes. Both sets of bugs evaporate on ops2.
-
-- [ ] **Retire the MCycle table system in `ops.ts`**. Now that
-  ops2 is default and validated, `compile()`, `OpCode.execute`,
-  `MCycle`, and the `buildOpTable` / `buildCbTable` /
-  `buildIndexedCbTable` factories have no live consumers. They
-  remain in the tree as the A/B fallback (`useDispatchBase=false`)
-  and as the home of the shared helpers ops2 imports
-  (`do_add_a`, `inc8`, etc.). Once the surrounding chips (CRT,
-  FDC, sub-CPU) are wired up enough to validate via a real BIOS
-  boot, lift the helpers into a small `alu.ts` and delete
-  everything else in `ops.ts`.
+- [x] **Per-opcode switch dispatcher** — landed as `ops2.ts`, six
+  dispatchers (`dispatchBase` / `dispatchED` / `dispatchCB` /
+  `dispatchDD` / `dispatchFD` / `dispatchIndexedCB`). Throughput
+  ~36 Mops/s on Windows V8; full zexdoc/zexall ~2.5 min each, both
+  CRC-clean (incl. undocumented X/Y).
+- [x] **Retire the MCycle table system in `ops.ts`** — done.
+  `ops.ts` is deleted; ALU/flag/control helpers live in `alu.ts`,
+  mnemonic tables for the disassembler / test harness live in
+  `mnemonics.ts`, and `ops2.ts` is the only dispatcher. The
+  `useDispatchBase` kill-switch and the `DISPATCH=table` harness
+  override are gone.
 
 ### Machine layer
 

@@ -107,7 +107,6 @@ function run(bench: Bench, repeats: number) {
   // Plant some recognisable bytes at the LDIR source.
   for (let i = 0; i < 0x100; i++) ram.bytes[0x0200 + i] = i & 0xff;
   const cpu = new Z80(new MemoryBus([ram], 0xff), new IOBus());
-  if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
 
   // Warmup
   for (let r = 0; r < Math.min(3, repeats); r++) {

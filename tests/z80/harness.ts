@@ -18,7 +18,6 @@ export function makeHarness(): Harness {
   const ioBus = new IOBus();
   ioBus.registerAll({ name: io.name, read: io.read, write: io.write });
   const cpu = new Z80(memBus, ioBus);
-  if (process.env.DISPATCH === "table") cpu.useDispatchBase = false;
   return { cpu, ram, io };
 }
 
