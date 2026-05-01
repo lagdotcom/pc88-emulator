@@ -756,10 +756,12 @@ The first mutation against a previously-empty symbol file seeds
 it with a `# Symbol file for <id>.` header line, an md5 header
 computed from the live ROM bytes, and a blank separator. After
 that, mutations leave the header alone and use the same
-verbatim-original-line preservation phase 1 ships.
+verbatim-original-line preservation the file parser keeps for
+unedited rows.
 
-Phase 3 — RAM and port namespaces, fuzzy `name+N` — landed.
-RAM addresses (0x8000+, outside any mapped ROM) route to
+RAM and port namespaces (with fuzzy `name+N` resolution) live
+alongside the per-ROM files. RAM addresses (0x8000+, outside
+any mapped ROM) route to
 `syms/<variant>.ram.sym`; port labels live in
 `syms/<variant>.port.sym` and surface in `IN A,(n)` / `OUT (n),A`
 disassembly via a separate `resolvePort` callback. The variant
@@ -875,7 +877,7 @@ Project-wide hooks live in `.claude/settings.json`:
 
 ## Branch / pushing
 
-Active branch: `claude/pc88-emulator-fdc-NufaT`. Never push to `main`.
+Active branch: `claude/continue-web-gui-0cis8`. Never push to `main`.
 
 GitHub MCP tools are restricted to `lagdotcom/killchain` and
 `lagdotcom/pc88-emulator`. Direct `git push` works for this branch in

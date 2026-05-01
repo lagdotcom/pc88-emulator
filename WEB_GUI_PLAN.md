@@ -5,13 +5,13 @@ Handoff doc for the lightweight web interface to the PC-88 emulator
 picks up this work. Pair with `README.md` (overall status) and
 `CLAUDE.md` (codebase conventions).
 
-Branch: `claude/emulator-web-interface-MnWv7`. Never push to `main`.
+Active branch: `claude/continue-web-gui-0cis8`. Never push to `main`.
 
 ## Decisions already made
 
 - **No framework.** Plain HTML + DOM, hand-written event listeners.
-  State surface is small and updates rarely (on pause/step + once
-  per rAF while running). React/Vue/Svelte not justified.
+  State surface is small and the worker emits at most one tick per
+  emulated frame. React/Vue/Svelte not justified.
 - **Single static page.** No server. Open `web/index.html` directly
   via any static file server. ROMs come from the user's disk.
 - **OPFS, not IndexedDB.** ROMs content-addressed by md5 at
@@ -52,39 +52,24 @@ Branch: `claude/emulator-web-interface-MnWv7`. Never push to `main`.
   in the UI is sugar over typed lines, and a raw `<input>` REPL
   pane gives access to anything we don't build a button for.
 
-## What's done (phase 1 — committed `048ad33`)
-
-| Path | Purpose |
-|------|---------|
-| `src/machines/rom-validate.ts` | Pure size + md5 validation (no Node deps) |
-| `src/machines/rom-loader.ts` | Node fs + crypto + validate (Node only) |
-| `src/machines/rom-loader-browser.ts` | Validate in-memory `Map<ROMID, Uint8Array>` |
-| `src/machines/variants/index.ts` | Shared `VARIANTS`, `VARIANTS_BY_NICKNAME`, `variantSlug()` |
-| `src/web/md5.ts` | RFC-1321 md5 |
-| `src/web/opfs.ts` | OPFS-backed `OpfsStore` + in-memory fallback |
-| `src/web/boot-screen.ts` | Variant dropdown + ROM checklist + DIP form |
-| `src/web/main.ts` | Web entry. Renders boot screen, boots machine, dumps `toASCIIDump()` |
-| `web/index.html`, `web/app.css` | Static page + styles |
-| `tests/web/md5.test.ts` | RFC-1321 vectors |
-| `esbuild.config.mjs` | `web` (watch) and `web-prod` modes; alias + define |
-| `package.json` | `yarn web` + `yarn build:web` |
-
-Bundle: ~75 KB minified for the entire emulator + boot screen.
+## Phase log
 
 Build / verify:
 
 ```sh
-yarn build           # tsc + Node bundle (still works)
-yarn build:web       # tsc + web bundle → web/app.js
-npx vitest run --exclude tests/z80/singlestep.test.ts   # 119/119 pass in ~2s
+yarn build           # tsc + Node bundle
+yarn build:web       # tsc + web bundle → web/{app,worker}.js
+npx vitest run --exclude tests/z80/singlestep.test.ts
 ```
 
 Open `web/index.html` via any static server (e.g.
-`python3 -m http.server -d web 8080`) — variant picker, DIP form,
-and ROM upload are functional. Boot runs synchronously on the main
-thread for now and dumps the visible TVRAM region into a `<pre>`.
+`python3 -m http.server -d web 8080`).
 
-## What's next — phasing
+### Phase 1: Boot screen ✓ (committed `048ad33`)
+
+ROM upload + variant + DIP form, OPFS-backed cache. Bundle was
+~75 KB at the time; the file index at the bottom of this doc
+shows the current shape.
 
 ### Phase 2: Worker boundary ✓ (committed)
 
@@ -122,14 +107,15 @@ messages.
 ### Phase 3: Canvas text-mode renderer ✓ (committed)
 
 Done. `<canvas>` sized to cols×8 by rows×16 (the CRTC's live
-geometry), CSS-scaled to 960 px wide with `image-rendering:
-pixelated`. Full repaint per tick.
+geometry), CSS-scaled to a fixed 480 px height with
+`image-rendering: pixelated` so glyph edges stay pixel-aligned.
+Full repaint per tick.
 
 - `src/web/canvas-renderer.ts`: `CanvasTextRenderer.render(chars,
   cols, rows)`. Builds each row as a single string and draws with
   one `fillText` call (1200 calls/sec at 60 Hz × 20 rows; per-cell
-  would have been 96k/sec). Native monospace font for glyphs —
-  phase 7 swaps for a CG-ROM glyph atlas. Empty frames (cols=0
+  would have been 96k/sec). Native monospace font for glyphs — a
+  future CG-ROM glyph atlas would replace it. Empty frames (cols=0
   before SET MODE) leave the previous content rather than clearing.
 - Worker ships `chars` as a transferable `ArrayBuffer` so 80×20 =
   1600 bytes/frame doesn't structured-clone. ASCII string still
@@ -177,11 +163,10 @@ also works in the browser.
   `src/main.ts` updated to import from there.
 - `debug-symbols.ts` uses `node:fs` / `node:crypto` at module top
   to persist labels to disk. An esbuild `onResolve` plugin
-  redirects `./debug-symbols.js` to a browser stub
-  (`debug-symbols-browser.ts`) for the web bundles. The stub
-  exports the same surface but every label-write is a no-op —
-  the worker passes `syms = null` so dispatch never reaches
-  them. OPFS-backed persistence is its own follow-up.
+  redirects `./debug-symbols.js` to a browser-side equivalent
+  (`debug-symbols-browser.ts`). At this phase the browser version
+  was a no-op stub; phase 7 wired it up against OPFS for real
+  label persistence.
 - `protocol.ts`: `command` (inbound) carries a typed REPL line;
   `out` (outbound) buffers stdout chunks for the pane.
 - `worker.ts`: builds a `DebugState` + `installWatchHooks` at
@@ -223,14 +208,24 @@ code path.
 | Breakpoints / Watches | `DebugSnapshot.{breakpoints,ramWatches,portWatches}`; add/remove posts the matching REPL line | every tick (4c) |
 | Stack | `DebugSnapshot.callStack` | every tick (4c) |
 
-### Phase 5: Persistence
+### Phase 5: Persistence (partial)
 
-- IndexedDB → already replaced by OPFS. ✓
-- `localStorage` for last variant + DIP overrides + breakpoint
-  list + panel layout. Boot screen reads on render; panels update
-  after every change.
-- "Reset" button returns to the boot screen with the same
-  selections pre-filled from `/settings.json`.
+What's landed:
+
+- OPFS replaces IndexedDB for ROMs (md5-content-addressed) and
+  for the per-variant index files. ✓
+- Boot screen reads last-used variant + DIP overrides from
+  `/settings.json` and pre-fills the form. ✓
+- Cross-variant ROM resolution: a ROM uploaded against variant A
+  is auto-detected when the user switches to variant B if the
+  descriptor md5 matches. ✓
+- OPFS-backed symbol files (phase 7). ✓
+
+Still open:
+
+- `localStorage` for the active breakpoint / watch list and any
+  panel-layout preferences, so they survive a worker terminate
+  + re-boot.
 
 ### Phase 6: Keyboard input ✓ (committed)
 
@@ -299,20 +294,14 @@ implementation that reads / writes `syms/*.sym` text files via
    config. If similar guards appear, add them to the define block;
    don't try `process.env: "({})"` (esbuild rejects).
 
-2. **`debug.ts` references `process.stdout.write` heavily.** Today
-   it's tree-shaken out of the web bundle (the boot screen doesn't
-   import it). When phase 4 wires the debugger, replace
-   `ctx.println` / `process.stdout.write` calls with a write
-   callback the worker provides — don't import `debug.ts`'s
-   stdout-using code paths into the web bundle.
+2. **OPFS API surface.** Hand-rolled `RootDir` type in `opfs.ts`
+   because the standard-lib `FileSystemDirectoryHandle` types
+   aren't reachable through this tsconfig. Same hand-rolled
+   shape recurs in `debug-symbols-browser.ts` for the syms dir.
+   Consider adding `"DOM.AsyncIterable"` to `tsconfig.json`'s
+   `lib` if the typing gets awkward.
 
-3. **OPFS API surface.** I used a hand-rolled type for `RootDir`
-   in `opfs.ts` because the standard lib types `FileSystemDirectoryHandle`
-   etc. weren't available in this tsconfig. If the typing is
-   awkward in phase 2 work, consider adding `"DOM.AsyncIterable"`
-   to `tsconfig.json`'s `lib`.
-
-4. **Hook caching gotcha.** The session-start hook engine caches
+3. **Hook caching gotcha.** The session-start hook engine caches
    `.claude/settings.json`. If you edit the hook config inside a
    session, a session restart is needed for the change to take
    effect. The PreToolUse `Bash(git commit *)` hook in this repo
@@ -346,19 +335,6 @@ implementation that reads / writes `syms/*.sym` text files via
 - Update README's TODO list in the same commit as the feature
   work. There's a PreToolUse hook that reminds you on every
   `git commit *`.
-
-## Open questions to resolve before phase 4
-
-- **Symbol files in the browser.** Fetch as static assets, or
-  inline at build time? Inline is lighter (~tens of KB) and avoids
-  a fetch dance during the chips command. Decide before phase 4
-  starts.
-- **Worker debug ↔ syms file editing.** `label`/`unlabel` REPL
-  commands today write to `syms/*.sym` via fs. In the web
-  context, those writes have nowhere to go. Options: serve
-  `syms/*` writeable via OPFS (`/syms/<id>.sym`), or downgrade
-  the commands to in-memory only and add an "Export symbols"
-  button. Decide before wiring the REPL pane.
 
 ## File index after phase 7
 

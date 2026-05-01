@@ -29,9 +29,9 @@ const log = getLogger("web/worker");
 
 // Run loop: per wall-clock tick advance the emulator by one VBL
 // period's worth of CPU cycles, then post a frame update. 60 Hz wall
-// pacing comes from setTimeout — close enough for first-light; rAF
-// isn't available in workers, and OffscreenCanvas-driven rAF lives
-// behind the canvas renderer that's still phase 3.
+// pacing comes from setTimeout — rAF isn't available in worker
+// contexts, and the UI thread already throttles its repaints to a
+// real rAF when the tick lands.
 const Z80_HZ = 4_000_000;
 const FRAME_CYCLES = Math.round(Z80_HZ / VBL_HZ);
 const FRAME_INTERVAL_MS = Math.round(1000 / VBL_HZ);

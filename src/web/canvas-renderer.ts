@@ -3,11 +3,10 @@
 // every tick; we paint each cell with the platform's monospace
 // font scaled to fit an 8×16 logical cell.
 //
-// Phase 7 will replace this with a glyph atlas pulled from the PC-88
-// CG/kanji ROM so katakana + the box-drawing range render correctly.
-// For now the JIS X 0201 lower half (0x20-0x7E) overlaps ASCII so
-// native font rendering is good enough to read banners and BASIC
-// prompts.
+// A future CG/kanji-ROM glyph atlas would replace this so katakana
+// and the box-drawing range render correctly; for now the JIS X
+// 0201 lower half (0x20-0x7E) overlaps ASCII, so native font
+// rendering is good enough to read banners and BASIC prompts.
 
 const CELL_W = 8;
 const CELL_H = 16;

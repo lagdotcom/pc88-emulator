@@ -65,7 +65,7 @@ export interface SymbolFile {
 
 // Read-only view used by callers that just want to look symbols up
 // (disassembler, debugger prompt). Trivially backed by SymbolFile
-// but composeable: in phase 2 we'll merge per-ROM + RAM + port
+// but composeable — `mergeSymbolTables` stacks per-ROM + RAM + port
 // tables behind this same interface.
 export interface SymbolTable {
   lookup(addr: u16): string | undefined;

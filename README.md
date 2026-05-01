@@ -110,7 +110,7 @@ yarn zex zexall          # same, all-behaviour variant
 yarn pc88                # boot mkI N-BASIC, dump TVRAM after maxOps
 yarn dis <file>          # disassemble any raw ROM file (no emulation)
 yarn web                 # esbuild watch for the browser bundle
-yarn build:web           # tsc -noEmit + production browser bundle to web/app.js
+yarn build:web           # tsc -noEmit + production browser bundles to web/{app,worker}.js
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
@@ -320,8 +320,8 @@ Roughly ordered by what's blocking what.
   / Watches panels post the matching REPL command (`break`, `bd`,
   `bw`, `unbw`, `bp`, `unbp`) on add/remove so panel actions and
   typed REPL commands hit the same code path. Native monospace
-  font for now; phase 7 swaps to a CG-ROM glyph atlas. See
-  `WEB_GUI_PLAN.md` for phasing.
+  font for now; a CG/kanji-ROM glyph atlas is deferred until those
+  ROM images are in tree. See `WEB_GUI_PLAN.md` for phasing.
   Sub-items still open:
   - [x] Move emulator into a Web Worker; 60 Hz frame pump.
   - [x] `<canvas>` text-mode renderer (replace `toASCIIDump()` `<pre>`).
@@ -360,10 +360,12 @@ Roughly ordered by what's blocking what.
   CRTC+DMAC visible region. A second case runs `--basic=n88` to the
   "How many files(0-15)?" disk-config prompt and asserts the prompt
   string in the visible region; boot stalls past that on keyboard
-  input (no input source wired to the key matrix yet). When that
-  lands, tighten the assertion to require the N88 banner past the
-  prompt. ROMs go in `roms/` (gitignored) — see
-  `src/machines/variants/mk1.ts` for filenames + md5s.
+  input — `Keyboard.pressKey(row, col)` is wired now (the web UI
+  uses it via `src/web/keymap.ts`), but the headless test doesn't
+  drive the matrix yet. Once it does, tighten the assertion to
+  require the N88 banner past the prompt. ROMs go in `roms/`
+  (gitignored) — see `src/machines/variants/mk1.ts` for filenames
+  + md5s.
 - [x] **N88-BASIC print path reaches TVRAM**. Root cause was the
   IRQ controller bit layout: real PC-88 wires port 0xE6 as
   `bit 0=RTC, bit 1=SOUND, bit 2=VBL` and the μPD8214 priority

@@ -62,9 +62,8 @@ function variantSlug(machine: PC88Machine): string {
 }
 
 // Determine which ROM id is mapped at `addr` right now, given the
-// machine's live memory-map state. Returns null for RAM regions
-// (those will be in a separate variant-wide RAM symbol file in
-// phase 3).
+// machine's live memory-map state. Returns null for RAM regions —
+// those route to the variant-wide RAM symbol file (`ramFile`).
 export function romIdAt(machine: PC88Machine, addr: u16): string | null {
   const mm = machine.memoryMap;
   if (!mm.basicROMEnabled) return null;
@@ -103,8 +102,8 @@ function activeEromDescriptor(machine: PC88Machine): ROMDescriptor | undefined {
   }
 }
 
-// Type alias for u16 to avoid pulling flavours into a debug-only
-// module — phase 3 might split this file out further.
+// Local u16 alias so this module doesn't have to drag the flavours
+// branding into its public surface.
 type u16 = number;
 
 // Bytes for whichever ROM image is mapped at `addr`. Used by the
