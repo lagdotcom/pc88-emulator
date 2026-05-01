@@ -524,8 +524,9 @@ is a noisy-once 0xff read / no-op write at the bus default):
 0xF0         IRQ vector latch        (sub-cpu.ts)
 0xF4         drive-mode register     (sub-cpu.ts)
 0xFA-0xFB    μPD765a FDC             (μPD765a.ts: SPECIFY, SENSE,
-                                      RECAL, SEEK, READ ID/DATA;
-                                      WRITE/FORMAT still TODO)
+                                      RECAL, SEEK, READ ID, READ DATA,
+                                      WRITE DATA, FORMAT TRACK;
+                                      SCAN family still TODO)
 0xFC-0xFF    μPD8255 PPI (sub side)  (same chip as the main-side line)
 ```
 

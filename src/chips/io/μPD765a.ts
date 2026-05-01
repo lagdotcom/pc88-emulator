@@ -1,4 +1,7 @@
+import type { IOBus } from "../../core/IOBus.js";
+import { makeSector } from "../../disk/d88.js";
 import type { FloppyDrive } from "../../disk/drive.js";
+import type { Sector } from "../../disk/types.js";
 import type {
   Cylinder,
   Head,
@@ -7,7 +10,6 @@ import type {
   SizeCode,
   u8,
 } from "../../flavours.js";
-import type { IOBus } from "../../core/IOBus.js";
 import { getLogger } from "../../log.js";
 import { asU8, byte } from "../../tools.js";
 
@@ -155,6 +157,15 @@ export class μPD765a {
   private currentR: Record = 0 as Record;
   private currentSectorIdx: SectorIndex = 0 as SectorIndex;
 
+  // FORMAT TRACK accumulators. The CPU streams 4 bytes (C, H, R, N)
+  // per sector; on the last byte we synthesise a Sector filled with
+  // `formatFillByte` and push to `formatSectors`. After all sectors
+  // are received the track is committed via FloppyDrive.formatCurrentTrack.
+  private formatIdBuffer: u8[] = [];
+  private formatSectors: Sector[] = [];
+  private formatSectorsRemaining = 0;
+  private formatFillByte: u8 = 0;
+
   private drives: (FloppyDrive | null)[] = [null, null];
   private pcn: u8[] = [0, 0];
   // SE bit pending per drive — surfaced (and cleared) by
@@ -239,7 +250,10 @@ export class μPD765a {
       return;
     }
     if (this.phase === "data-write") {
-      log.warn(`data-write phase byte 0x${byte(value)} (TODO: write commands)`);
+      const code = this.command & CMD_MASK;
+      if (code === CMD.WRITE_DATA) this.acceptWriteDataByte(value);
+      else if (code === CMD.FORMAT_TRACK) this.acceptFormatIDByte(value);
+      else log.warn(`data-write byte 0x${byte(value)} for command 0x${byte(this.command)}`);
       return;
     }
     log.warn(`unexpected data write 0x${byte(value)} in phase ${this.phase}`);
@@ -271,6 +285,8 @@ export class μPD765a {
       case CMD.SEEK: this.cmdSeek(); break;
       case CMD.READ_ID: this.cmdReadID(); break;
       case CMD.READ_DATA: this.cmdReadData(); break;
+      case CMD.WRITE_DATA: this.cmdWriteData(); break;
+      case CMD.FORMAT_TRACK: this.cmdFormatTrack(); break;
       default:
         log.warn(`command 0x${byte(this.command)} not implemented yet`);
         this.endWithST0(ST0.IC_INVALID_CMD);
@@ -494,6 +510,178 @@ export class μPD765a {
     this.dataBuffer = next.sector.data;
     this.dataIndex = 0;
     this.currentSectorIdx = next.index;
+  }
+
+  // 05h WRITE DATA — find sector matching {C,H,R,N}, accept its data
+  // bytes from the CPU through writeDataReg, commit each one back to
+  // the disk via FloppyDrive.writeSector, advance R, terminate at
+  // EOT (or the multi-track flip). Mirrors cmdReadData but in the
+  // CPU→disk direction.
+  private cmdWriteData(): void {
+    const { us } = this.decodeDriveHead(this.paramBytes[0]!);
+    const c = (this.paramBytes[1]! & 0xff) as Cylinder;
+    const h = (this.paramBytes[2]! & 0xff) as Head;
+    const r = (this.paramBytes[3]! & 0xff) as Record;
+    const n = (this.paramBytes[4]! & 0xff) as SizeCode;
+    this.targetEOT = this.paramBytes[5]!;
+    this.targetN = n;
+    this.targetH = h;
+    this.currentR = r;
+
+    const drive = this.drives[us];
+    if (!drive || !drive.isReady()) {
+      this.endWithST0(this.makeST0(ST0.IC_ABNORMAL, ST0.NR));
+      return;
+    }
+    if (drive.isWriteProtected()) {
+      this.enterRWResult(this.makeST0(ST0.IC_ABNORMAL), ST1.NW, 0, c, h, r, n);
+      return;
+    }
+    const match = drive.scanForSector(h, r, n);
+    if (!match) {
+      this.enterRWResult(this.makeST0(ST0.IC_ABNORMAL), ST1.ND, 0, c, h, r, n);
+      return;
+    }
+    const matchedC = match.sector.id.c;
+    if (matchedC !== c) {
+      const st2 = matchedC === 0xff ? ST2.WC | ST2.BC : ST2.WC;
+      this.enterRWResult(this.makeST0(ST0.IC_ABNORMAL), ST1.ND, st2, matchedC, h, r, n);
+      return;
+    }
+    this.dataBuffer = new Uint8Array(128 << n);
+    this.dataIndex = 0;
+    this.currentSectorIdx = match.index;
+    this.phase = "data-write";
+  }
+
+  private acceptWriteDataByte(value: u8): void {
+    const buf = this.dataBuffer!;
+    buf[this.dataIndex] = value;
+    this.dataIndex++;
+    if (this.dataIndex >= buf.length) this.commitWriteDataSector();
+  }
+
+  // One sector's worth of bytes received: write it back and either
+  // advance to the next R or terminate. EN flag mirrors cmdReadData's
+  // EOT handling; multi-track (MT) crosses to head 1 when head 0
+  // hits EOT.
+  private commitWriteDataSector(): void {
+    const drive = this.drives[this.selectedDrive]!;
+    drive.writeSector(this.targetH, this.currentSectorIdx, this.dataBuffer!);
+
+    if (this.currentR >= this.targetEOT) {
+      const mt = (this.command & CMD_FLAGS.MT) !== 0;
+      if (mt && this.targetH === 0) {
+        this.targetH = 1 as Head;
+        this.currentR = 1 as Record;
+      } else {
+        this.enterRWResult(
+          this.makeST0(0),
+          ST1.EN,
+          0,
+          drive.cylinder,
+          this.targetH,
+          this.currentR,
+          this.targetN,
+        );
+        return;
+      }
+    } else {
+      this.currentR = ((this.currentR + 1) & 0xff) as Record;
+    }
+    const next = drive.scanForSector(this.targetH, this.currentR, this.targetN);
+    if (!next) {
+      this.enterRWResult(
+        this.makeST0(ST0.IC_ABNORMAL),
+        ST1.ND,
+        0,
+        drive.cylinder,
+        this.targetH,
+        this.currentR,
+        this.targetN,
+      );
+      return;
+    }
+    this.currentSectorIdx = next.index;
+    this.dataBuffer = new Uint8Array(128 << this.targetN);
+    this.dataIndex = 0;
+  }
+
+  // 0Dh FORMAT TRACK — take 5 params (drive/head, N, SC, GPL, FILL),
+  // then read 4*SC bytes from the CPU describing each sector's
+  // {C,H,R,N}. After all IDs received, commit a fresh track filled
+  // with the FILL byte at every sector's data field.
+  private cmdFormatTrack(): void {
+    const { us, hd } = this.decodeDriveHead(this.paramBytes[0]!);
+    const n = (this.paramBytes[1]! & 0xff) as SizeCode;
+    const sc = this.paramBytes[2]! & 0xff;
+    this.targetN = n;
+    this.targetH = hd as unknown as Head;
+    this.formatSectorsRemaining = sc;
+    this.formatFillByte = (this.paramBytes[4]! & 0xff) as u8;
+    this.formatSectors = [];
+    this.formatIdBuffer = [];
+
+    const drive = this.drives[us];
+    if (!drive || !drive.isReady()) {
+      this.endWithST0(this.makeST0(ST0.IC_ABNORMAL, ST0.NR));
+      return;
+    }
+    if (drive.isWriteProtected()) {
+      this.enterRWResult(
+        this.makeST0(ST0.IC_ABNORMAL),
+        ST1.NW,
+        0,
+        drive.cylinder,
+        hd,
+        0,
+        n,
+      );
+      return;
+    }
+    if (sc === 0) {
+      this.commitFormat();
+      return;
+    }
+    this.phase = "data-write";
+  }
+
+  private acceptFormatIDByte(value: u8): void {
+    this.formatIdBuffer.push(value);
+    if (this.formatIdBuffer.length < 4) return;
+    const [c, h, r, sectorN] = this.formatIdBuffer;
+    this.formatIdBuffer = [];
+    const dataLen = 128 << (sectorN! & 0xff);
+    const data = new Uint8Array(dataLen).fill(this.formatFillByte);
+    this.formatSectors.push(
+      makeSector(
+        (c! & 0xff) as Cylinder,
+        (h! & 0xff) as Head,
+        (r! & 0xff) as Record,
+        (sectorN! & 0xff) as SizeCode,
+        data,
+      ),
+    );
+    this.formatSectorsRemaining--;
+    if (this.formatSectorsRemaining <= 0) this.commitFormat();
+  }
+
+  private commitFormat(): void {
+    const drive = this.drives[this.selectedDrive]!;
+    drive.formatCurrentTrack(this.targetH, this.formatSectors);
+    // Datasheet says the result-phase C/H/R/N from FORMAT TRACK is
+    // "indeterminate"; emulators typically emit the post-format
+    // cylinder + head with R/N zeroed.
+    this.enterRWResult(
+      this.makeST0(0),
+      0,
+      0,
+      drive.cylinder,
+      this.targetH,
+      0,
+      this.targetN,
+    );
+    this.formatSectors = [];
   }
 
   // Read/write 7-byte result emit: ST0 / ST1 / ST2 / C / H / R / N.

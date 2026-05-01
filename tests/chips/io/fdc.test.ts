@@ -11,7 +11,14 @@ import {
 import { IOBus } from "../../../src/core/IOBus.js";
 import { FloppyDrive } from "../../../src/disk/drive.js";
 import type { Cylinder } from "../../../src/flavours.js";
-import { buildTestDisk, fillSectorData as fillData } from "../../tools.js";
+import {
+  buildTestDisk,
+  fillSectorData as fillData,
+  H,
+  N,
+  R,
+  S,
+} from "../../tools.js";
 
 function setup() {
   const bus = new IOBus();
@@ -235,3 +242,127 @@ describe("μPD765a IRQ + snapshot", () => {
     expect(reconstituted).toEqual(snap);
   });
 });
+
+describe("μPD765a WRITE DATA", () => {
+  it("writes one sector and round-trips through the drive", () => {
+    const { bus, drive0 } = setup();
+    const payload = fillData(0x80, 256);
+    // WRITE DATA, drive 0, head 0, C=0 H=0 R=1 N=1, EOT=1, GPL=0x1b, DTL=0xff
+    writeCmd(bus, CMD.WRITE_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
+    // After the command setup, MSR should report data-write phase
+    // (CB on, DIO clear) — we're providing bytes to the chip.
+    expect(bus.read(0xfa) & MSR.CB).toBe(MSR.CB);
+    expect(bus.read(0xfa) & MSR.DIO).toBe(0);
+    for (const b of payload) bus.write(0xfb, b);
+    const r = readResult(bus, 7);
+    expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_NORMAL);
+
+    // (h, r, n) — drive head is at cylinder 0
+    const stored = drive0.scanForSector(H(0), R(1), N(1))!.sector.data;
+    expect(Array.from(stored)).toEqual(Array.from(payload));
+  });
+
+  it("flags NW + abnormal on a write-protected disk", () => {
+    const fdc = new μPD765a();
+    const bus = new IOBus();
+    fdc.register(bus);
+    const drive = new FloppyDrive();
+    drive.insert(buildTestDisk({ name: "PROT", writeProtected: true }));
+    drive.motorOn = true;
+    fdc.attachDrive(0, drive);
+    writeCmd(bus, CMD.WRITE_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
+    const r = readResult(bus, 7);
+    expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
+    expect(r[1]! & 0x02).toBe(0x02); // ST1.NW
+  });
+
+  it("flags ND when the sector ID is not on the track", () => {
+    const { bus } = setup();
+    writeCmd(bus, CMD.WRITE_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x99, 0x01, 0x01, 0x1b, 0xff);
+    const r = readResult(bus, 7);
+    expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
+    expect(r[1]! & 0x04).toBe(0x04); // ST1.ND
+  });
+
+  it("writes multiple sectors when EOT extends past R", () => {
+    const { bus, drive0 } = setup();
+    const s1 = fillData(0x10, 256);
+    const s2 = fillData(0x20, 256);
+    writeCmd(bus, CMD.WRITE_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x02, 0x1b, 0xff);
+    for (const b of s1) bus.write(0xfb, b);
+    for (const b of s2) bus.write(0xfb, b);
+    readResult(bus, 7);
+    // (h, r, n) — drive head still at cylinder 0. After scanning R=1
+    // the rotation cursor advances past it, so reset before R=2.
+    expect(
+      Array.from(drive0.scanForSector(H(0), R(1), N(1))!.sector.data),
+    ).toEqual(Array.from(s1));
+    drive0.rotation = S(0);
+    expect(
+      Array.from(drive0.scanForSector(H(0), R(2), N(1))!.sector.data),
+    ).toEqual(Array.from(s2));
+  });
+});
+
+describe("μPD765a FORMAT TRACK", () => {
+  it("rewrites the track with synthesised sectors", () => {
+    const { bus, drive0 } = setup();
+    const FILL = 0xe5;
+    const SC = 4;
+    // FORMAT TRACK: drive 0 head 0, N=1, SC=4, GPL=0x1b, FILL=0xe5
+    writeCmd(bus, CMD.FORMAT_TRACK | CMD_FLAGS.MF, 0x00, 0x01, SC, 0x1b, FILL);
+    // 4 sectors × 4 ID bytes = 16 bytes of CHRN data
+    const ids = [
+      0, 0, 1, 1,
+      0, 0, 2, 1,
+      0, 0, 3, 1,
+      0, 0, 4, 1,
+    ];
+    for (const b of ids) bus.write(0xfb, b);
+    const r = readResult(bus, 7);
+    expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_NORMAL);
+
+    for (let i = 1; i <= SC; i++) {
+      const match = drive0.scanForSector(H(0), R(i), N(1));
+      expect(match).toBeDefined();
+      expect(Array.from(match!.sector.data)).toEqual(Array(256).fill(FILL));
+      drive0.rotation = S(0);
+    }
+  });
+
+  it("flags NW on a write-protected disk", () => {
+    const fdc = new μPD765a();
+    const bus = new IOBus();
+    fdc.register(bus);
+    const drive = new FloppyDrive();
+    drive.insert(buildTestDisk({ writeProtected: true }));
+    drive.motorOn = true;
+    fdc.attachDrive(0, drive);
+    writeCmd(bus, CMD.FORMAT_TRACK | CMD_FLAGS.MF, 0x00, 0x01, 0x04, 0x1b, 0xe5);
+    const r = readResult(bus, 7);
+    expect(r[0]! & ST0.IC_MASK).toBe(ST0.IC_ABNORMAL);
+    expect(r[1]! & 0x02).toBe(0x02); // ST1.NW
+  });
+
+  it("re-stores motor + READ DATA round-trips after FORMAT", () => {
+    const { bus, drive0 } = setup();
+    writeCmd(bus, CMD.FORMAT_TRACK | CMD_FLAGS.MF, 0x00, 0x01, 0x02, 0x1b, 0xc3);
+    for (const b of [0, 0, 1, 1, 0, 0, 2, 1]) bus.write(0xfb, b);
+    readResult(bus, 7);
+
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x02, 0x1b, 0xff);
+    const data: number[] = [];
+    while (
+      (bus.read(0xfa) & (MSR.RQM | MSR.DIO | MSR.CB)) ===
+      (MSR.RQM | MSR.DIO | MSR.CB)
+    ) {
+      data.push(bus.read(0xfb));
+      if (data.length > 1024) break;
+    }
+    // 2 sectors of 256 bytes each + 7 result bytes
+    expect(data.length).toBe(2 * 256 + 7);
+    for (let i = 0; i < 512; i++) expect(data[i]).toBe(0xc3);
+    void drive0;
+  });
+});
+

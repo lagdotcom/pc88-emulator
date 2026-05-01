@@ -32,12 +32,12 @@ Working:
 
 Not yet built:
 
-- FDC (μPD765a) — read-side commands shipped (`src/chips/io/μPD765a.ts`):
-  SPECIFY, SENSE DRIVE STATUS, SENSE INTERRUPT STATUS, RECALIBRATE,
-  SEEK, READ ID, READ DATA. The chip exposes its INT line as a
-  callback; SubCPU wires it to `cpu.requestIrq`. Write-side commands
-  (WRITE DATA, FORMAT TRACK, SCAN), DMA mode, and cycle-accurate
-  timing are still TODO.
+- FDC (μPD765a) — both read and write commands shipped
+  (`src/chips/io/μPD765a.ts`): SPECIFY, SENSE DRIVE STATUS, SENSE
+  INTERRUPT STATUS, RECALIBRATE, SEEK, READ ID, READ DATA, WRITE
+  DATA, FORMAT TRACK. The chip exposes its INT line as a callback;
+  SubCPU wires it to `cpu.requestIrq`. SCAN family, DMA mode, and
+  cycle-accurate timing are still TODO.
 - Sub-CPU model (mkII+ has a second Z80 driving the FDC via the
   `μPD8255` PPI at 0xFC-0xFF). The PPI + the SubCPU + integration
   into `PC88Machine` are wired: when a variant has
@@ -296,16 +296,18 @@ Roughly ordered by what's blocking what.
 
 ### Chips
 
-- [x] **μPD765a FDC — read path**. `src/chips/io/μPD765a.ts` ships
-  the four-phase command/result state machine + symbolic MSR /
-  ST0-3 / CMD enums, and the read-side commands (SPECIFY, SENSE
-  DRIVE STATUS, SENSE INTERRUPT STATUS, RECALIBRATE, SEEK, READ ID,
-  READ DATA with multi-track). Drives mount via `attachDrive()`;
-  the chip's INT callback wires through SubCPU to
+- [x] **μPD765a FDC — read + write path**. Four-phase
+  command/result state machine + symbolic `MSR` / `ST0-3` / `CMD` /
+  `CMD_FLAGS` enums. Commands: SPECIFY, SENSE DRIVE STATUS, SENSE
+  INTERRUPT STATUS, RECALIBRATE, SEEK, READ ID, READ DATA (incl.
+  multi-track), WRITE DATA (incl. multi-sector + multi-track +
+  write-protect), FORMAT TRACK (synthesises sectors from a streamed
+  CHRN list, fills data fields with the FILL byte). Drives mount via
+  `attachDrive()`; the chip's INT callback wires through SubCPU to
   `cpu.requestIrq()`. Registered on the SubCPU IOBus at 0xFA-0xFB.
-- [ ] **μPD765a FDC — write path**. WRITE DATA, FORMAT TRACK,
-  SCAN family. Plumbing matches the read path (data-write phase
-  already a stub), each command is a small addition.
+- [ ] **μPD765a FDC — SCAN family**. SCAN EQUAL / SCAN LO-EQ /
+  SCAN HI-EQ — comparison commands few PC-88 BIOSes use. Plumbing
+  matches READ DATA closely; deferred until something exercises it.
 - [ ] **Cycle-accurate FDC timing**. Seek/step rate, head load /
   unload, rotational latency. Today the chip transitions phases
   on demand. Copy-protected disks need the real silicon timing.
