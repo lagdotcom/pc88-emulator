@@ -879,10 +879,10 @@ Project-wide hooks live in `.claude/settings.json`:
 
 Active branch: `claude/continue-web-gui-0cis8`. Never push to `main`.
 
-GitHub MCP tools are restricted to `lagdotcom/killchain` and
-`lagdotcom/pc88-emulator`. Direct `git push` works for this branch in
-this workspace; if it fails with 403, the access change usually
-propagates after a session restart.
+GitHub MCP tools are restricted to `lagdotcom/pc88-emulator`.
+Direct `git push` works for this branch in this workspace; if
+it fails with 403, the access change usually propagates after a
+session restart.
 
 ## Open architectural decisions before FDC work
 
