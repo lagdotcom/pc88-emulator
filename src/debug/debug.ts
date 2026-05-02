@@ -1,4 +1,9 @@
-import { disassemble } from "../chips/z80/disasm.js";
+import {
+  disassemble,
+  type DisasmOptions,
+  type ResolveLabel,
+  type ResolvePort,
+} from "../chips/z80/disasm.js";
 import { mOps } from "../flavour.makers.js";
 import type {
   Bytes,
@@ -21,9 +26,11 @@ import { byte, word } from "../tools.js";
 import {
   addLabel,
   addPortLabel,
+  addSubLabel,
   type DebugSymbols,
   deleteLabel,
   deletePortLabel,
+  deleteSubLabel,
   renderLabelList,
 } from "./debug-symbols.js";
 
@@ -61,6 +68,10 @@ export function makeDebugState(initialBreakpoints: u16[] = []): DebugState {
     pcTrace: new Uint16Array(PC_TRACE_SIZE),
     pcTraceWrite: 0,
     pcTraceFilled: 0,
+    subBreakpoints: new Set(),
+    subPcTrace: new Uint16Array(PC_TRACE_SIZE),
+    subPcTraceWrite: 0,
+    subPcTraceFilled: 0,
   };
 }
 
@@ -148,6 +159,15 @@ export interface DebugState {
   pcTrace: Uint16Array;
   pcTraceWrite: number; // next slot to write
   pcTraceFilled: number; // 0..PC_TRACE_SIZE
+  // Sub-CPU bookkeeping. Mirror of the main fields; checked /
+  // populated only when `machine.subcpu` is non-null. Sub
+  // breakpoints stop the whole run when hit (same as main); the
+  // PC ring buffer captures up to one entry per sub instruction
+  // executed inside `subcpu.runCycles`.
+  subBreakpoints: Set<u16>;
+  subPcTrace: Uint16Array;
+  subPcTraceWrite: number;
+  subPcTraceFilled: number;
 }
 
 const MAX_CALL_STACK_DEPTH = 256;
@@ -157,37 +177,55 @@ export const PC_TRACE_SIZE = 64;
 // sweet spot for "what got us here".
 const AUTO_TRACE_LINES = 8;
 
-const HELP = `\
-Debugger commands (anything in <> takes a hex address; "0x" optional):
-
+// Help is split into topics so each section can grow without making
+// the top-level listing unscannable. `help` (no arg) prints the
+// overview + topic list; `help <topic>` prints just that topic.
+// Adding a new command? Pick the topic it belongs to and grow that
+// section, not the overview.
+const HELP_TOPICS: { readonly [topic: string]: string } = {
+  step: `\
 Stepping / running:
   s, step                 single-step one instruction
   n, next                 step over (CALL/RST → run until after the call)
   c, continue [cycles]    run until breakpoint / watch / halt / op cap;
                           with a numeric arg, also stop after N CPU cycles
   q, quit, exit           leave the debugger / end script
-
-Code breakpoints:
+`,
+  break: `\
+Code breakpoints (main CPU):
   b, break <addr>         add a code breakpoint at <addr>
   bd, unbreak <addr>      remove a code breakpoint
   bl, breaks              list code breakpoints
 
-RAM watchpoints (stop on access):
+Sub-CPU breakpoints (separate from main):
+  subbreak <addr>         break when sub-CPU PC hits <addr>
+  subunbreak <addr>       remove a sub breakpoint
+  subbreaks               list sub-CPU breakpoints
+`,
+  watch: `\
+RAM watchpoints (main CPU; stop or log on access):
   bw <addr> [r|w|rw] [log]  watch a RAM address; default rw, break.
                             Add "log" to print a one-line trace and
                             keep running instead of stopping.
   unbw <addr>             remove a RAM watchpoint
   bwl                     list RAM watchpoints
 
-Port watchpoints (stop on IN/OUT):
+Port watchpoints (main CPU; stop or log on IN/OUT):
   bp <port> [r|w|rw] [log]  watch an I/O port; default rw, break.
                             "log" runs through, "break" stops.
   unbp <port>             remove a port watchpoint
   bpl                     list port watchpoints
 
-Inspection:
+Examples:
+  bw 0xed72 w             stop on the next write to 0xed72
+  bw 0xed72 r log         log every read of 0xed72 without stopping
+  bp 0x71 w log           log every write to port 0x71 (boot-init noise)
+`,
+  inspect: `\
+Main CPU inspection:
   r, regs                 show CPU registers
-  chips                   show CRTC / DMAC / IRQ / sysctrl / DIP state
+  chips                   show CRTC / DMAC / IRQ / sysctrl / PPI /
+                          sub-CPU summary state
   screen                  render the CRTC+DMAC visible region
   ss, screenshot PATH     save the composited frame as PNG (CLI only)
   stack                   show the synthesised CALL/RST/IRQ call stack
@@ -199,25 +237,54 @@ Inspection:
   p, peek <addr> [count]  read N bytes (default 1) at <addr>
   pw, peekw <addr>        read 16-bit little-endian word at <addr>
   poke <addr> <value>     write a byte
+`,
+  sub: `\
+Sub-CPU commands. The sub-CPU (FDC disk-board on PC-88 mkII+ /
+mkI + PC-8031) has its own MemoryBus / IOBus / register file
+and can run while the main is stalled in a PPI handshake.
 
-Symbols:
-  label <addr> <name>     add or rename a ROM/RAM symbol
-  unlabel <addr-or-name>  remove a symbol
-  portlabel <num> <name>  add or rename a port symbol
-  unportlabel <n-or-name> remove a port symbol
-  labels                  list every loaded symbol grouped by scope
+  subregs                 show sub-CPU registers
+  subdis [count]          disassemble [count] sub instructions at sub PC
+  subpeek <addr> [count]  read N bytes from sub address space
+  subtrace [count]        sub-CPU PC ring buffer (default 16, max 64)
+  subbreak <addr>         break when sub PC hits <addr>
+  subunbreak <addr>       remove a sub breakpoint
+  subbreaks               list sub-CPU breakpoints
 
+Symbol resolution: sub disassembly + traces use the disk-ROM
+.sym file plus the per-variant <slug>.subram.sym for sub RAM
+(0x4000-0x7FFF). Port labels are shared with the main side.
+`,
+  syms: `\
+Symbols (writes go directly to syms/*.sym files):
+  label <addr> <name>      add / rename a main-CPU ROM/RAM symbol
+  unlabel <addr-or-name>   remove a main-CPU symbol
+  sublabel <addr> <name>   add / rename a sub-CPU ROM/RAM symbol
+  unsublabel <a-or-name>   remove a sub-CPU symbol
+  portlabel <num> <name>   add / rename a port symbol
+  unportlabel <n-or-name>  remove a port symbol
+  labels                   list every loaded symbol grouped by scope
+`,
+  misc: `\
 Misc:
-  h, ?, help              this help
+  h, ?, help              show topic overview
+  help <topic>            show one topic (step / break / watch /
+                          inspect / sub / syms / misc)
   # any line              comment (in scripts; ignored in REPL)
+`,
+};
 
-Watchpoint examples:
-  bw 0xed72 w             stop the next time anything writes to 0xed72
-  bw 0xed72 r             stop on read
-  bw 0xed72               stop on either (= "rw")
-  bw 0xed72 w log         log every write to 0xed72 without stopping
-  bp 0x71 rw              stop on any IN/OUT against port 0x71
-  bp 0x71 w log           log writes to port 0x71 (boot-init noise)
+const HELP_OVERVIEW = `\
+Debugger commands. Anything in <> takes a hex address ("0x" optional).
+Type "help <topic>" for the full listing of a section:
+
+  step      stepping / running / quit
+  break     code breakpoints (main + sub)
+  watch     RAM + port watchpoints
+  inspect   regs / chips / dis / peek / screen / trace / stack
+  sub       sub-CPU mirror commands
+  syms      label / portlabel / labels
+  misc      anything else
 `;
 
 // Parse a cycle-count argument (no u16 wrap, can be larger than
@@ -321,8 +388,11 @@ export function trackedStep(machine: PC88Machine, state: DebugState): void {
   const beforeCycles = machine.cpu.cycles;
   stepOneInstruction(machine);
   if (machine.subcpu) {
-    const delta = (machine.cpu.cycles - beforeCycles) as Cycles;
-    machine.subcpu.runCycles(delta);
+    runSubCyclesTracked(
+      machine,
+      state,
+      (machine.cpu.cycles - beforeCycles) as Cycles,
+    );
   }
   state.ops++;
 
@@ -367,6 +437,33 @@ export function trackedStep(machine: PC88Machine, state: DebugState): void {
 
 interface WatchHooks {
   uninstall: () => void;
+}
+
+// Drive the sub-CPU for the requested cycle delta while tracking
+// each instruction. The plain `subcpu.runCycles` loop is fine for
+// production runs but loses two pieces of debugger state: the sub
+// PC ring buffer (for the `subtrace` command) and sub-side
+// breakpoints (which need to halt the whole run when hit).
+function runSubCyclesTracked(
+  machine: PC88Machine,
+  state: DebugState,
+  budget: Cycles,
+): void {
+  const sub = machine.subcpu;
+  if (!sub) return;
+  const start = sub.cpu.cycles;
+  while (sub.cpu.cycles - start < budget) {
+    if (sub.cpu.halted && !(sub.cpu.irqLine && sub.cpu.iff1)) break;
+    const pc = sub.cpu.regs.PC;
+    state.subPcTrace[state.subPcTraceWrite] = pc;
+    state.subPcTraceWrite = (state.subPcTraceWrite + 1) % PC_TRACE_SIZE;
+    if (state.subPcTraceFilled < PC_TRACE_SIZE) state.subPcTraceFilled++;
+    sub.step();
+    if (state.subBreakpoints.has(sub.cpu.regs.PC)) {
+      state.stopReason = `sub breakpoint @ ${word(sub.cpu.regs.PC)}`;
+      return;
+    }
+  }
 }
 
 // Wrap memBus.read/write and ioBus.tracer so RAM and port watches
@@ -456,7 +553,19 @@ function parseWatchSpec(args: string[]): WatchSpec | null {
 }
 
 function printRegs(machine: PC88Machine): void {
-  const snap = machine.snapshot().cpu;
+  printRegsFromSnapshot(machine.snapshot().cpu);
+}
+
+function printSubRegs(machine: PC88Machine): void {
+  const sub = machine.subcpu;
+  if (!sub) {
+    writer("  (no sub-CPU on this machine)\n");
+    return;
+  }
+  printRegsFromSnapshot(sub.snapshot().cpu);
+}
+
+function printRegsFromSnapshot(snap: ReturnType<PC88Machine["snapshot"]>["cpu"]): void {
   const f = snap.AF & 0xff;
   const flagStr =
     (f & 0x80 ? "S" : "-") +
@@ -545,22 +654,27 @@ export function printPromptSummary(
   writer(`  @ ${word(pc)}: ${bytesStr}  ${d.mnemonic}\n`);
 }
 
-// Multi-line disassembly listing for the `dis` command. Walks
-// forward using each instruction's reported length so the next
-// line shows the actual following instruction, not a fixed offset.
-function printDisassembly(
-  machine: PC88Machine,
-  syms: DebugSymbols | null,
+// Multi-line disassembly listing for the `dis` / `subdis` command.
+// Walks forward using each instruction's reported length so the
+// next line shows the actual following instruction, not a fixed
+// offset. `read` and the resolver pair come from whichever CPU's
+// view we're rendering — main or sub.
+function printDisassemblyAt(
+  read: (a: u16) => u8,
+  startPc: u16,
   count: Bytes,
+  resolveLabel: ResolveLabel | undefined,
+  resolveExact: ResolveLabel | undefined,
+  resolvePort: ResolvePort | undefined,
 ): void {
-  let pc = machine.cpu.regs.PC;
-  const opts = syms
-    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
-    : {};
+  let pc = startPc;
+  const opts: DisasmOptions = {};
+  if (resolveLabel) opts.resolveLabel = resolveLabel;
+  if (resolvePort) opts.resolvePort = resolvePort;
   for (let i = 0; i < count; i++) {
-    const labelHere = syms?.exactResolver(pc);
+    const labelHere = resolveExact?.(pc);
     if (labelHere) writer(`${labelHere}:\n`);
-    const d = disassemble((a) => machine.memBus.read(a), pc, opts);
+    const d = disassemble((a) => read(a), pc, opts);
     const bytesStr = d.bytes
       .map((b) => byte(b))
       .join(" ")
@@ -570,14 +684,37 @@ function printDisassembly(
   }
 }
 
+function printDisassembly(
+  machine: PC88Machine,
+  syms: DebugSymbols | null,
+  count: Bytes,
+): void {
+  printDisassemblyAt(
+    (a) => machine.memBus.read(a),
+    machine.cpu.regs.PC,
+    count,
+    syms?.resolver,
+    syms?.exactResolver,
+    syms?.portResolver,
+  );
+}
+
 function doPeek(machine: PC88Machine, addr: u16, count: Bytes): void {
+  doPeekRead((a) => machine.memBus.read(a), addr, count);
+}
+
+function doPeekRead(
+  read: (a: u16) => u8,
+  addr: u16,
+  count: Bytes,
+): void {
   let line = `  ${word(addr)}:`;
   for (let i = 0; i < count; i++) {
     if (i > 0 && i % 16 === 0) {
       writer(line + "\n");
       line = `  ${word((addr + i) & 0xffff)}:`;
     }
-    line += " " + byte(machine.memBus.read((addr + i) & 0xffff));
+    line += " " + byte(read((addr + i) & 0xffff));
   }
   writer(line + "\n");
 }
@@ -694,12 +831,30 @@ function listPortWatches(state: DebugState): void {
 // next slot to fill, so the oldest of `count` entries lives at
 // `(write - count) mod size` and we walk forward from there.
 function readPcTrace(state: DebugState, n: number): u16[] {
-  const count = Math.min(n, state.pcTraceFilled);
+  return readRingTrace(state.pcTrace, state.pcTraceWrite, state.pcTraceFilled, n);
+}
+
+function readSubPcTrace(state: DebugState, n: number): u16[] {
+  return readRingTrace(
+    state.subPcTrace,
+    state.subPcTraceWrite,
+    state.subPcTraceFilled,
+    n,
+  );
+}
+
+function readRingTrace(
+  ring: Uint16Array,
+  writeIdx: number,
+  filled: number,
+  n: number,
+): u16[] {
+  const count = Math.min(n, filled);
   if (count === 0) return [];
-  const start = (state.pcTraceWrite - count + PC_TRACE_SIZE) % PC_TRACE_SIZE;
+  const start = (writeIdx - count + PC_TRACE_SIZE) % PC_TRACE_SIZE;
   const out: u16[] = [];
   for (let i = 0; i < count; i++) {
-    out.push(state.pcTrace[(start + i) % PC_TRACE_SIZE]!);
+    out.push(ring[(start + i) % PC_TRACE_SIZE]!);
   }
   return out;
 }
@@ -717,24 +872,63 @@ function printPcTrace(
   n: number,
 ): void {
   const trace = readPcTrace(state, n);
+  printPcTraceLines(
+    trace,
+    state.pcTraceFilled,
+    (a) => machine.memBus.read(a),
+    syms?.resolver,
+    syms?.exactResolver,
+    syms?.portResolver,
+  );
+}
+
+function printSubPcTrace(
+  machine: PC88Machine,
+  state: DebugState,
+  syms: DebugSymbols | null,
+  n: number,
+): void {
+  if (!machine.subcpu) {
+    writer(`  (no sub-CPU on this machine)\n`);
+    return;
+  }
+  const trace = readSubPcTrace(state, n);
+  printPcTraceLines(
+    trace,
+    state.subPcTraceFilled,
+    (a) => machine.subcpu!.memBus.read(a),
+    syms?.subResolver,
+    syms?.subExactResolver,
+    syms?.portResolver,
+  );
+}
+
+function printPcTraceLines(
+  trace: u16[],
+  filled: number,
+  read: (a: u16) => u8,
+  resolveLabel: ResolveLabel | undefined,
+  resolveExact: ResolveLabel | undefined,
+  resolvePort: ResolvePort | undefined,
+): void {
   if (trace.length === 0) {
     writer(`  (PC trace empty — nothing executed since reset)\n`);
     return;
   }
   writer(
-    `  PC trace (last ${trace.length} of ${state.pcTraceFilled} captured, oldest first):\n`,
+    `  PC trace (last ${trace.length} of ${filled} captured, oldest first):\n`,
   );
-  const opts = syms
-    ? { resolveLabel: syms.resolver, resolvePort: syms.portResolver }
-    : {};
+  const opts: DisasmOptions = {};
+  if (resolveLabel) opts.resolveLabel = resolveLabel;
+  if (resolvePort) opts.resolvePort = resolvePort;
   let lastLabel: string | undefined;
   for (const pc of trace) {
-    const exact = syms?.exactResolver(pc);
+    const exact = resolveExact?.(pc);
     if (exact && exact !== lastLabel) {
       writer(`  ${exact}:\n`);
       lastLabel = exact;
     }
-    const d = disassemble((a) => machine.memBus.read(a), pc, opts);
+    const d = disassemble((a) => read(a), pc, opts);
     writer(`    ${word(pc)}  ${d.mnemonic}\n`);
   }
 }
@@ -1168,6 +1362,158 @@ export async function dispatch(
         return { quit: false };
       }
 
+      // --- Sub-CPU mirror commands ---
+      // The sub-CPU has its own MemoryBus + IOBus + register file
+      // and can hit different code than the main even when the main
+      // is sitting still (e.g. the FDC sub-CPU running its boot ROM
+      // while the main BIOS waits on a PPI handshake). These
+      // commands inspect / break sub state without disturbing main.
+      case "subregs":
+        printSubRegs(machine);
+        return { quit: false };
+
+      case "subdis": {
+        if (!machine.subcpu) {
+          writer("  (no sub-CPU on this machine)\n");
+          return { quit: false };
+        }
+        const count = Math.min(
+          256,
+          Math.max(1, args[0] ? parseInt(args[0], 10) || 8 : 8),
+        );
+        printDisassemblyAt(
+          (a) => machine.subcpu!.memBus.read(a),
+          machine.subcpu.cpu.regs.PC,
+          count as Bytes,
+          syms?.subResolver,
+          syms?.subExactResolver,
+          syms?.portResolver,
+        );
+        return { quit: false };
+      }
+
+      case "subpeek": {
+        if (!machine.subcpu) {
+          writer("  (no sub-CPU on this machine)\n");
+          return { quit: false };
+        }
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          writer(`  usage: subpeek <addr> [count]\n`);
+          return { quit: false };
+        }
+        const count = args[1] ? Math.max(1, parseInt(args[1], 10)) : 1;
+        doPeekRead((x) => machine.subcpu!.memBus.read(x), a, count as Bytes);
+        return { quit: false };
+      }
+
+      case "subtrace": {
+        if (!machine.subcpu) {
+          writer("  (no sub-CPU on this machine)\n");
+          return { quit: false };
+        }
+        const requested = args[0] ? parseInt(args[0], 10) : 16;
+        const count =
+          Number.isFinite(requested) && requested > 0
+            ? Math.min(requested, PC_TRACE_SIZE)
+            : 16;
+        printSubPcTrace(machine, state, syms, count);
+        return { quit: false };
+      }
+
+      case "subbreak": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          writer(`  usage: subbreak <addr>\n`);
+          return { quit: false };
+        }
+        state.subBreakpoints.add(a);
+        writer(`  sub break @ ${word(a)}\n`);
+        return { quit: false };
+      }
+
+      case "subunbreak": {
+        const a = parseAddr(args[0]);
+        if (a === null) {
+          writer(`  usage: subunbreak <addr>\n`);
+          return { quit: false };
+        }
+        if (state.subBreakpoints.delete(a)) {
+          writer(`  removed sub break @ ${word(a)}\n`);
+        } else {
+          writer(`  no sub break at ${word(a)}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "subbreaks": {
+        if (state.subBreakpoints.size === 0) {
+          writer("  (no sub breakpoints set)\n");
+          return { quit: false };
+        }
+        const sorted = [...state.subBreakpoints].sort((a, b) => a - b);
+        for (const a of sorted) writer(`  ${word(a)}\n`);
+        return { quit: false };
+      }
+
+      case "sublabel": {
+        if (!syms || !opts.loadedRoms) {
+          writer(
+            `  symbols not loaded (need ROM bytes to compute md5 headers)\n`,
+          );
+          return { quit: false };
+        }
+        if (!machine.subcpu) {
+          writer(`  (no sub-CPU on this machine)\n`);
+          return { quit: false };
+        }
+        const a = parseAddr(args[0]);
+        const name = args[1];
+        if (a === null || !name) {
+          writer(`  usage: sublabel <addr> <name> [comment...]\n`);
+          return { quit: false };
+        }
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          writer(
+            `  name must start with a letter/_ and use [A-Za-z0-9_] only\n`,
+          );
+          return { quit: false };
+        }
+        const comment = args.slice(2).join(" ").trim() || undefined;
+        try {
+          const r = await addSubLabel(
+            machine,
+            opts.loadedRoms,
+            syms,
+            a,
+            name,
+            comment,
+          );
+          writer(`  sub label ${word(a)} = ${name} → ${r.path}\n`);
+        } catch (e) {
+          writer(`  sublabel failed: ${(e as Error).message}\n`);
+        }
+        return { quit: false };
+      }
+
+      case "unsublabel": {
+        if (!syms) {
+          writer(`  symbols not loaded\n`);
+          return { quit: false };
+        }
+        const arg = args[0];
+        if (!arg) {
+          writer(`  usage: unsublabel <addr-or-name>\n`);
+          return { quit: false };
+        }
+        const addrTry = parseAddr(arg);
+        const target: number | string = addrTry !== null ? addrTry : arg;
+        const r = await deleteSubLabel(machine, syms, target);
+        if (r) writer(`  unlabelled in ${r.path}\n`);
+        else writer(`  no sub-CPU symbol matches ${arg}\n`);
+        return { quit: false };
+      }
+
       case "q":
       case "quit":
       case "exit":
@@ -1175,9 +1521,24 @@ export async function dispatch(
 
       case "h":
       case "?":
-      case "help":
-        writer(HELP);
+      case "help": {
+        const topic = args[0]?.toLowerCase();
+        if (!topic) {
+          writer(HELP_OVERVIEW);
+        } else if (topic === "all") {
+          writer(HELP_OVERVIEW + "\n");
+          for (const [name, body] of Object.entries(HELP_TOPICS)) {
+            writer(`-- ${name} --\n${body}\n`);
+          }
+        } else if (HELP_TOPICS[topic]) {
+          writer(HELP_TOPICS[topic]);
+        } else {
+          writer(
+            `  unknown topic "${topic}". Available: ${Object.keys(HELP_TOPICS).join(", ")}, all\n`,
+          );
+        }
         return { quit: false };
+      }
 
       default:
         writer(

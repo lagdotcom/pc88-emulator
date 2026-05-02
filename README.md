@@ -99,8 +99,15 @@ Working enough for first-light boot:
   `break` (stop the run); `log` emits a one-line trace with PC,
   value, and PC-label and keeps running — useful when init touches
   a port hundreds of times but only one of those is the bug.
-  Per-ROM, per-variant-RAM, and per-variant port symbol files
-  (`syms/<rom-id>.sym`, `syms/<variant>.ram.sym`,
+  Sub-CPU mirror commands (`subregs` / `subdis` / `subpeek` /
+  `subtrace` / `subbreak` / `subunbreak` / `subbreaks` /
+  `sublabel` / `unsublabel`) inspect and break the FDC sub-CPU's
+  separate address space + register file. `help` is topic-paged
+  (`help <topic>` for one section, topics: step / break / watch /
+  inspect / sub / syms / misc) so it stays scannable as commands
+  accumulate. Per-ROM, per-variant-RAM, per-variant sub-RAM, and
+  per-variant port symbol files (`syms/<rom-id>.sym`,
+  `syms/<variant>.ram.sym`, `syms/<variant>.subram.sym`,
   `syms/<variant>.port.sym`) feed both the debugger disassembly and
   the standalone `yarn dis` tool.
 - Standalone `yarn dis` CLI: disassembles any raw ROM file with
@@ -336,7 +343,20 @@ Roughly ordered by what's blocking what.
   for disk-boot work because most port traffic is the polling
   loops. Both tracers are null by default; one branch per port
   write when un-hooked.
-- [ ] **Sub-CPU disk-boot handshake completion**. With drives
+- [x] **Sub-CPU debugger commands + symbol-file routing**. New
+  REPL commands `subregs` / `subdis` / `subpeek` / `subtrace` /
+  `subbreak` / `subunbreak` / `subbreaks` / `sublabel` /
+  `unsublabel` mirror the main-side commands against the sub-CPU's
+  separate address space + register file; `trackedStep` populates
+  a parallel sub-PC ring buffer and stops the run on sub
+  breakpoints. `DebugSymbols` gained `subResolver` /
+  `subExactResolver` and a `subRamFile` slot, routed through a new
+  `subRomIdAt` (the disk ROM lives at 0x0000-0x1FFF on the sub bus,
+  no banking) and a new `<variant>.subram.sym` per-variant
+  convention so 0x7F00 doesn't collide with N88-BASIC's RAM
+  symbols on the same numeric address. Port labels stay shared
+  with the main side. `help` is now topic-paged (`help <topic>`)
+  to keep the listing scannable as commands accumulate. With drives
   attached + EXTON cleared + PPI cross-down remap + IM 0 + NOP
   IRQ wake-up all in place, the full handshake runs end-to-end:
   main's `ppi_send_byte` (cmd 0x00 init / 0x07 drive count / 0x06

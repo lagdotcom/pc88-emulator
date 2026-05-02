@@ -62,6 +62,14 @@ export interface DebugSymbols {
   // mutation, same pattern as the per-ROM files.
   ramFile: SymbolFile;
   portFile: SymbolFile;
+  // Sub-CPU RAM symbols. The sub has its own address space (disk
+  // ROM at 0x0000-0x1FFF, RAM at 0x4000-0x7FFF) that namespace-
+  // collides with the main side, so it gets its own file:
+  // `<variant>.subram.sym`. Sub ROM symbols live in the per-ROM
+  // file (e.g. `mkI-disk.sym`) which is already in `byRomId` —
+  // routing is by which CPU the resolver is being called for, not
+  // by the file shape.
+  subRamFile: SymbolFile;
   // The resolver to pass to disassemble() — captures `this` so
   // memory-map state at lookup time picks the right ROM. Includes
   // fuzzy "name+N" fall-through within a 16-byte window.
@@ -71,8 +79,15 @@ export interface DebugSymbols {
   // Used for the per-line label headers in disassembly listings so
   // every mid-function instruction doesn't get a `name+N:` header.
   exactResolver: ResolveLabel;
-  // Port-number resolver for IN A,(n) / OUT (n),A.
+  // Port-number resolver for IN A,(n) / OUT (n),A. Shared between
+  // main and sub sides because the port file is per-variant and
+  // most ports are bus-shared (PPI 0xFC-0xFF, FDC 0xFA/0xFB).
   portResolver: ResolvePort;
+  // Sub-CPU resolvers. Same shape as the main pair but routed
+  // through `subRomIdAt` (returns the disk-ROM id for [0x0000,
+  // 0x2000) and null elsewhere) and the sub-RAM file.
+  subResolver: ResolveLabel;
+  subExactResolver: ResolveLabel;
 }
 
 // Per-variant slug used to name the RAM and port symbol files.
@@ -105,6 +120,19 @@ export function romIdAt(machine: PC88Machine, addr: number): string | null {
       : machine.config.roms.n88.id;
   }
   return null;
+}
+
+// Sub-CPU equivalent: the disk ROM is mapped at 0x0000-0x1FFF (it
+// mirrors above that up to 0x2000), RAM at 0x4000-0x7FFF, open bus
+// elsewhere. No bank switching, no E-ROM analogue — just one ROM
+// when present.
+export function subRomIdAt(
+  machine: PC88Machine,
+  addr: number,
+): string | null {
+  if (!machine.subcpu) return null;
+  if ((addr & 0xffff) >= 0x2000) return null;
+  return machine.config.roms.disk?.id ?? null;
 }
 
 function activeEromDescriptor(machine: PC88Machine): ROMDescriptor | undefined {
@@ -159,6 +187,8 @@ function collectLoadedROMIDs(
     out.push({ id: config.roms.e2.id, bytes: loaded.e2 });
   if (config.roms.e3 && loaded.e3)
     out.push({ id: config.roms.e3.id, bytes: loaded.e3 });
+  if (config.roms.disk && loaded.disk)
+    out.push({ id: config.roms.disk.id, bytes: loaded.disk });
   return out;
 }
 
@@ -201,6 +231,7 @@ export async function loadDebugSymbols(
   const slug = variantSlug(machine);
   const ramFile = await loadOrEmpty(backend, `${slug}.ram.sym`);
   const portFile = await loadOrEmpty(backend, `${slug}.port.sym`);
+  const subRamFile = await loadOrEmpty(backend, `${slug}.subram.sym`);
 
   const FUZZ = 16;
   const exact = (addr: number): string | undefined => {
@@ -208,20 +239,40 @@ export async function loadDebugSymbols(
     if (id) return byRomId.get(id)?.file.byAddr.get(addr & 0xffff)?.name;
     return ramFile.byAddr.get(addr & 0xffff)?.name;
   };
-  const resolver: ResolveLabel = (addr) => {
-    const direct = exact(addr);
-    if (direct !== undefined) return direct;
-    for (let off = 1; off <= FUZZ; off++) {
-      const name = exact((addr - off) & 0xffff);
-      if (name !== undefined) return `${name}+${off}`;
-    }
-    return undefined;
+  const subExact = (addr: number): string | undefined => {
+    const id = subRomIdAt(machine, addr);
+    if (id) return byRomId.get(id)?.file.byAddr.get(addr & 0xffff)?.name;
+    return subRamFile.byAddr.get(addr & 0xffff)?.name;
   };
+  const fuzzed =
+    (exactFn: (a: number) => string | undefined): ResolveLabel =>
+    (addr) => {
+      const direct = exactFn(addr);
+      if (direct !== undefined) return direct;
+      for (let off = 1; off <= FUZZ; off++) {
+        const name = exactFn((addr - off) & 0xffff);
+        if (name !== undefined) return `${name}+${off}`;
+      }
+      return undefined;
+    };
+  const resolver: ResolveLabel = fuzzed(exact);
   const exactResolver: ResolveLabel = (addr) => exact(addr);
+  const subResolver: ResolveLabel = fuzzed(subExact);
+  const subExactResolver: ResolveLabel = (addr) => subExact(addr);
   const portResolver: ResolvePort = (port) =>
     portFile.byAddr.get(port & 0xff)?.name;
 
-  return { byRomId, ramFile, portFile, resolver, exactResolver, portResolver };
+  return {
+    byRomId,
+    ramFile,
+    portFile,
+    subRamFile,
+    resolver,
+    exactResolver,
+    portResolver,
+    subResolver,
+    subExactResolver,
+  };
 }
 
 function seedHeaderIfNew(file: SymbolFile, headerText: string): void {
@@ -268,6 +319,91 @@ export async function addLabel(
   setSymbol(entry.file, addr, name, comment);
   await save(backend, entry.file);
   return { scope: id, path: entry.file.path };
+}
+
+// Sub-CPU equivalent of addLabel. Same logic — route by
+// `subRomIdAt`, fall back to the variant's sub-RAM file. Mirrors
+// the seed-header-on-first-write behaviour.
+export async function addSubLabel(
+  backend: SymbolBackend,
+  machine: PC88Machine,
+  loaded: LoadedROMs,
+  syms: DebugSymbols,
+  addr: number,
+  name: string,
+  comment?: string,
+): Promise<{ scope: string; path: string }> {
+  const id = subRomIdAt(machine, addr);
+  if (!id) {
+    seedHeaderIfNew(
+      syms.subRamFile,
+      `# Sub-CPU RAM symbols for ${variantSlug(machine)}`,
+    );
+    setSymbol(syms.subRamFile, addr, name, comment);
+    await save(backend, syms.subRamFile);
+    return { scope: "subram", path: syms.subRamFile.path };
+  }
+  const entry = syms.byRomId.get(id);
+  if (!entry) {
+    throw new Error(
+      `no symbol-file entry for sub-CPU ROM ${id} (this shouldn't happen)`,
+    );
+  }
+  if (entry.file.entries.length === 0 && !entry.file.md5) {
+    if (loaded.disk) {
+      const md5 = backend.md5(loaded.disk);
+      entry.file.md5 = md5;
+      entry.file.entries.push({
+        kind: "comment",
+        text: `# Symbol file for ${id}.`,
+      });
+      entry.file.entries.push({ kind: "comment", text: `# md5: ${md5}` });
+      entry.file.entries.push({ kind: "blank" });
+    }
+  }
+  setSymbol(entry.file, addr, name, comment);
+  await save(backend, entry.file);
+  return { scope: id, path: entry.file.path };
+}
+
+export async function deleteSubLabel(
+  backend: SymbolBackend,
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  addrOrName: number | string,
+): Promise<{ scope: string; path: string } | null> {
+  if (typeof addrOrName === "number") {
+    const id = subRomIdAt(machine, addrOrName);
+    if (id) {
+      const entry = syms.byRomId.get(id);
+      if (!entry) return null;
+      if (!removeSymbol(entry.file, addrOrName)) return null;
+      await save(backend, entry.file);
+      return { scope: id, path: entry.file.path };
+    }
+    if (removeSymbol(syms.subRamFile, addrOrName)) {
+      await save(backend, syms.subRamFile);
+      return { scope: "subram", path: syms.subRamFile.path };
+    }
+    return null;
+  }
+  // Name lookup: search the disk-ROM file and the sub-RAM file. Don't
+  // fall through to main-side files — `unsublabel name` is the
+  // sub-side counterpart to `unlabel name` and naming overlap is
+  // possible (e.g. both sides have `boot_init`).
+  const subId = machine.config.roms.disk?.id;
+  if (subId) {
+    const entry = syms.byRomId.get(subId);
+    if (entry && removeSymbol(entry.file, addrOrName)) {
+      await save(backend, entry.file);
+      return { scope: subId, path: entry.file.path };
+    }
+  }
+  if (removeSymbol(syms.subRamFile, addrOrName)) {
+    await save(backend, syms.subRamFile);
+    return { scope: "subram", path: syms.subRamFile.path };
+  }
+  return null;
 }
 
 export async function addPortLabel(
@@ -475,6 +611,7 @@ export function renderLabelList(syms: DebugSymbols): string {
   for (const entry of syms.byRomId.values())
     renderFile(entry.romId, entry.file, 4);
   renderFile("ram", syms.ramFile, 4);
+  renderFile("subram", syms.subRamFile, 4);
   renderFile("port", syms.portFile, 2);
   if (out.length === 0) return "(no labels loaded)";
   return out.join("\n");

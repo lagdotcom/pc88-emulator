@@ -82,3 +82,20 @@ export const deleteLabel = (
   addrOrName: number | string,
 ): Promise<{ scope: string; path: string } | null> =>
   core.deleteLabel(fsBackend, machine, syms, addrOrName);
+
+export const addSubLabel = (
+  machine: PC88Machine,
+  loaded: LoadedROMs,
+  syms: DebugSymbols,
+  addr: number,
+  name: string,
+  comment?: string,
+): Promise<{ scope: string; path: string }> =>
+  core.addSubLabel(fsBackend, machine, loaded, syms, addr, name, comment);
+
+export const deleteSubLabel = (
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  addrOrName: number | string,
+): Promise<{ scope: string; path: string } | null> =>
+  core.deleteSubLabel(fsBackend, machine, syms, addrOrName);
