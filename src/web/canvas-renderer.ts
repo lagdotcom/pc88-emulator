@@ -1,79 +1,58 @@
-// Canvas-driven text-mode renderer. The emulator worker ships
-// `chars` (cols * rows bytes from the CRTC-configured text frame)
-// every tick; we paint each cell with the platform's monospace
-// font scaled to fit an 8×16 logical cell.
+// Pixel-blit renderer. The emulator worker ships a fully-composited
+// RGBA frame each tick (graphics planes + font ROM glyph overlay +
+// per-cell attributes from getPixelFrame()); we just putImageData
+// it onto a canvas sized to the frame's natural resolution and let
+// CSS scale it (image-rendering: pixelated keeps the look crisp).
 //
-// A future CG/kanji-ROM glyph atlas would replace this so katakana
-// and the box-drawing range render correctly; for now the JIS X
-// 0201 lower half (0x20-0x7E) overlaps ASCII, so native font
-// rendering is good enough to read banners and BASIC prompts.
+// Replaces the earlier monospace-font text-only path: that path
+// bypassed the actual font ROM, ignored graphics, and didn't honour
+// reverse / colour attributes. The new pipeline matches what
+// `yarn pc88 --screenshot` produces for the CLI.
 
-const CELL_W = 8;
-const CELL_H = 16;
-// 80×20 in BASIC mode; track this here so an unprogrammed CRTC (which
-// reports cols=rows=0 on boot before SET MODE) still has a sensible
-// canvas to draw on.
-const DEFAULT_COLS = 80;
-const DEFAULT_ROWS = 20;
+const DEFAULT_W = 640;
+const DEFAULT_H = 200;
 
-const FG = "#4ade80";
-const BG = "#000";
-
-export class CanvasTextRenderer {
+export class CanvasPixelRenderer {
   private readonly ctx: CanvasRenderingContext2D;
-  private cols = 0;
-  private rows = 0;
+  private width = 0;
+  private height = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d canvas context unavailable");
     this.ctx = ctx;
-    this.resize(DEFAULT_COLS, DEFAULT_ROWS);
+    this.resize(DEFAULT_W, DEFAULT_H);
     this.clear();
   }
 
-  private resize(cols: number, rows: number): void {
-    if (cols === this.cols && rows === this.rows) return;
-    this.cols = cols;
-    this.rows = rows;
-    this.canvas.width = cols * CELL_W;
-    this.canvas.height = rows * CELL_H;
-    // CSS scaling lives in app.css (image-rendering: pixelated +
-    // explicit width). Re-apply font after resize because some
-    // browsers reset context state.
-    this.ctx.font = `${CELL_H}px ui-monospace, Menlo, Consolas, monospace`;
-    this.ctx.textBaseline = "top";
+  private resize(width: number, height: number): void {
+    if (width === this.width && height === this.height) return;
+    this.width = width;
+    this.height = height;
+    this.canvas.width = width;
+    this.canvas.height = height;
   }
 
   private clear(): void {
-    this.ctx.fillStyle = BG;
+    this.ctx.fillStyle = "#000";
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  render(chars: Uint8Array, cols: number, rows: number): void {
-    if (cols === 0 || rows === 0) {
-      // CRTC not yet programmed. Leave the previous frame visible
-      // rather than clearing — the user's first impression of "boot
-      // is happening" comes from BASIC's banner appearing, not from
-      // a black canvas mid-init.
+  render(pixels: Uint8ClampedArray, width: number, height: number): void {
+    if (width === 0 || height === 0 || pixels.length === 0) {
+      // Display not yet active. Leave the previous frame visible so
+      // the user's first impression of "boot is happening" is the
+      // banner appearing rather than a black flash mid-init.
       return;
     }
-    this.resize(cols, rows);
-    this.clear();
-    this.ctx.fillStyle = FG;
-    for (let r = 0; r < rows; r++) {
-      // Build the row as a single string and draw with one fillText
-      // call. Per-cell fillText would be 60 × 80 × 20 = 96k calls/sec;
-      // per-row drops that to 1200 calls/sec while still rendering
-      // monospace cells aligned to the 8-pixel grid.
-      let line = "";
-      for (let c = 0; c < cols; c++) {
-        const ch = chars[r * cols + c] ?? 0;
-        if (ch >= 0x20 && ch < 0x7f) line += String.fromCharCode(ch);
-        else if (ch === 0) line += " ";
-        else line += ".";
-      }
-      this.ctx.fillText(line, 0, r * CELL_H);
-    }
+    this.resize(width, height);
+    if (pixels.length !== width * height * 4) return;
+    // ImageData's constructor needs Uint8ClampedArray<ArrayBuffer>;
+    // when the array came through postMessage its underlying buffer
+    // is typed ArrayBufferLike. Re-create the view so the type
+    // narrows back to ArrayBuffer.
+    const view = new Uint8ClampedArray(pixels.buffer as ArrayBuffer);
+    const img = new ImageData(view, width, height);
+    this.ctx.putImageData(img, 0, 0);
   }
 }

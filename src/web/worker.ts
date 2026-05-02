@@ -146,17 +146,19 @@ function disasmAround(
 
 function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
   const ascii = s.machine.display.toASCIIDump();
-  const frame = s.machine.display.getTextFrame();
-  // Copy chars into a fresh ArrayBuffer so the transfer doesn't
-  // detach the live TVRAM-backed Uint8Array (it's a subarray of
-  // mainRam; detaching would break the next frame).
-  const charsBuf = new ArrayBuffer(frame.chars.length);
-  new Uint8Array(charsBuf).set(frame.chars);
+  // Composited pixel frame (GVRAM + glyph overlay + attributes). The
+  // Uint8ClampedArray's backing buffer is fresh per call; we hand
+  // its ownership to the UI via the transfer list — no copy. The
+  // next getPixelFrame() allocates again.
+  const pixFrame = s.machine.display.getPixelFrame();
+  const pixelsBuf: ArrayBuffer = pixFrame
+    ? (pixFrame.rgba.buffer as ArrayBuffer)
+    : new ArrayBuffer(0);
   const common = {
     ascii,
-    chars: charsBuf,
-    cols: frame.cols,
-    rows: frame.rows,
+    pixels: pixelsBuf,
+    width: pixFrame?.width ?? 0,
+    height: pixFrame?.height ?? 0,
     pc: s.machine.cpu.regs.PC,
     cycles: s.machine.cpu.cycles,
     ops: s.debug.ops,
@@ -174,7 +176,7 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
     type === "stopped"
       ? { type: "stopped", reason: reason ?? "stopped", ...common }
       : { type: "tick", ...common, running: s.running };
-  post(msg, [charsBuf]);
+  post(msg, [pixelsBuf]);
 }
 
 function postPeek(s: State, addr: u16, count: number): void {

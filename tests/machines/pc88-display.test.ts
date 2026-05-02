@@ -381,9 +381,9 @@ describe("PC88TextDisplay text attribute parsing (80-col)", () => {
     // cells 10..79 become red.
     setAttrPairs(machine, 0, [[10, 0x48]]);
     const frame = machine.display.getTextFrame();
-    expect(frame.attrs[9] >> 8).toBe(0xe8); // pre-pair: white
-    expect(frame.attrs[10] >> 8).toBe(0x48); // post-pair: red
-    expect(frame.attrs[79] >> 8).toBe(0x48); // remains red until row end
+    expect(frame.attrs[9]! >> 8).toBe(0xe8); // pre-pair: white
+    expect(frame.attrs[10]! >> 8).toBe(0x48); // post-pair: red
+    expect(frame.attrs[79]! >> 8).toBe(0x48); // remains red until row end
   });
 
   it("decoration pair (bit 3 clear) updates the low byte; reverse persists", () => {
@@ -392,10 +392,10 @@ describe("PC88TextDisplay text attribute parsing (80-col)", () => {
     programCRTC80Col(machine);
     setAttrPairs(machine, 0, [[5, 0x04]]); // bit 2 = REVERSE, bit 3 = 0
     const frame = machine.display.getTextFrame();
-    expect(frame.attrs[4] & 0xff).toBe(0x00); // pre-pair
-    expect(frame.attrs[5] & 0xff).toBe(0x04); // reverse on
+    expect(frame.attrs[4]! & 0xff).toBe(0x00); // pre-pair
+    expect(frame.attrs[5]! & 0xff).toBe(0x04); // reverse on
     // Colour state untouched.
-    expect(frame.attrs[5] >> 8).toBe(0xe8);
+    expect(frame.attrs[5]! >> 8).toBe(0xe8);
   });
 
   it("multiple pairs apply in column order; later pair for same col wins", () => {
@@ -408,11 +408,11 @@ describe("PC88TextDisplay text attribute parsing (80-col)", () => {
       [10, 0xa8], // override col 10: 1010 1000 → colour 0xa8
     ]);
     const frame = machine.display.getTextFrame();
-    expect(frame.attrs[10] >> 8).toBe(0xa8); // last writer wins
-    expect(frame.attrs[19] >> 8).toBe(0xa8); // colour persists
-    expect(frame.attrs[19] & 0xff).toBe(0x00); // decoration not yet set
-    expect(frame.attrs[20] & 0xff).toBe(0x04); // reverse turns on
-    expect(frame.attrs[20] >> 8).toBe(0xa8); // colour still in effect
+    expect(frame.attrs[10]! >> 8).toBe(0xa8); // last writer wins
+    expect(frame.attrs[19]! >> 8).toBe(0xa8); // colour persists
+    expect(frame.attrs[19]! & 0xff).toBe(0x00); // decoration not yet set
+    expect(frame.attrs[20]! & 0xff).toBe(0x04); // reverse turns on
+    expect(frame.attrs[20]! >> 8).toBe(0xa8); // colour still in effect
   });
 
   it("attrs reset to 0xE800 at the start of each row", () => {
@@ -421,9 +421,9 @@ describe("PC88TextDisplay text attribute parsing (80-col)", () => {
     programCRTC80Col(machine);
     setAttrPairs(machine, 0, [[0, 0x28]]); // row 0: red colour from col 0
     const frame = machine.display.getTextFrame();
-    expect(frame.attrs[0] >> 8).toBe(0x28);
-    expect(frame.attrs[79] >> 8).toBe(0x28);
-    expect(frame.attrs[80] >> 8).toBe(0xe8); // row 1, col 0 → default
+    expect(frame.attrs[0]! >> 8).toBe(0x28);
+    expect(frame.attrs[79]! >> 8).toBe(0x28);
+    expect(frame.attrs[80]! >> 8).toBe(0xe8); // row 1, col 0 → default
   });
 });
 

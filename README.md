@@ -360,10 +360,15 @@ Roughly ordered by what's blocking what.
   rendered as solid-on in static captures — the visual blink is
   a renderer concern (web canvas can toggle by frame count). Upper
   / lower line + semi-graphics still TODO.
-- [ ] **Web canvas renderer for the pixel frame**.
-  `src/web/canvas-renderer.ts` should call `getPixelFrame()` and
-  `putImageData` it onto a 640×200 canvas — same data the CLI now
-  writes to PPM.
+- [x] **Web canvas renderer for the pixel frame**. The worker
+  ships the 640×200 RGBA buffer from `getPixelFrame()` as a
+  transferable `ArrayBuffer` (no structured-clone of the 512 KB
+  payload at 60 Hz); the UI thread `putImageData`s it. Same
+  composited frame the CLI writes via `--screenshot`. Replaces
+  the earlier monospace-font text-only path that bypassed the
+  font ROM, ignored graphics, and didn't honour attributes. CSS
+  scales the natural 640×200 to 640×480 (4:3) with
+  `image-rendering: pixelated` for crisp edges.
 - [ ] **Pixel-accurate CRT controller (raster timing, text overlay)**.
   The μPD3301 stub consumes SET MODE / START DISPLAY correctly but
   doesn't generate scanline timing. `getPixelFrame` returns a
@@ -396,11 +401,13 @@ Roughly ordered by what's blocking what.
   cross-variant detection picks up shared ROMs without
   re-upload. Boot spawns a Worker
   that owns the CPU loop and emits 60 Hz tick snapshots — each
-  tick ships the CRTC chars buffer (transferable), an ASCII
-  fallback, a typed `CPUSnapshot`, 16 disasm lines around PC,
-  and a `DebugSnapshot` (breakpoints + RAM/port watches + call
-  stack). UI renders an 8×16 cell `<canvas>` (480 px tall,
-  pixel-aligned) plus Registers / Disassembly (with ●
+  tick ships the composited 640×200 RGBA pixel frame
+  (transferable), an ASCII fallback for the diagnostic pane, a
+  typed `CPUSnapshot`, 16 disasm lines around PC, and a
+  `DebugSnapshot` (breakpoints + RAM/port watches + call stack).
+  UI `putImageData`s the pixel frame onto a 640×200 `<canvas>`
+  (CSS-scaled to 480 px tall, pixel-aligned) plus Registers /
+  Disassembly (with ●
   breakpoint + ► PC markers + per-row label headers) / Memory
   / Breakpoints / Watches / Stack / REPL panels. The REPL
   flows through the same `dispatch()` as the CLI debugger via
@@ -462,8 +469,9 @@ Roughly ordered by what's blocking what.
 ```
 
 Worker owns the CPU loop. UI thread owns rendering + input.
-Snapshots cross as plain JSON; CRTC chars buffers and memory-peek
-responses ride as transferable `ArrayBuffer`. The CLI debugger's
+Snapshots cross as plain JSON; the composited pixel frame and
+memory-peek responses ride as transferable `ArrayBuffer`. The CLI
+debugger's
 `dispatch(line, ctx)` is the message protocol — every panel button
 is sugar over typed REPL lines, and the on-page REPL gives access
 to anything we don't build a button for.

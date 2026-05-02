@@ -2,7 +2,7 @@ import type { ROMID } from "../flavours.js";
 import { getLogger } from "../log.js";
 import { type PC88Config } from "../machines/config.js";
 import { type BootRequest, renderBootScreen } from "./boot-screen.js";
-import { CanvasTextRenderer } from "./canvas-renderer.js";
+import { CanvasPixelRenderer } from "./canvas-renderer.js";
 import { keyCodeToPC88, rowColFromPC88Key } from "./keymap.js";
 import { openStore } from "./opfs.js";
 import {
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
 }
 
 interface RunningUI {
-  renderer: CanvasTextRenderer;
+  renderer: CanvasPixelRenderer;
   asciiPre: HTMLPreElement;
   status: HTMLElement;
   runButton: HTMLButtonElement;
@@ -73,7 +73,7 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
       case "ready":
         break;
       case "tick":
-        renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
+        renderFrame(ui, msg.pixels, msg.width, msg.height, msg.ascii);
         ui.registers.render(msg.cpu);
         ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
         ui.breakpoints.render(msg.debug.breakpoints);
@@ -83,7 +83,7 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
         setRunUi(ui, msg.running);
         break;
       case "stopped":
-        renderFrame(ui, msg.chars, msg.cols, msg.rows, msg.ascii);
+        renderFrame(ui, msg.pixels, msg.width, msg.height, msg.ascii);
         ui.registers.render(msg.cpu);
         ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
         ui.breakpoints.render(msg.debug.breakpoints);
@@ -187,7 +187,7 @@ function renderRunningView(
   const screen = document.createElement("canvas");
   screen.className = "screen";
   root.appendChild(screen);
-  const renderer = new CanvasTextRenderer(screen);
+  const renderer = new CanvasPixelRenderer(screen);
 
   // Debugger panels live in a side-by-side row under the canvas so
   // the screen stays the focal point and the panels share a stable
@@ -251,12 +251,12 @@ function renderRunningView(
 
 function renderFrame(
   ui: RunningUI,
-  charsBuf: ArrayBuffer,
-  cols: number,
-  rows: number,
+  pixelsBuf: ArrayBuffer,
+  width: number,
+  height: number,
   ascii: string,
 ): void {
-  ui.renderer.render(new Uint8Array(charsBuf), cols, rows);
+  ui.renderer.render(new Uint8ClampedArray(pixelsBuf), width, height);
   ui.asciiPre.textContent = ascii;
 }
 

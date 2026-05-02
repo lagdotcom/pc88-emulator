@@ -103,10 +103,10 @@ button:disabled { background: #555; cursor: not-allowed; }
 }
 .screen {
   background: #000;
-  /* CSS-scale the 8×16 cell × 80×20 grid to a comfortable size while
-     keeping pixel-aligned glyph edges; the canvas backing store stays
-     at the natural 640×320. Height-driven so the canvas always fills
-     the same vertical lane regardless of CRTC column count. */
+  /* PC-88's native 640×200 frame (composited GVRAM + font ROM glyphs +
+     attributes) scales to 4:3 by stretching height to 480px while CSS
+     auto-derives the 640px width. image-rendering: pixelated keeps
+     edges crisp under the 2.4× vertical scale. */
   height: 480px;
   width: auto;
   max-width: 100%;
