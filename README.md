@@ -325,6 +325,17 @@ Roughly ordered by what's blocking what.
   main, so debugger sessions see the real two-CPU dynamics.
   `chips` reports PPI control + latches + fresh-flags and the
   sub's PC / SP / IFF1 / IM / halted / irqVec / drive-mode.
+- [x] **Structured PPI/FDC IPC tracer (`--trace-ipc`)**. The PPI
+  exposes a `tracer` callback emitting decoded events for port-A/B
+  data writes (with the receiver's ATN state attached so a printer
+  can tag cmd-byte vs param-byte) and for port-C bit set/reset
+  with the GPIB mnemonic (ATN/DAC/RFD/DAV) resolved. The FDC
+  emits cmd-start / param / execute / result / irq events with
+  the command name decoded. `--trace-ipc` (env: PC88_TRACE_IPC=1)
+  installs default printers — much easier to read than `--trace-io`
+  for disk-boot work because most port traffic is the polling
+  loops. Both tracers are null by default; one branch per port
+  write when un-hooked.
 - [ ] **Sub-CPU disk-boot handshake completion**. With drives
   attached + EXTON cleared + PPI cross-down remap + IM 0 + NOP
   IRQ wake-up all in place, the full handshake runs end-to-end:
