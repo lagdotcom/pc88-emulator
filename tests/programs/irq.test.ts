@@ -118,6 +118,42 @@ describe("IM 2 IRQ acceptance", () => {
     expect((hi << 8) | lo).toBe(0x0103);
   });
 
+  it("im=0 + bus byte 0x00 (NOP) wakes from HALT without push", () => {
+    // PC-80S31 sub-CPU IRQ ack: the source asserts NOP (0x00) on the
+    // data bus during the IRQ acknowledge cycle. The CPU executes it
+    // as a normal opcode — no PC push, no vector dispatch — so the
+    // EI;HALT;DI;... sequence the disk ROM uses to wait on FDC
+    // completions resumes at the instruction after HALT.
+    const h = makeProgramHarness();
+    const { cpu, ram } = h;
+
+    ram.bytes[0x0100] = 0xfb; // EI
+    ram.bytes[0x0101] = 0x00; // NOP
+    ram.bytes[0x0102] = 0x76; // HALT
+    ram.bytes[0x0103] = 0xf3; // DI (post-HALT continuation)
+    cpu.regs.PC = 0x0100;
+    cpu.regs.SP = 0xff00;
+    cpu.im = 0;
+
+    cpu.runOneOp(); // EI
+    cpu.runOneOp(); // NOP — eiDelay consumed
+    cpu.runOneOp(); // HALT
+    expect(cpu.halted).toBe(true);
+
+    cpu.requestIrq(0x00);
+    cpu.runOneOp(); // IRQ accepted as NOP
+
+    expect(cpu.halted).toBe(false);
+    expect(cpu.iff1).toBe(false);
+    // No push (SP unchanged), PC unchanged — instruction after HALT
+    // executes next.
+    expect(cpu.regs.SP).toBe(0xff00);
+    expect(cpu.regs.PC).toBe(0x0103);
+
+    cpu.runOneOp(); // DI
+    expect(cpu.regs.PC).toBe(0x0104);
+  });
+
   it("forces bit 0 of the vector byte to zero", () => {
     // Real silicon ties D0 of the vector byte to ground for the table
     // read so the low byte address is even. Our acceptance does the

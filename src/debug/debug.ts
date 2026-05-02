@@ -318,7 +318,12 @@ export function trackedStep(machine: PC88Machine, state: DebugState): void {
   state.pcTraceWrite = (state.pcTraceWrite + 1) % PC_TRACE_SIZE;
   if (state.pcTraceFilled < PC_TRACE_SIZE) state.pcTraceFilled++;
 
+  const beforeCycles = machine.cpu.cycles;
   stepOneInstruction(machine);
+  if (machine.subcpu) {
+    const delta = (machine.cpu.cycles - beforeCycles) as Cycles;
+    machine.subcpu.runCycles(delta);
+  }
   state.ops++;
 
   const postPC = machine.cpu.regs.PC;
@@ -495,6 +500,22 @@ function printChips(machine: PC88Machine): void {
       `  beeper       : ${snap.beeper.toggles} toggles\n` +
       `  misc latches : 0xE7=${snap.misc.lastE7 ?? "-"} 0xF8=${snap.misc.lastF8 ?? "-"}\n`,
   );
+  if (snap.ppi) {
+    const p = snap.ppi;
+    writer(
+      `  ppi          : main-ctrl=${byte(p.mainControl)} sub-ctrl=${byte(p.subControl)} ` +
+        `freshForSub=${p.subHasFresh} freshForMain=${p.mainHasFresh}\n` +
+        `  ppi latches  : [${p.latches.map((v) => byte(v)).join(" ")}]\n`,
+    );
+  }
+  if (snap.subcpu) {
+    const s = snap.subcpu;
+    writer(
+      `  subcpu       : pc=${word(s.cpu.PC)} sp=${word(s.cpu.SP)} ` +
+        `iff1=${s.cpu.iff1 ? 1 : 0} im=${s.cpu.im} halted=${s.cpu.halted ? 1 : 0} ` +
+        `irqVec=${byte(s.irqVector)} driveMode=${byte(s.driveMode)}\n`,
+    );
+  }
 }
 
 // One-line summary printed before each prompt: PC, the raw bytes

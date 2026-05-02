@@ -122,8 +122,10 @@ export class Z80 {
     //          t-states. Bit 0 of the vector is forced to 0 because
     //          the LSB of the read goes to the table's low byte.
     //
-    // Common to all: clear IFF1/IFF2, push current PC, exit HALT,
-    // bump R like a normal M1 fetch would.
+    // Common to all: clear IFF1/IFF2, exit HALT, bump R like a
+    // normal M1 fetch would. Pushing PC + setting a vector PC
+    // depends on the dispatch mode (some IM 0 cases neither push
+    // nor change PC).
     if (
       this.irqLine &&
       this.iff1 &&
@@ -134,6 +136,25 @@ export class Z80 {
       this.iff1 = false;
       this.iff2 = false;
       if (this.halted) this.halted = false;
+
+      // IM 0 executes the byte the source asserts on the data bus
+      // as the next opcode. Two cases the PC-88 actually uses:
+      //   - 0xFF (RST 38h): the floating-bus default; behaves like
+      //     IM 1 — push PC, vector to 0x0038.
+      //   - 0x00 (NOP): the FDC sub-CPU's pc80s31k variant. The IRQ
+      //     just exits HALT and lets the next instruction execute;
+      //     no push, PC unchanged. This is essential for the
+      //     EI;HALT;DI sequence the disk ROM uses to wait on FDC
+      //     completions.
+      // Other IM 0 bus bytes (RST 0/8/10/.., EX (SP),HL, etc.)
+      // aren't reached by any PC-88 source.
+      if (this.im === 0 && this.irqVector === 0x00) {
+        this.cycles += 13;
+        const r = this.regs.R;
+        this.regs.R = (r & 0x80) | ((r + 1) & 0x7f);
+        return;
+      }
+
       const pc = this.regs.PC;
       const sp = (this.regs.SP - 2) & 0xffff;
       this.regs.SP = sp;
@@ -148,8 +169,6 @@ export class Z80 {
         this.cycles += 19;
       } else {
         // IM 0 with bus byte 0xFF (RST 38h) and IM 1 both vector here.
-        // IM 0 with non-RST bus bytes is not modelled; no PC-88 source
-        // uses them.
         this.regs.PC = 0x0038;
         this.cycles += 13;
       }

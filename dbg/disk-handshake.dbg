@@ -1,0 +1,9 @@
+# Trace main's port-B writes (data sent to sub) AND port-A reads
+# (data received from sub). Stop when main reaches the give-up path.
+bp 0xFD w log
+bp 0xFC r log
+break 0x379e
+continue 30000000
+regs
+chips
+trace 32

@@ -310,15 +310,35 @@ Roughly ordered by what's blocking what.
   3 of port 0x40 is cleared automatically when the subsystem is
   wired so the BIOS does its PPI-init handshake instead of jumping
   straight to BASIC.
+- [x] **Z80 IM 0 + bus byte 0x00 (NOP) IRQ acceptance**. Real
+  pc80s31k IRQ ack drives NOP onto the data bus, so the EI;HALT;DI
+  sequence the disk ROM uses to wait on FDC completions resumes at
+  the post-HALT instruction without a vector dispatch. We were
+  jumping to 0x0038 unconditionally for every IM 0 IRQ, which
+  corrupted the post-HALT flow (the bytes at 0x0038 in the disk
+  ROM are mid-instruction, not a real RST 38h handler). Fixed in
+  cpu.ts: IM 0 + NOP just clears HALT, no push, PC unchanged.
+  IM 0 + 0xFF (RST 38h) still works for the IM 1-style /INT
+  pulled-low default. Test in `irq.test.ts`.
+- [x] **Debugger drives sub-CPU; chips command shows it**.
+  `trackedStep` now feeds the sub the same cycle delta as the
+  main, so debugger sessions see the real two-CPU dynamics.
+  `chips` reports PPI control + latches + fresh-flags and the
+  sub's PC / SP / IFF1 / IM / halted / irqVec / drive-mode.
 - [ ] **Sub-CPU disk-boot handshake completion**. With drives
-  attached + EXTON cleared + PPI cross-down remap in place, the
-  BIOS now does its PPI handshake, the sub-CPU's PC-8031 boot ROM
-  runs past its polling loop, and the FDC issues RECALIBRATE — but
-  the BIOS still falls back to "How many files(0-15)?" instead of
-  reading the boot sector. Something in the post-recalibrate
-  protocol (probably a status byte the sub-CPU should send back
-  through PPI port B) isn't satisfying the BIOS yet. Boot-to-game
-  is gated on this.
+  attached + EXTON cleared + PPI cross-down remap + IM 0 + NOP
+  IRQ wake-up all in place, the full handshake runs end-to-end:
+  main's `ppi_send_byte` (cmd 0x00 init / 0x07 drive count / 0x06
+  status) round-trips, the sub-CPU dispatches each cmd, the FDC
+  asserts IRQ on RECALIBRATE completion, and the sub wakes from
+  HALT and reads SENSE INT. The N88-BASIC disk-detect path now
+  CALLs into the disk-BASIC E-ROM at 0x6F06 with bytes flowing
+  on the PPI both ways. The remaining gap is the actual boot-
+  sector read: cmd 0x06 returns the init-state status (0x80),
+  which BIOS interprets as "no boot disk", so it falls through
+  to the N88-BASIC "How many files(0-15)?" prompt. Need to
+  understand the E-ROM disk-BASIC's boot-sector-read protocol
+  to drive the sub-CPU into a path that reports a bootable disk.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is
