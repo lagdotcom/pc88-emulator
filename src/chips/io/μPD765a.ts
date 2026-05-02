@@ -122,6 +122,43 @@ const PARAM_COUNT: { [code: number]: number } = {
 
 type Phase = "idle" | "command" | "execution" | "result" | "data-read" | "data-write";
 
+// Structured trace events for the FDC. Hooked via `tracer`. The
+// printer can reconstruct a per-command summary line from
+// `cmd-start` + `param`* + `execute` + `result`* + `irq`. We
+// intentionally don't fire events for every data-read / data-write
+// byte during a sector transfer — those would flood. Subscribers
+// that care about the data stream can hook the chip's data buffer
+// directly.
+export type FDCTraceEvent =
+  | {
+      kind: "cmd-start";
+      cmd: u8;
+      name: string;
+      expectedParams: number;
+    }
+  | { kind: "param"; index: number; value: u8 }
+  | {
+      kind: "execute";
+      cmd: u8;
+      name: string;
+      drive: number;
+      head: u8;
+    }
+  | { kind: "result"; bytes: number[] }
+  | { kind: "irq" };
+
+const CMD_NAMES: { readonly [code: number]: string } = {
+  [0x03]: "SPECIFY",
+  [0x04]: "SENSE_DRIVE_STATUS",
+  [0x07]: "RECALIBRATE",
+  [0x08]: "SENSE_INTERRUPT_STATUS",
+  [0x0f]: "SEEK",
+  [0x0a]: "READ_ID",
+  [0x06]: "READ_DATA",
+  [0x05]: "WRITE_DATA",
+  [0x0d]: "FORMAT_TRACK",
+};
+
 export interface FDCSnapshot {
   readonly phase: Phase;
   readonly command: u8;
@@ -187,6 +224,10 @@ export class μPD765a {
   // issuing SENSE_INTERRUPT_STATUS.
   onInterrupt: (() => void) | null = null;
 
+  // Optional structured trace hook — same pattern as μPD8255.tracer.
+  // Null by default; the hot path is one branch when un-hooked.
+  tracer: ((event: FDCTraceEvent) => void) | null = null;
+
   attachDrive(index: number, drive: FloppyDrive): void {
     if (index < 0 || index > 1)
       throw new Error(`FDC drive index ${index} out of range`);
@@ -243,6 +284,13 @@ export class μPD765a {
     }
     if (this.phase === "command") {
       this.paramBytes.push(value);
+      if (this.tracer) {
+        this.tracer({
+          kind: "param",
+          index: this.paramBytes.length - 1,
+          value,
+        });
+      }
       if (this.paramBytes.length >= this.paramsExpected) {
         this.phase = "execution";
         this.executeCommand();
@@ -272,11 +320,28 @@ export class μPD765a {
     this.paramBytes = [];
     this.paramsExpected = paramCount;
     this.phase = paramCount === 0 ? "execution" : "command";
+    if (this.tracer) {
+      this.tracer({
+        kind: "cmd-start",
+        cmd: byteValue,
+        name: CMD_NAMES[code] ?? `cmd_0x${byte(code)}`,
+        expectedParams: paramCount,
+      });
+    }
     if (paramCount === 0) this.executeCommand();
   }
 
   private executeCommand(): void {
     const code = this.command & CMD_MASK;
+    if (this.tracer) {
+      this.tracer({
+        kind: "execute",
+        cmd: this.command,
+        name: CMD_NAMES[code] ?? `cmd_0x${byte(code)}`,
+        drive: this.selectedDrive,
+        head: this.selectedHead,
+      });
+    }
     switch (code) {
       case CMD.SPECIFY: this.cmdSpecify(); break;
       case CMD.SENSE_DRIVE_STATUS: this.cmdSenseDriveStatus(); break;
@@ -315,6 +380,7 @@ export class μPD765a {
     this.resultBytes = bytes.map(asU8);
     this.resultIndex = 0;
     this.phase = "result";
+    if (this.tracer) this.tracer({ kind: "result", bytes: bytes.slice() });
   }
 
   // 03h SPECIFY — latch SRT/HUT/HLT, no result phase, no IRQ.
@@ -710,6 +776,7 @@ export class μPD765a {
 
   private assertIrq(): void {
     this.irqAsserted = true;
+    if (this.tracer) this.tracer({ kind: "irq" });
     this.onInterrupt?.();
   }
 

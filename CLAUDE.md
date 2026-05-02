@@ -18,6 +18,22 @@ Treat README.md as part of the deliverable, not separate
 documentation. A commit that lands a feature without updating the
 TODO list is incomplete.
 
+## After debugging: capture findings in symbol files
+
+When debugging surfaces useful labels — a routine entry point you
+worked out, a RAM cell whose role became clear, a port quirk — write
+those into the matching `syms/*.sym` file in the same commit. It's
+cheaper than re-deriving the same address next time, and the
+fuzzy-resolver already turns `name+N` into useful disassembly hints
+for nearby instructions. Three files per variant exist for routing:
+per-ROM `syms/<rom-id>.sym` (e.g. `mkI-n88.sym`, `mkI-disk.sym`),
+per-variant RAM `syms/<variant>.ram.sym`, per-variant ports
+`syms/<variant>.port.sym`. The debugger has `label` /
+`portlabel` / `unlabel` commands that mutate these files in place;
+prefer those for one-off labels mid-session and edit the files
+directly when you've got several to add. See the existing files for
+the canonical comment style.
+
 ## What this is
 
 PC-88 emulator written in TypeScript. Goal: PC-8801 mkII SR support first,

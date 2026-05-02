@@ -54,6 +54,13 @@ interface CliFlags {
   // Multi-image D88s use only the first image; the rest are ignored
   // until a multi-disk swap UI lands.
   disk0: FilesystemPath | null;
+  // High-level structured trace of the sub-CPU IPC bridge. Decodes
+  // the PPI byte exchanges into command-byte / parameter / response
+  // events tagged by ATN state, and surfaces FDC command dispatch
+  // / parameter accumulation / result phase / IRQ assert. Much
+  // easier to read than `--trace-io` for disk-boot debugging where
+  // most port traffic is the PPI handshake polling loops.
+  traceIpc: boolean;
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -78,6 +85,7 @@ function parseCliFlags(argv: string[]): CliFlags {
       script: { type: "string" },
       screenshot: { type: "string" },
       disk0: { type: "string" },
+      "trace-ipc": { type: "boolean" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -147,6 +155,9 @@ function parseCliFlags(argv: string[]): CliFlags {
   const disk0: FilesystemPath | null =
     typeof disk0Arg === "string" && disk0Arg.length > 0 ? disk0Arg : null;
 
+  const traceIpc =
+    !!values["trace-ipc"] || process.env.PC88_TRACE_IPC === "1";
+
   return {
     romDir,
     maxOps,
@@ -163,6 +174,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     debugScript,
     screenshot,
     disk0,
+    traceIpc,
     config,
   };
 }
@@ -179,6 +191,11 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
   --trace-io[=raw]    log every IN/OUT with PC; bare flag dedupes
                       consecutive identical lines, =raw shows them all
                       (env: PC88_TRACE_IO=1 / =raw)
+  --trace-ipc         high-level structured trace of the sub-CPU IPC
+                      bridge: PPI byte exchanges tagged cmd/param/
+                      response by ATN state, plus FDC command dispatch
+                      / params / result / IRQ. Use for disk-boot work
+                      (env: PC88_TRACE_IPC=1)
   --raw-tvram         always print the 4 KB hex dump after the visible
                       screen (env: PC88_RAW_TVRAM=1)
   --log-file[=PATH]   tee log output to PATH (default: main.log)
@@ -364,6 +381,57 @@ async function main(): Promise<void> {
       lastCount = 1;
     };
     process.on("exit", flush);
+  }
+
+  if (flags.traceIpc) {
+    const cpu = machine.cpu;
+    if (machine.ppi) {
+      machine.ppi.tracer = (e) => {
+        const pc = `0x${hex(cpu.regs.PC, 4)}`;
+        if (e.kind === "data") {
+          const tag = e.atnAsserted ? "CMD/AT" : "data  ";
+          const arrow = e.side === "main" ? "main→sub" : "sub→main";
+          console.log(
+            `[ipc] PC=${pc} ${arrow} ${tag} port-${e.port} = 0x${hex(e.value, 2)}`,
+          );
+        } else {
+          const op = e.set ? "SET" : "CLR";
+          console.log(
+            `[ipc] PC=${pc} ${e.side.padEnd(4)} ctrl ${op} ${e.mnemonic} (bit ${e.bit})`,
+          );
+        }
+      };
+    }
+    if (machine.subcpu?.fdc) {
+      machine.subcpu.fdc.tracer = (e) => {
+        const subpc = `0x${hex(machine.subcpu!.cpu.regs.PC, 4)}`;
+        switch (e.kind) {
+          case "cmd-start":
+            console.log(
+              `[fdc] subpc=${subpc} CMD ${e.name} (0x${hex(e.cmd, 2)}, ${e.expectedParams} params)`,
+            );
+            break;
+          case "param":
+            console.log(
+              `[fdc] subpc=${subpc} param[${e.index}] = 0x${hex(e.value, 2)}`,
+            );
+            break;
+          case "execute":
+            console.log(
+              `[fdc] subpc=${subpc} EXEC ${e.name} drive=${e.drive} head=${e.head}`,
+            );
+            break;
+          case "result":
+            console.log(
+              `[fdc] subpc=${subpc} RESULT [${e.bytes.map((b) => `0x${hex(b, 2)}`).join(" ")}]`,
+            );
+            break;
+          case "irq":
+            console.log(`[fdc] subpc=${subpc} IRQ`);
+            break;
+        }
+      };
+    }
   }
 
   if (flags.debug) {

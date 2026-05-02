@@ -40,6 +40,37 @@ export interface PPISnapshot {
   readonly subHasFresh: boolean;
 }
 
+// Structured trace events for the IPC bridge. Hooked via `tracer`
+// when callers want a high-level decode of the cmd/param/response
+// flow that's hard to reconstruct from raw IO logs. `data` events
+// carry the port-C ATN state as observed by the receiver; that's
+// enough for a printer to tag a port-A/B write as "command byte"
+// (received with ATN asserted) vs "parameter byte" (received with
+// ATN clear) without re-implementing the protocol state machine
+// here.
+export type PPITraceEvent =
+  | {
+      kind: "data";
+      side: "main" | "sub";
+      port: "A" | "B";
+      value: u8;
+      atnAsserted: boolean;
+    }
+  | {
+      kind: "ctrl";
+      side: "main" | "sub";
+      bit: number;
+      set: boolean;
+      mnemonic: string;
+    };
+
+const PORT_C_BIT_NAMES: { readonly [bit: number]: string } = {
+  7: "ATN",
+  6: "DAC",
+  5: "RFD",
+  4: "DAV",
+};
+
 const enum L {
   HostPaOut_SubPbIn = 0,
   HostPbOut_SubPaIn = 1,
@@ -68,6 +99,11 @@ export class μPD8255 {
   onFreshForSub: (() => void) | null = null;
   onFreshForMain: (() => void) | null = null;
 
+  // Optional structured trace hook. Null by default; the hot path
+  // checks for null and skips event construction so a non-traced
+  // run pays only one branch per port write.
+  tracer: ((event: PPITraceEvent) => void) | null = null;
+
   registerMain(bus: IOBus, basePort = 0xfc): void {
     bus.register(basePort, {
       name: "ppi/A(main)",
@@ -76,6 +112,15 @@ export class μPD8255 {
         this.latches[L.HostPaOut_SubPbIn] = value;
         this.subHasFresh = true;
         log.info(`A out=${byte(value)} (main→sub)`);
+        if (this.tracer) {
+          this.tracer({
+            kind: "data",
+            side: "main",
+            port: "A",
+            value,
+            atnAsserted: this.mainAtnAsserted(),
+          });
+        }
         this.onFreshForSub?.();
       },
     });
@@ -88,6 +133,15 @@ export class μPD8255 {
       },
       write: (_port, value) => {
         this.latches[L.HostPbOut_SubPaIn] = value;
+        if (this.tracer) {
+          this.tracer({
+            kind: "data",
+            side: "main",
+            port: "B",
+            value,
+            atnAsserted: this.mainAtnAsserted(),
+          });
+        }
       },
     });
     bus.register(basePort + 2, {
@@ -112,6 +166,15 @@ export class μPD8255 {
         this.latches[L.SubPaOut_HostPbIn] = value;
         this.mainHasFresh = true;
         log.info(`A out=${byte(value)} (sub→main)`);
+        if (this.tracer) {
+          this.tracer({
+            kind: "data",
+            side: "sub",
+            port: "A",
+            value,
+            atnAsserted: this.mainAtnAsserted(),
+          });
+        }
         this.onFreshForMain?.();
       },
     });
@@ -124,6 +187,15 @@ export class μPD8255 {
       },
       write: (_port, value) => {
         this.latches[L.SubPbOut_HostPaIn] = value;
+        if (this.tracer) {
+          this.tracer({
+            kind: "data",
+            side: "sub",
+            port: "B",
+            value,
+            atnAsserted: this.mainAtnAsserted(),
+          });
+        }
       },
     });
     bus.register(basePort + 2, {
@@ -138,6 +210,10 @@ export class μPD8255 {
       read: () => 0xff,
       write: (_port, value) => this.handleControl("sub", value),
     });
+  }
+
+  private mainAtnAsserted(): boolean {
+    return (this.latches[L.HostPcOut_SubPcIn]! & 0x80) !== 0;
   }
 
   // Port C read with the PC-88 motherboard pin remap baked in. Each
@@ -180,6 +256,15 @@ export class μPD8255 {
     const slot = side === "main" ? L.HostPcOut_SubPcIn : L.SubPcOut_HostPcIn;
     const cur = this.latches[slot]!;
     this.latches[slot] = set ? (cur | mask) : (cur & ~mask);
+    if (this.tracer) {
+      this.tracer({
+        kind: "ctrl",
+        side,
+        bit,
+        set,
+        mnemonic: PORT_C_BIT_NAMES[bit] ?? `bit${bit}`,
+      });
+    }
   }
 
   snapshot(): PPISnapshot {
