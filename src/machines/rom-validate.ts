@@ -59,6 +59,7 @@ const LOADED_ROM_SLOTS = [
   "e2",
   "e3",
   "disk",
+  "font",
 ] as const;
 type LoadedRomSlot = (typeof LOADED_ROM_SLOTS)[number];
 

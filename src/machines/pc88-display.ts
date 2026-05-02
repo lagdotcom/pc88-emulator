@@ -97,6 +97,10 @@ export class PC88TextDisplay implements PC88Display {
     private readonly dmac: μPD8257,
     private readonly sysctrl: SystemController,
     private readonly displayRegs: DisplayRegisters,
+    // 256-glyph 8x8 font ROM (`char_code * 8` row layout, MSB =
+    // leftmost). When loaded, getPixelFrame() overlays text on top
+    // of the GVRAM composite. Pass null for graphics-only.
+    private readonly fontRom: Uint8Array | null = null,
   ) {}
 
   // Build a TextFrame from the CRTC + DMAC live config: rows / cols
@@ -196,7 +200,57 @@ export class PC88TextDisplay implements PC88Display {
         }
       }
     }
+    if (this.fontRom && this.fontRom.length >= 256 * 8) {
+      this.overlayText(rgba, width, height);
+    }
     return { width, height, rgba };
+  }
+
+  // Overlay text glyphs from `fontRom` on top of an RGBA frame. Each
+  // glyph is 8x8 (256 chars × 8 bytes); cell width and height are
+  // derived from the CRTC's programmed cols/rows. White on
+  // pass-through: glyph bit set → white pixel; bit clear → leave the
+  // underlying graphics pixel alone. Layer mask isn't checked because
+  // the text frame already follows the BIOS's CRTC programming —
+  // showText reflects real-silicon visibility but synthetic-ROM tests
+  // use the overlay directly without going through layer-mask
+  // programming. Cell widths > 8 (40-col mode) double the glyph
+  // horizontally; cell heights > 8 leave the bottom rows blank.
+  private overlayText(
+    rgba: Uint8ClampedArray,
+    width: number,
+    height: number,
+  ): void {
+    const text = this.getTextFrame();
+    if (text.cols === 0 || text.rows === 0) return;
+    const cellW = (width / text.cols) | 0;
+    const cellH = (height / text.rows) | 0;
+    if (cellW <= 0 || cellH <= 0) return;
+    const stretchX = cellW / 8;
+    const font = this.fontRom!;
+    for (let row = 0; row < text.rows; row++) {
+      for (let col = 0; col < text.cols; col++) {
+        const ch = text.chars[row * text.cols + col]!;
+        if (ch === 0) continue;
+        const glyphBase = ch * 8;
+        for (let py = 0; py < 8 && py < cellH; py++) {
+          const glyphRow = font[glyphBase + py]!;
+          if (glyphRow === 0) continue;
+          const y = row * cellH + py;
+          for (let gx = 0; gx < 8; gx++) {
+            if ((glyphRow & (0x80 >> gx)) === 0) continue;
+            const xStart = (col * cellW + gx * stretchX) | 0;
+            const xEnd = (col * cellW + (gx + 1) * stretchX) | 0;
+            for (let x = xStart; x < xEnd; x++) {
+              const i = (y * width + x) * 4;
+              rgba[i] = 0xff;
+              rgba[i + 1] = 0xff;
+              rgba[i + 2] = 0xff;
+            }
+          }
+        }
+      }
+    }
   }
 
   toASCIIDump(): string {
@@ -251,4 +305,26 @@ function formatGrid(chars: Uint8Array, cols: Chars, rows: Chars): string {
     lines.push(line.replace(/\s+$/, ""));
   }
   return lines.join("\n");
+}
+
+// Encode an RGBA `PixelFrame` as a PPM (P6) byte buffer. Drops the
+// alpha channel — PPM is RGB only — but every PC-88 pixel is
+// fully opaque so nothing is lost. Header is ASCII; pixel data is
+// raw bytes. Open natively in Preview / GIMP / `display` / browsers
+// (after rename to .ppm), and `convert` / `magick` rewrites it as
+// PNG without flags.
+export function pixelFrameToPPM(frame: PixelFrame): Uint8Array {
+  const header = `P6\n${frame.width} ${frame.height}\n255\n`;
+  const headerBytes = new TextEncoder().encode(header);
+  const rgbBytes = frame.width * frame.height * 3;
+  const out = new Uint8Array(headerBytes.length + rgbBytes);
+  out.set(headerBytes, 0);
+  let dst = headerBytes.length;
+  const src = frame.rgba;
+  for (let i = 0; i < src.length; i += 4) {
+    out[dst++] = src[i]!;
+    out[dst++] = src[i + 1]!;
+    out[dst++] = src[i + 2]!;
+  }
+  return out;
 }

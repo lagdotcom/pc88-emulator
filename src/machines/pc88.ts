@@ -146,6 +146,7 @@ export class PC88Machine {
       this.dmac,
       this.sysctrl,
       this.displayRegs,
+      roms.font ?? null,
     );
 
     // mkII+ FDC sub-CPU subsystem. Only wired when the variant

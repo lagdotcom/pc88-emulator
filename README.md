@@ -128,10 +128,13 @@ yarn web:host            # static-serve web/ via local-server (regenerates the
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
 `-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`,
 `--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
-`-d`/`--debug`, `--break=ADDR`, `--script=PATH`. Each non-debug flag
-has an env-var fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`,
-`PC88_TRACE_IO`, `PC88_RAW_TVRAM`, `LOG_TO_FILE`, `PC88_SCRIPT`) so
-values you'd want to keep across runs can live in a `.env`. The
+`-d`/`--debug`, `--break=ADDR`, `--script=PATH`,
+`--screenshot=PATH` (writes a PPM of the composited frame —
+graphics + text overlay if `font.rom` is loaded). Each non-debug
+flag has an env-var fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`,
+`PC88_TRACE_IO`, `PC88_RAW_TVRAM`, `LOG_TO_FILE`, `PC88_SCRIPT`,
+`PC88_SCREENSHOT`) so values you'd want to keep across runs can
+live in a `.env`. The
 required mkI ROM files are `mkI-n80.rom`, `mkI-n88.rom`,
 `mkI-e0.rom` with md5s declared in `src/machines/variants/mk1.ts`.
 The `roms/` directory is gitignored so dumps stay local.
@@ -324,9 +327,23 @@ Roughly ordered by what's blocking what.
   colour fills the rest. Renderer-agnostic: web canvas can blit
   via `putImageData`; CLI can dump as PPM. Both targets share the
   same data model.
-- [ ] **Renderers for the pixel frame**. Web canvas `putImageData`
-  pass; CLI `--screenshot=PATH` PPM/PNG dump. Tests already drive
-  the data path end-to-end without renderers.
+- [x] **CLI screenshot renderer**. `yarn pc88 --screenshot=PATH`
+  writes the composited frame as a PPM (P6) — zero deps, every
+  major image viewer opens it natively, and `magick`/`convert`
+  rewrites to PNG without flags. Helper:
+  `pixelFrameToPPM(frame): Uint8Array`.
+- [x] **Text glyph overlay from font ROM**. `LoadedROMs.font`
+  loaded via the loader's slot allowlist; `PC88Machine` passes the
+  bytes to `PC88TextDisplay`; `getPixelFrame()` overlays each TVRAM
+  cell's glyph (8×8 from the 2 KB mkI font ROM, char-code-indexed,
+  MSB-leftmost) on top of the GVRAM composite. White-on-passthrough
+  (graphics shows wherever the glyph bit is clear). Cell width
+  derived from CRTC's cols (8 in 80-col mode, 16 with 1-pixel
+  doubling in 40-col).
+- [ ] **Web canvas renderer for the pixel frame**.
+  `src/web/canvas-renderer.ts` should call `getPixelFrame()` and
+  `putImageData` it onto a 640×200 canvas — same data the CLI now
+  writes to PPM.
 - [ ] **Pixel-accurate CRT controller (raster timing, text overlay)**.
   The μPD3301 stub consumes SET MODE / START DISPLAY correctly but
   doesn't generate scanline timing. `getPixelFrame` returns a

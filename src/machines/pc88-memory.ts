@@ -31,6 +31,11 @@ export interface LoadedROMs {
   // internal FDD-IF; on mkI it would belong to an external floppy
   // unit (PC-8031 etc.) which we don't model yet.
   readonly disk?: Uint8Array;
+  // Text-mode glyph ROM (8x8 on mkI/mkII, larger on FH+). 256 chars
+  // packed as `char_code * 8` byte rows, MSB = leftmost pixel. Used
+  // by the pixel-frame compositor to overlay text on graphics; if
+  // not loaded, getPixelFrame() returns graphics-only.
+  readonly font?: Uint8Array;
 }
 
 export type BasicMode = "n80" | "n88";

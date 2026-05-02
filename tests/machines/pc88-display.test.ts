@@ -6,12 +6,22 @@ import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
 import { filledROM } from "../tools.js";
 
-function syntheticRoms(program: u8[]): LoadedROMs {
+function syntheticRoms(program: u8[], opts: { withFont?: boolean } = {}): LoadedROMs {
   const n80 = filledROM(0x8000, 0x76);
   for (let i = 0; i < program.length; i++) n80[i] = program[i]!;
   const n88 = filledROM(0x8000, 0x76);
   const e0 = filledROM(0x2000, 0x76);
-  return { n80, n88, e0 };
+  const base: LoadedROMs = { n80, n88, e0 };
+  if (!opts.withFont) return base;
+  // Synthetic 2 KB font ROM: every char gets a "diagonal stripe"
+  // glyph (rows 0..7 = 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02,
+  // 0x01) so tests can detect the overlay on any cell.
+  const font = new Uint8Array(2048);
+  const stripe = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+  for (let ch = 0; ch < 256; ch++) {
+    for (let r = 0; r < 8; r++) font[ch * 8 + r] = stripe[r]!;
+  }
+  return { ...base, font };
 }
 
 // Helper: drop a string into TVRAM at the given absolute address as
@@ -192,5 +202,109 @@ describe("PC88TextDisplay.getPixelFrame — GVRAM composite", () => {
     machine.memoryMap.gvram[2]![50 * 80 + 12] = 0x80;
     const { rgba: r2 } = machine.display.getPixelFrame()!;
     expect(px(r2, 12 * 8, 50)).toEqual([0x00, 0xff, 0x00]); // green plane 2
+  });
+});
+
+describe("PC88TextDisplay.getPixelFrame — text overlay", () => {
+  function programCRTC(machine: PC88Machine, mode40Col = false): void {
+    machine.ioBus.write(0x30, mode40Col ? 0x00 : 0x01);
+    // CRTC SET MODE: 80×20 standard programming.
+    machine.ioBus.write(0x51, 0x00);
+    machine.ioBus.write(0x50, 0xce);
+    machine.ioBus.write(0x50, 0x93);
+    machine.ioBus.write(0x50, 0x69);
+    machine.ioBus.write(0x50, 0xbe);
+    machine.ioBus.write(0x50, 0x13);
+    // DMAC ch2 source = 0xF300.
+    machine.ioBus.write(0x64, 0x00);
+    machine.ioBus.write(0x64, 0xf3);
+  }
+
+  it("graphics-only frame when no font ROM is loaded", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76])); // no font
+    machine.reset();
+    programCRTC(machine);
+    machine.memoryMap.tvram[0x300] = 0x41; // 'A' at top-left
+    const { rgba } = machine.display.getPixelFrame()!;
+    // Without the font ROM, the TVRAM cells don't draw — top-left
+    // should still be the bg colour (black at reset).
+    expect(px(rgba, 0, 0)).toEqual([0x00, 0x00, 0x00]);
+  });
+
+  it("draws glyph pixels white over GVRAM when font ROM is loaded", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76], { withFont: true }));
+    machine.reset();
+    programCRTC(machine);
+    // Drop a non-zero char into the visible region's first cell. The
+    // synthetic font's diagonal stripe lights up (0,0), (1,1), …,
+    // (7,7) within the 8x10 cell.
+    machine.memoryMap.tvram[0x300] = 0x41; // 'A' (any non-zero)
+    const { rgba } = machine.display.getPixelFrame()!;
+    for (let i = 0; i < 8; i++) {
+      expect(px(rgba, i, i)).toEqual([0xff, 0xff, 0xff]);
+    }
+    // Off-diagonal pixels stay at the bg colour.
+    expect(px(rgba, 0, 1)).toEqual([0x00, 0x00, 0x00]);
+  });
+
+  it("char 0x00 is skipped (no overlay where TVRAM is empty)", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76], { withFont: true }));
+    machine.reset();
+    programCRTC(machine);
+    // GVRAM plane 1 sets a red pixel at the top-left cell, which
+    // would be overwritten if we naively rendered char 0's glyph.
+    machine.displayRegs.showGVRAM1 = true;
+    machine.memoryMap.gvram[1]![0] = 0x80;
+    // TVRAM cells default to 0; overlay must skip them so the
+    // graphics layer wins.
+    const { rgba } = machine.display.getPixelFrame()!;
+    expect(px(rgba, 0, 0)).toEqual([0xff, 0x00, 0x00]);
+  });
+
+  it("glyph stretches horizontally in 40-col mode (cell width 16)", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76], { withFont: true }));
+    machine.reset();
+    programCRTC(machine, true); // 40-col: 2-byte cells, char at even
+    machine.memoryMap.tvram[0x300] = 0x41; // 'A'
+    machine.memoryMap.tvram[0x301] = 0x00; // attr byte
+    const { rgba } = machine.display.getPixelFrame()!;
+    // Glyph row 0 has only bit 7 set → first 2 pixels (stretched
+    // from the original 1) should be white, next 2 should be bg.
+    expect(px(rgba, 0, 0)).toEqual([0xff, 0xff, 0xff]);
+    expect(px(rgba, 1, 0)).toEqual([0xff, 0xff, 0xff]);
+    expect(px(rgba, 2, 0)).toEqual([0x00, 0x00, 0x00]);
+  });
+});
+
+describe("pixelFrameToPPM", () => {
+  it("emits a P6 header followed by RGB bytes", async () => {
+    const { pixelFrameToPPM } = await import("../../src/machines/pc88-display.js");
+    const frame = {
+      width: 2,
+      height: 1,
+      rgba: new Uint8ClampedArray([
+        0xff, 0x00, 0x00, 0xff, // red
+        0x00, 0xff, 0x00, 0xff, // green
+      ]),
+    } as const;
+    const out = pixelFrameToPPM(frame);
+    const headerEnd = out.indexOf(0x0a, out.indexOf(0x0a, out.indexOf(0x0a) + 1) + 1);
+    const header = new TextDecoder().decode(out.slice(0, headerEnd + 1));
+    expect(header).toBe("P6\n2 1\n255\n");
+    // 2x1 = 2 px × 3 bytes = 6 bytes after header.
+    expect(Array.from(out.slice(headerEnd + 1))).toEqual(
+      [0xff, 0x00, 0x00, 0x00, 0xff, 0x00],
+    );
+  });
+
+  it("encodes a full 640x200 frame at the expected byte length", async () => {
+    const { pixelFrameToPPM } = await import("../../src/machines/pc88-display.js");
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    machine.displayRegs.showGVRAM0 = true;
+    const frame = machine.display.getPixelFrame()!;
+    const ppm = pixelFrameToPPM(frame);
+    // "P6\n640 200\n255\n" = 15 bytes header + 640*200*3 RGB.
+    expect(ppm.length).toBe(15 + 640 * 200 * 3);
   });
 });

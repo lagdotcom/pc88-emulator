@@ -1,4 +1,4 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { config as loadDotEnv } from "dotenv";
@@ -8,6 +8,7 @@ import { kOps } from "./flavour.makers.js";
 import type { FilesystemPath, Operations, u16 } from "./flavours.js";
 import { logToStream } from "./log.js";
 import type { PC88Config } from "./machines/config.js";
+import { pixelFrameToPPM } from "./machines/pc88-display.js";
 import {
   PC88Machine,
   runMachine,
@@ -42,6 +43,10 @@ interface CliFlags {
   // running boot scripts without entering the REPL would otherwise
   // be a confusing no-op flag.
   debugScript: FilesystemPath | null;
+  // Optional path for --screenshot=PATH. After the run finishes the
+  // composited pixel frame (GVRAM + text overlay if font ROM was
+  // loaded) is written as a PPM (P6) file at this location.
+  screenshot: FilesystemPath | null;
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -64,6 +69,7 @@ function parseCliFlags(argv: string[]): CliFlags {
       debug: { type: "boolean", short: "d" },
       break: { type: "string", multiple: true },
       script: { type: "string" },
+      screenshot: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -122,6 +128,13 @@ function parseCliFlags(argv: string[]): CliFlags {
   const debugScript: FilesystemPath | null =
     typeof scriptArg === "string" && scriptArg.length > 0 ? scriptArg : null;
 
+  const screenshotArg =
+    values["screenshot"] ?? process.env.PC88_SCREENSHOT ?? null;
+  const screenshot: FilesystemPath | null =
+    typeof screenshotArg === "string" && screenshotArg.length > 0
+      ? screenshotArg
+      : null;
+
   return {
     romDir,
     maxOps,
@@ -136,6 +149,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     debug: !!values["debug"] || debugScript !== null,
     initialBreakpoints,
     debugScript,
+    screenshot,
     config,
   };
 }
@@ -165,6 +179,9 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       handing control to the REPL; if the script
                       ends with \`quit\` the REPL is skipped (implies
                       --debug; env: PC88_SCRIPT)
+  --screenshot=PATH   after the run, write the composited frame
+                      (GVRAM + text overlay when font.rom is loaded)
+                      as a PPM (P6) file at PATH (env: PC88_SCREENSHOT)
   -h, --help          show this help
 `;
 
@@ -347,6 +364,20 @@ async function main(): Promise<void> {
     process.stdout.write("\n\n--- Raw TVRAM (4 KB hex) ---\n");
     process.stdout.write(machine.display.rawTVRAMDump());
   }
+  if (flags.screenshot) {
+    const frame = machine.display.getPixelFrame();
+    if (frame) {
+      writeFileSync(flags.screenshot, pixelFrameToPPM(frame));
+      process.stdout.write(
+        `\n--- Screenshot ---\nwrote ${frame.width}x${frame.height} PPM to ${flags.screenshot}\n`,
+      );
+    } else {
+      process.stdout.write(
+        "\n--- Screenshot ---\n(getPixelFrame returned null; nothing written)\n",
+      );
+    }
+  }
+
   process.stdout.write("\n------------------\n");
 }
 
