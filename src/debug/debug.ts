@@ -9,6 +9,7 @@ import type {
   u16,
 } from "../flavours.js";
 import { getLogger } from "../log.js";
+import type { PixelFrame } from "../machines/pc88-display.js";
 import {
   makeVblState,
   PC88Machine,
@@ -76,6 +77,12 @@ export interface DebugOptions {
   // user typed it. If the script ends with `quit`, the REPL is
   // skipped — handy for "run boot, dump state, exit" automation.
   script?: FilesystemPath;
+  // Sink for the `screenshot PATH` command. CLI populates this
+  // from main.ts (encodes via pngjs + writeFileSync); web could
+  // wire a Blob-download or no-op. When omitted, the command
+  // prints a friendly diagnostic instead of crashing — keeps the
+  // dispatcher browser-safe (no node:fs / pngjs imports here).
+  saveScreenshot?: (frame: PixelFrame, path: FilesystemPath) => void;
 }
 
 // One call-stack frame, recorded each time we observe a CALL / RST
@@ -182,6 +189,7 @@ Inspection:
   r, regs                 show CPU registers
   chips                   show CRTC / DMAC / IRQ / sysctrl / DIP state
   screen                  render the CRTC+DMAC visible region
+  ss, screenshot PATH     save the composited frame as PNG (CLI only)
   stack                   show the synthesised CALL/RST/IRQ call stack
   trace [count]           dump the last [count] PCs (default 16,
                           max 64); auto-printed (last 8) on watch /
@@ -923,6 +931,36 @@ export async function dispatch(
         // doesn't have to remember which init step gates it.
         writer(machine.display.toASCIIDump() + "\n");
         return { quit: false };
+
+      case "ss":
+      case "screenshot": {
+        if (args.length === 0) {
+          writer("usage: screenshot PATH\n");
+          return { quit: false };
+        }
+        // Allow paths with spaces — join the rest of the line.
+        const path = args.join(" ") as FilesystemPath;
+        const frame = machine.display.getPixelFrame();
+        if (!frame) {
+          writer("screenshot: no pixel frame (display not yet active)\n");
+          return { quit: false };
+        }
+        if (!opts.saveScreenshot) {
+          writer(
+            "screenshot: no saver wired (encoder lives in pc88-screenshot.ts; the web UI doesn't pass one yet)\n",
+          );
+          return { quit: false };
+        }
+        try {
+          opts.saveScreenshot(frame, path);
+          writer(
+            `wrote ${frame.width}×${frame.height} screenshot to ${path}\n`,
+          );
+        } catch (e) {
+          writer(`screenshot failed: ${(e as Error).message}\n`);
+        }
+        return { quit: false };
+      }
 
       case "stack":
         printCallStack(state, syms);

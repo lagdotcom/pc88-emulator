@@ -86,7 +86,8 @@ Working enough for first-light boot:
   `sysctrl.cols80` (port 0x30 bit 0): 1-byte cells in 80-col mode
   (N88-BASIC), 2-byte cells in 40-col mode (N-BASIC).
 - Interactive debugger (`yarn pc88 -d` / `--debug`): step / next /
-  continue / break / regs / chips / screen / dis / peek / poke /
+  continue / break / regs / chips / screen / `ss PATH` (save the
+  composited frame as PNG) / dis / peek / poke /
   label / portlabel / quit, plus RAM watchpoints
   (`bw <addr> r|w|rw [break|log]`), port watchpoints
   (`bp <port> r|w|rw [break|log]`), a synthesised CALL/RST/IRQ
@@ -327,12 +328,17 @@ Roughly ordered by what's blocking what.
   colour fills the rest. Renderer-agnostic: web canvas can blit
   via `putImageData`; CLI can dump as PPM. Both targets share the
   same data model.
-- [x] **CLI screenshot renderer**. `yarn pc88 --screenshot=PATH`
-  writes the composited frame as a PNG via `pngjs`. Helper:
-  `pixelFrameToPNG(frame): Uint8Array` lives in
-  `src/machines/pc88-screenshot.ts` (Node-only — pngjs uses
+- [x] **CLI screenshot renderer**. Two entry points:
+  `yarn pc88 --screenshot=PATH` writes the composited frame as a
+  PNG via `pngjs` after the run completes; the debugger command
+  `ss PATH` (alias `screenshot PATH`) saves the live frame at any
+  point in a session. Helper: `pixelFrameToPNG(frame): Uint8Array`
+  in `src/machines/pc88-screenshot.ts` (Node-only — pngjs uses
   node:zlib; pulling that into pc88-display.ts would break the
-  web bundle). N-BASIC boot screen at 640×200 is ~3 KB.
+  web bundle). The debugger reaches the encoder through a
+  `DebugOptions.saveScreenshot` callback that the CLI populates;
+  the dispatcher itself stays browser-safe. N-BASIC boot screen at
+  640×200 is ~3 KB.
 - [x] **Text glyph overlay from font ROM**. `LoadedROMs.font`
   loaded via the loader's slot allowlist; `PC88Machine` passes the
   bytes to `PC88TextDisplay`; `getPixelFrame()` overlays each TVRAM

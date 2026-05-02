@@ -338,6 +338,9 @@ async function main(): Promise<void> {
     const debugOpts: Parameters<typeof runDebug>[1] = {
       initialBreakpoints: flags.initialBreakpoints,
       loadedRoms: loaded,
+      saveScreenshot: (frame, path) => {
+        writeFileSync(path, pixelFrameToPNG(frame));
+      },
     };
     if (flags.debugScript !== null) debugOpts.script = flags.debugScript;
     await runDebug(machine, debugOpts);
