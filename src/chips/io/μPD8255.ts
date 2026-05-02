@@ -92,7 +92,7 @@ export class μPD8255 {
     });
     bus.register(basePort + 2, {
       name: "ppi/C(main)",
-      read: () => this.latches[L.SubPcOut_HostPcIn]!,
+      read: () => this.readPortC("main"),
       write: (_port, value) => {
         this.latches[L.HostPcOut_SubPcIn] = value;
       },
@@ -128,7 +128,7 @@ export class μPD8255 {
     });
     bus.register(basePort + 2, {
       name: "ppi/C(sub)",
-      read: () => this.latches[L.HostPcOut_SubPcIn]!,
+      read: () => this.readPortC("sub"),
       write: (_port, value) => {
         this.latches[L.SubPcOut_HostPcIn] = value;
       },
@@ -138,6 +138,28 @@ export class μPD8255 {
       read: () => 0xff,
       write: (_port, value) => this.handleControl("sub", value),
     });
+  }
+
+  // Port C read with the PC-88 motherboard pin remap baked in. Each
+  // side has its own outgoing port-C latch (high nibble = "things I
+  // want the other side to know"), and reads back: own high nibble
+  // straight, plus the OTHER side's high nibble shifted down to its
+  // own low nibble — that's the cross-wiring that makes ATN (write
+  // bit 7) appear as bit 3 to the receiver, DAC (write bit 6) as
+  // bit 2, RFD (write bit 5) as bit 1, DAV (write bit 4) as bit 0.
+  // Without this, the PC-8031 disk-board ROM polls bit 3 of its
+  // port C forever waiting for an ATN signal the main BIOS thinks
+  // it has already sent.
+  private readPortC(side: "main" | "sub"): u8 {
+    const ownOut =
+      this.latches[
+        side === "main" ? L.HostPcOut_SubPcIn : L.SubPcOut_HostPcIn
+      ]!;
+    const peerOut =
+      this.latches[
+        side === "main" ? L.SubPcOut_HostPcIn : L.HostPcOut_SubPcIn
+      ]!;
+    return ((ownOut & 0xf0) | (peerOut >> 4)) as u8;
   }
 
   // i8255 control register: bit 7 = 1 selects a mode word, bit 7 = 0

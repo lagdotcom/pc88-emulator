@@ -6,7 +6,7 @@ import type { PC88Config } from "../../src/machines/config.js";
 import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
 import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
-import { filledROM, SUBCPU_ECHO_PLUS_ONE } from "../tools.js";
+import { buildTestDisk, filledROM, SUBCPU_ECHO_PLUS_ONE } from "../tools.js";
 
 // Padded to the variant descriptor's 2 KB so SubCPU's ROM mirror
 // region behaves the same as it would with a real PC-8031 image.
@@ -172,5 +172,55 @@ describe("runMachine schedules both CPUs", () => {
 
     expect(machine.subcpu!.cpu.halted).toBe(true);
     expect(machine.ioBus.read(0xfd)).toBe(0x42);
+  });
+});
+
+describe("PC88Machine drive attachment", () => {
+  it("creates default 2 drives and attaches them to the FDC", () => {
+    const machine = new PC88Machine(
+      MKII_LIKE,
+      syntheticRoms([0x00], { withDisk: true }),
+    );
+    expect(machine.floppy.length).toBe(2);
+    // FDC.attachDrive throws on out-of-range; we can verify the
+    // attachment indirectly by calling sense-drive-status on each
+    // drive index and checking we don't get the "no drive" path.
+    // (insertDisk + isReady is more direct.)
+    const disk = buildTestDisk();
+    machine.insertDisk(0, disk);
+    expect(machine.floppy[0]!.hasDisk()).toBe(true);
+    expect(machine.floppy[0]!.motorOn).toBe(true);
+  });
+
+  it("no drives when the variant declares hasSubCpu=false (mkI default)", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x00]));
+    expect(machine.floppy.length).toBe(0);
+    expect(() => machine.insertDisk(0, buildTestDisk())).toThrow(
+      /drive 0 doesn't exist/,
+    );
+  });
+
+  it("opts.enableDiskSubsystem forces the wiring on a hasSubCpu=false variant", () => {
+    // mkI has count=0; the override should default to 2 drives so
+    // an inserted disk has somewhere to land.
+    const machine = new PC88Machine(
+      MKI,
+      syntheticRoms([0x00], { withDisk: true }),
+      { enableDiskSubsystem: true },
+    );
+    expect(machine.subcpu).not.toBeNull();
+    expect(machine.floppy.length).toBe(2);
+    const disk = buildTestDisk();
+    machine.insertDisk(0, disk);
+    expect(machine.floppy[0]!.hasDisk()).toBe(true);
+  });
+
+  it("insertDisk sets motorOn so isReady() is true immediately", () => {
+    const machine = new PC88Machine(
+      MKII_LIKE,
+      syntheticRoms([0x00], { withDisk: true }),
+    );
+    machine.insertDisk(0, buildTestDisk());
+    expect(machine.floppy[0]!.isReady()).toBe(true);
   });
 });

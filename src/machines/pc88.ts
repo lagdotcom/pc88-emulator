@@ -4,7 +4,7 @@ import { IrqController } from "../chips/io/irq.js";
 import { KanjiROM } from "../chips/io/kanji.js";
 import { Keyboard } from "../chips/io/keyboard.js";
 import { MiscPorts } from "../chips/io/misc.js";
-import { SystemController } from "../chips/io/sysctrl.js";
+import { PORT40_R, SystemController } from "../chips/io/sysctrl.js";
 import { YM2203 } from "../chips/io/YM2203.js";
 import { μPD3301 } from "../chips/io/μPD3301.js";
 import { μPD765a } from "../chips/io/μPD765a.js";
@@ -14,6 +14,8 @@ import { μPD8257 } from "../chips/io/μPD8257.js";
 import { resetZ80, snapshotZ80, Z80 } from "../chips/z80/cpu.js";
 import { IOBus } from "../core/IOBus.js";
 import { MemoryBus } from "../core/MemoryBus.js";
+import { FloppyDrive } from "../disk/drive.js";
+import type { Disk } from "../disk/types.js";
 import { mHz, mOps } from "../flavour.makers.js";
 import type { Cycles, Operations, u16 } from "../flavours.js";
 import { getLogger } from "../log.js";
@@ -41,6 +43,17 @@ const VBL_PULSE_CYCLES = Math.round(Z80_HZ * 0.0008); // ~0.8 ms VBL pulse
 // IM 2 jump table at I:0x00 + vector; reading PC from I:0x04 means
 // VBL handlers live at the third pair of bytes.
 const VBL_IRQ_VECTOR = 0x04;
+
+// Constructor options that don't belong in the variant config —
+// runtime overrides chosen at machine-build time.
+export interface PC88MachineOpts {
+  // Force the FDC sub-CPU subsystem on regardless of
+  // `config.disk.hasSubCpu`. The mkI PC-8031 external floppy unit
+  // uses the same hardware interface as the mkII+ internal FDD-IF;
+  // attaching one is a runtime decision rather than a hardware
+  // variant. Drive count defaults to 2 when the variant declares 0.
+  enableDiskSubsystem?: boolean;
+}
 
 export interface PC88MachineParts {
   cpu: Z80;
@@ -89,10 +102,15 @@ export class PC88Machine {
   readonly displayRegs: DisplayRegisters;
   readonly ppi: μPD8255 | null;
   readonly subcpu: SubCPU | null;
+  // FloppyDrive instances attached to the FDC. One entry per drive
+  // the variant declares (or 2 when the disk subsystem is force-
+  // enabled via the constructor opt). Empty when there's no FDC.
+  readonly floppy: FloppyDrive[] = [];
 
   constructor(
     public config: PC88Config,
     roms: LoadedROMs,
+    opts: PC88MachineOpts = {},
   ) {
     this.memoryMap = new PC88MemoryMap(roms, {
       tvramSeparate: config.memory.tvramSeparate,
@@ -149,15 +167,38 @@ export class PC88Machine {
       roms.font ?? null,
     );
 
-    // mkII+ FDC sub-CPU subsystem. Only wired when the variant
-    // declares an internal FDD-IF and the disk ROM loaded — mkI's
-    // disk ROM (PC-8031 external unit) is parsed but unused here
-    // until the external floppy interface lands.
-    if (config.disk.hasSubCpu && roms.disk) {
+    // FDC sub-CPU subsystem. Wired when the variant declares an
+    // internal FDD-IF (mkII+ hasSubCpu) OR when opts.enableDiskSubsystem
+    // is set explicitly — that's the path mkI users take when they
+    // attach the PC-8031 external floppy unit (same hardware
+    // interface; just bolted on rather than internal). Either way
+    // requires the disk ROM in `roms.disk`.
+    const wantDisk = (config.disk.hasSubCpu || !!opts.enableDiskSubsystem)
+      && !!roms.disk;
+    if (wantDisk) {
       this.ppi = new μPD8255();
       this.ppi.registerMain(this.ioBus);
       const fdc = new μPD765a();
-      this.subcpu = new SubCPU({ rom: roms.disk, ppi: this.ppi, fdc });
+      this.subcpu = new SubCPU({ rom: roms.disk!, ppi: this.ppi, fdc });
+      // Drive count: variant config takes precedence; fall back to 2
+      // whenever the disk subsystem is wired but `count` is 0 (true
+      // for the stock mkI config that declares no internal drives,
+      // and for the test-fixture MKII_LIKE that spreads ...MKI).
+      // Two drives covers "drive A: + drive B:" — the real-silicon
+      // default for mkII+ and the PC-8031 add-on.
+      const driveCount = config.disk.count > 0 ? config.disk.count : 2;
+      for (let i = 0; i < driveCount; i++) {
+        const drive = new FloppyDrive();
+        this.floppy.push(drive);
+        fdc.attachDrive(i, drive);
+      }
+      // Clear EXTON (bit 3 of port 0x40, active-low). Without this,
+      // the N88-BASIC boot path at ROM 0x36DB reads the bit set and
+      // skips PPI initialisation entirely — the disk subsystem is
+      // wired but the BIOS never talks to it. With it cleared the
+      // BIOS proceeds with `OUT (0xFF),0x91` (mode word) at 0x36EC
+      // and the rest of the disk-detect handshake.
+      this.sysctrl.systemStatus &= ~PORT40_R.EXTON;
     } else {
       if (config.disk.hasSubCpu && !roms.disk) {
         log.warn(
@@ -167,6 +208,21 @@ export class PC88Machine {
       this.ppi = null;
       this.subcpu = null;
     }
+  }
+
+  // Insert a parsed disk into a drive. Spins the motor up
+  // automatically — a real BIOS issues an explicit spin-up command
+  // first, but auto-on lets headless tests skip that step. Throws
+  // when the drive index is out of range or no FDC is attached.
+  insertDisk(driveIdx: number, disk: Disk): void {
+    const drive = this.floppy[driveIdx];
+    if (!drive) {
+      throw new Error(
+        `insertDisk: drive ${driveIdx} doesn't exist (have ${this.floppy.length})`,
+      );
+    }
+    drive.insert(disk);
+    drive.motorOn = true;
   }
 
   // Reset to power-on state. Initial BASIC selection comes from DIP

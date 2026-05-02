@@ -270,12 +270,14 @@ Roughly ordered by what's blocking what.
 - [x] **Sub-CPU IPC PPI** (`μPD8255` at 0xFC-0xFF). Two-sided
   bridge modelled per MAME's `pc80s31k`: on each side, port A is
   outgoing (write to send), port B is incoming (read to receive),
-  port C is symmetric pass-through. Six internal latches with the
-  PA↔PB crossover that real silicon has. `hasFreshForSub()` /
-  `hasFreshForMain()` flags will drive the sub-CPU scheduler.
-  TODO: GPIB-style PC bit remap (writer uses PC[4..7], reader sees
-  PC[0..2] in MAME) — not exercised by the BIOS init path; lands
-  when the FDC sub-CPU ROM consumes the strobe protocol.
+  port C carries the handshake bits with a **high-nibble cross-
+  down remap** — each side's port-C high nibble (writer's
+  ATN/DAC/RFD/DAV at bits 7/6/5/4) lands as the reader's low
+  nibble (bits 3/2/1/0). Without that, the PC-8031 disk-board ROM
+  polls bit 3 of its port C forever waiting for the BIOS's bit-7
+  ATN. Six internal latches plus the remap on read.
+  `hasFreshForSub()` / `hasFreshForMain()` flags drive the sub-CPU
+  scheduler.
 - [x] **Sub-CPU subsystem** in `src/machines/sub-cpu.ts`. Second
   Z80 + its own MemoryBus + IOBus + ROM mirror + 16 KB RAM + PPI
   registered on its sub side, modelled per MAME's pc80s31k. Tested
@@ -296,6 +298,27 @@ Roughly ordered by what's blocking what.
   end-to-end: main writes the PPI, the HALTed sub wakes via IM 1,
   the handler at 0x0038 echoes back through the PPI, main reads
   the response — no direct-poke API needed.
+- [x] **`FloppyDrive[N]` attached to the FDC + `insertDisk` API +
+  CLI `--disk0=PATH.d88`**. PC88Machine creates `count` drives
+  (default 2 when the disk subsystem is wired but the variant
+  declares 0) and attaches them to the FDC; `insertDisk(idx, disk)`
+  loads a parsed `Disk` and turns the motor on. The
+  `enableDiskSubsystem` constructor opt force-wires the subsystem
+  on hasSubCpu=false variants (the path mkI users take with the
+  PC-8031 add-on); `--disk0=PATH.d88` parses the D88 (taking image
+  0 for multi-image files), sets that flag, and inserts. EXTON bit
+  3 of port 0x40 is cleared automatically when the subsystem is
+  wired so the BIOS does its PPI-init handshake instead of jumping
+  straight to BASIC.
+- [ ] **Sub-CPU disk-boot handshake completion**. With drives
+  attached + EXTON cleared + PPI cross-down remap in place, the
+  BIOS now does its PPI handshake, the sub-CPU's PC-8031 boot ROM
+  runs past its polling loop, and the FDC issues RECALIBRATE — but
+  the BIOS still falls back to "How many files(0-15)?" instead of
+  reading the boot sector. Something in the post-recalibrate
+  protocol (probably a status byte the sub-CPU should send back
+  through PPI port B) isn't satisfying the BIOS yet. Boot-to-game
+  is gated on this.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

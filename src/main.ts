@@ -1,9 +1,10 @@
-import { createWriteStream, writeFileSync } from "node:fs";
+import { createWriteStream, readFileSync, writeFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { config as loadDotEnv } from "dotenv";
 
 import { runDebug } from "./debug/debug-cli.js";
+import { parseD88 } from "./disk/d88.js";
 import { kOps } from "./flavour.makers.js";
 import type { FilesystemPath, Operations, u16 } from "./flavours.js";
 import { logToStream } from "./log.js";
@@ -47,6 +48,12 @@ interface CliFlags {
   // composited pixel frame (GVRAM + text overlay if font ROM was
   // loaded) is written as a PPM (P6) file at this location.
   screenshot: FilesystemPath | null;
+  // Optional path for --disk0=PATH.d88. Loads + parses the D88,
+  // force-enables the disk subsystem (overriding the variant
+  // config's hasSubCpu), and inserts the first image into drive 0.
+  // Multi-image D88s use only the first image; the rest are ignored
+  // until a multi-disk swap UI lands.
+  disk0: FilesystemPath | null;
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -70,6 +77,7 @@ function parseCliFlags(argv: string[]): CliFlags {
       break: { type: "string", multiple: true },
       script: { type: "string" },
       screenshot: { type: "string" },
+      disk0: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -135,6 +143,10 @@ function parseCliFlags(argv: string[]): CliFlags {
       ? screenshotArg
       : null;
 
+  const disk0Arg = values["disk0"] ?? process.env.PC88_DISK0 ?? null;
+  const disk0: FilesystemPath | null =
+    typeof disk0Arg === "string" && disk0Arg.length > 0 ? disk0Arg : null;
+
   return {
     romDir,
     maxOps,
@@ -150,6 +162,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     initialBreakpoints,
     debugScript,
     screenshot,
+    disk0,
     config,
   };
 }
@@ -182,6 +195,12 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
   --screenshot=PATH   after the run, write the composited frame
                       (GVRAM + text overlay when font.rom is loaded)
                       as a PNG file at PATH (env: PC88_SCREENSHOT)
+  --disk0=PATH.d88    load a D88 disk image and insert it into
+                      drive 0; force-enables the disk subsystem
+                      (the FDC sub-CPU + drives) regardless of the
+                      variant's hasSubCpu — needed for mkI to use
+                      its PC-8031 external floppy unit
+                      (env: PC88_DISK0)
   -h, --help          show this help
 `;
 
@@ -303,8 +322,25 @@ async function main(): Promise<void> {
       }
     : flags.config;
 
-  const machine = new PC88Machine(config, loaded);
+  const machine = new PC88Machine(config, loaded, {
+    enableDiskSubsystem: flags.disk0 !== null,
+  });
   machine.reset();
+
+  if (flags.disk0) {
+    const bytes = readFileSync(flags.disk0);
+    const disks = parseD88(
+      new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    );
+    if (disks.length === 0) {
+      throw new Error(`--disk0: ${flags.disk0} contains no D88 images`);
+    }
+    machine.insertDisk(0, disks[0]!);
+    process.stdout.write(
+      `--- Disk 0 ---\nloaded ${flags.disk0}: ${disks[0]!.name || "(no name)"} ` +
+        `${disks[0]!.mediaType} ${disks[0]!.cylinders}×${disks[0]!.heads}\n`,
+    );
+  }
 
   if (flags.traceIo !== "off") {
     const cpu = machine.cpu;

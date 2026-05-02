@@ -58,25 +58,34 @@ describe("μPD8255 sub → main channel", () => {
   });
 });
 
-describe("μPD8255 port C pass-through", () => {
-  it("main writes port C → sub reads port C", () => {
+describe("μPD8255 port C high-nibble cross-down remap", () => {
+  // Real-silicon PC-88 wiring: the high nibble each side writes to
+  // port C lands as the low nibble on the OTHER side's port C read.
+  // The high nibble of a side's read is its own outgoing latch
+  // (echoed back for software that wants to inspect what it wrote).
+  // PC-8031's disk-board ROM relies on the cross-down — it polls
+  // bit 3 waiting for the BIOS's bit-7 ATN signal.
+  it("main writes high nibble → sub reads low nibble (cross-down)", () => {
     const { main, sub } = setup();
-    main.write(0xfe, 0x5a);
-    expect(sub.read(0xfe)).toBe(0x5a);
+    main.write(0xfe, 0xa0); // bit 7 + bit 5 high
+    // Sub's read: own high (= 0) | (main's high >> 4) = 0x0a.
+    expect(sub.read(0xfe)).toBe(0x0a);
   });
 
-  it("sub writes port C → main reads port C", () => {
+  it("sub writes high nibble → main reads low nibble (cross-down)", () => {
     const { main, sub } = setup();
-    sub.write(0xfe, 0xa5);
-    expect(main.read(0xfe)).toBe(0xa5);
+    sub.write(0xfe, 0x60); // bit 6 + bit 5 high
+    expect(main.read(0xfe)).toBe(0x06);
   });
 
-  it("main and sub C channels are independent", () => {
+  it("each side's high nibble echoes back on its own read", () => {
     const { main, sub } = setup();
-    main.write(0xfe, 0x11);
-    sub.write(0xfe, 0x22);
-    expect(sub.read(0xfe)).toBe(0x11);
-    expect(main.read(0xfe)).toBe(0x22);
+    main.write(0xfe, 0x80);
+    sub.write(0xfe, 0x40);
+    // Main reads: own high (0x80) | sub's high >> 4 (0x04) = 0x84
+    expect(main.read(0xfe)).toBe(0x84);
+    // Sub reads: own high (0x40) | main's high >> 4 (0x08) = 0x48
+    expect(sub.read(0xfe)).toBe(0x48);
   });
 });
 
@@ -89,24 +98,29 @@ describe("μPD8255 control register", () => {
     expect(ppi.snapshot().subControl).toBe(0x95);
   });
 
-  it("bit set/reset (bit 7 = 0) sets a port C bit on the writer's outgoing C", () => {
+  it("bit set/reset on main writes a high-nibble bit; sub sees it shifted down", () => {
     const { main, sub } = setup();
-    main.write(0xff, 0x07);
+    // ctrl 0x0F = set bit 7 on main's port-C output.
+    main.write(0xff, 0x0f);
+    // Sub reads bit 3 (= bit 7 shifted down by 4).
     expect(sub.read(0xfe) & 0x08).toBe(0x08);
   });
 
   it("bit set/reset can clear a previously-set bit", () => {
     const { main, sub } = setup();
-    main.write(0xff, 0x07);
-    main.write(0xff, 0x06);
+    main.write(0xff, 0x0f); // set bit 7
+    main.write(0xff, 0x0e); // clear bit 7
     expect(sub.read(0xfe) & 0x08).toBe(0);
   });
 
-  it("bit set/reset on sub side modifies sub's outgoing C only", () => {
+  it("bit set/reset on sub side: main reads the corresponding low bit", () => {
     const { main, sub } = setup();
-    sub.write(0xff, 0x09);
-    expect(main.read(0xfe) & 0x10).toBe(0x10);
-    expect(sub.read(0xfe) & 0x10).toBe(0);
+    // ctrl 0x0d = set bit 6 on sub's port-C output.
+    sub.write(0xff, 0x0d);
+    // Main reads bit 2 (= bit 6 shifted down).
+    expect(main.read(0xfe) & 0x04).toBe(0x04);
+    // Sub's own read sees bit 6 echoed back on the high nibble.
+    expect(sub.read(0xfe) & 0x40).toBe(0x40);
   });
 });
 

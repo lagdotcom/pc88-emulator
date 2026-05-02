@@ -51,7 +51,7 @@ const PORT32 = {
 } as const;
 
 // Port 0x40 read ("Strobe Port" status — VBL, RTC, printer, etc.).
-const PORT40_R = {
+export const PORT40_R = {
   PRINTER_BUSY: 1 << 0,
   SHG_NORMAL_RES: 1 << 1, // 0 = high res, 1 = normal res
   RS232_DCD: 1 << 2, // 1 = data carrier detected
