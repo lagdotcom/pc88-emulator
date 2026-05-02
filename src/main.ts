@@ -8,13 +8,13 @@ import { kOps } from "./flavour.makers.js";
 import type { FilesystemPath, Operations, u16 } from "./flavours.js";
 import { logToStream } from "./log.js";
 import type { PC88Config } from "./machines/config.js";
-import { pixelFrameToPPM } from "./machines/pc88-display.js";
 import {
   PC88Machine,
   runMachine,
   type RunOptions,
   type RunResult,
 } from "./machines/pc88.js";
+import { pixelFrameToPNG } from "./machines/pc88-screenshot.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { VARIANTS_BY_NICKNAME } from "./machines/variants/index.js";
 import { MKI } from "./machines/variants/mk1.js";
@@ -181,7 +181,7 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       --debug; env: PC88_SCRIPT)
   --screenshot=PATH   after the run, write the composited frame
                       (GVRAM + text overlay when font.rom is loaded)
-                      as a PPM (P6) file at PATH (env: PC88_SCREENSHOT)
+                      as a PNG file at PATH (env: PC88_SCREENSHOT)
   -h, --help          show this help
 `;
 
@@ -367,9 +367,9 @@ async function main(): Promise<void> {
   if (flags.screenshot) {
     const frame = machine.display.getPixelFrame();
     if (frame) {
-      writeFileSync(flags.screenshot, pixelFrameToPPM(frame));
+      writeFileSync(flags.screenshot, pixelFrameToPNG(frame));
       process.stdout.write(
-        `\n--- Screenshot ---\nwrote ${frame.width}x${frame.height} PPM to ${flags.screenshot}\n`,
+        `\n--- Screenshot ---\nwrote ${frame.width}x${frame.height} PNG to ${flags.screenshot}\n`,
       );
     } else {
       process.stdout.write(

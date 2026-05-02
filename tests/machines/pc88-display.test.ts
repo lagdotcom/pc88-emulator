@@ -276,9 +276,9 @@ describe("PC88TextDisplay.getPixelFrame — text overlay", () => {
   });
 });
 
-describe("pixelFrameToPPM", () => {
-  it("emits a P6 header followed by RGB bytes", async () => {
-    const { pixelFrameToPPM } = await import("../../src/machines/pc88-display.js");
+describe("pixelFrameToPNG", () => {
+  it("emits a PNG signature + valid IHDR for a 2x1 frame", async () => {
+    const { pixelFrameToPNG } = await import("../../src/machines/pc88-screenshot.js");
     const frame = {
       width: 2,
       height: 1,
@@ -287,24 +287,42 @@ describe("pixelFrameToPPM", () => {
         0x00, 0xff, 0x00, 0xff, // green
       ]),
     } as const;
-    const out = pixelFrameToPPM(frame);
-    const headerEnd = out.indexOf(0x0a, out.indexOf(0x0a, out.indexOf(0x0a) + 1) + 1);
-    const header = new TextDecoder().decode(out.slice(0, headerEnd + 1));
-    expect(header).toBe("P6\n2 1\n255\n");
-    // 2x1 = 2 px × 3 bytes = 6 bytes after header.
-    expect(Array.from(out.slice(headerEnd + 1))).toEqual(
-      [0xff, 0x00, 0x00, 0x00, 0xff, 0x00],
-    );
+    const out = pixelFrameToPNG(frame);
+    // PNG signature: 89 50 4E 47 0D 0A 1A 0A.
+    expect(Array.from(out.slice(0, 8))).toEqual([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+    // First chunk type after the 4-byte length is "IHDR".
+    expect(new TextDecoder().decode(out.slice(12, 16))).toBe("IHDR");
+    // IHDR width/height live at offsets 16..23 (big-endian u32 each).
+    const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+    expect(view.getUint32(16, false)).toBe(2);
+    expect(view.getUint32(20, false)).toBe(1);
   });
 
-  it("encodes a full 640x200 frame at the expected byte length", async () => {
-    const { pixelFrameToPPM } = await import("../../src/machines/pc88-display.js");
+  it("round-trips a 640x200 frame: encode → pngjs decode → exact RGB match", async () => {
+    const { pixelFrameToPNG } = await import("../../src/machines/pc88-screenshot.js");
+    const { PNG } = await import("pngjs");
     const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
     machine.reset();
     machine.displayRegs.showGVRAM0 = true;
+    machine.displayRegs.showGVRAM1 = true;
+    machine.displayRegs.showGVRAM2 = true;
+    // Splash some pixels into all three planes so the frame isn't
+    // all background.
+    machine.memoryMap.gvram[0]![0] = 0xff;
+    machine.memoryMap.gvram[1]![80 * 50] = 0xa5;
+    machine.memoryMap.gvram[2]![80 * 100 + 40] = 0x33;
     const frame = machine.display.getPixelFrame()!;
-    const ppm = pixelFrameToPPM(frame);
-    // "P6\n640 200\n255\n" = 15 bytes header + 640*200*3 RGB.
-    expect(ppm.length).toBe(15 + 640 * 200 * 3);
+    const png = pixelFrameToPNG(frame);
+
+    const decoded = PNG.sync.read(Buffer.from(png));
+    expect(decoded.width).toBe(640);
+    expect(decoded.height).toBe(200);
+    // pngjs decodes to RGBA; compare to the source frame.
+    expect(decoded.data.length).toBe(frame.rgba.length);
+    for (let i = 0; i < frame.rgba.length; i++) {
+      expect(decoded.data[i]).toBe(frame.rgba[i]);
+    }
   });
 });

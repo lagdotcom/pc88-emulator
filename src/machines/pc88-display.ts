@@ -307,24 +307,6 @@ function formatGrid(chars: Uint8Array, cols: Chars, rows: Chars): string {
   return lines.join("\n");
 }
 
-// Encode an RGBA `PixelFrame` as a PPM (P6) byte buffer. Drops the
-// alpha channel — PPM is RGB only — but every PC-88 pixel is
-// fully opaque so nothing is lost. Header is ASCII; pixel data is
-// raw bytes. Open natively in Preview / GIMP / `display` / browsers
-// (after rename to .ppm), and `convert` / `magick` rewrites it as
-// PNG without flags.
-export function pixelFrameToPPM(frame: PixelFrame): Uint8Array {
-  const header = `P6\n${frame.width} ${frame.height}\n255\n`;
-  const headerBytes = new TextEncoder().encode(header);
-  const rgbBytes = frame.width * frame.height * 3;
-  const out = new Uint8Array(headerBytes.length + rgbBytes);
-  out.set(headerBytes, 0);
-  let dst = headerBytes.length;
-  const src = frame.rgba;
-  for (let i = 0; i < src.length; i += 4) {
-    out[dst++] = src[i]!;
-    out[dst++] = src[i + 1]!;
-    out[dst++] = src[i + 2]!;
-  }
-  return out;
-}
+// PNG encoding lives in src/machines/pc88-screenshot.ts (Node-only,
+// uses node:zlib). Pulling that here would break the web bundle —
+// pc88-display.ts is shared with the browser worker.

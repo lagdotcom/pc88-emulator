@@ -129,7 +129,7 @@ yarn web:host            # static-serve web/ via local-server (regenerates the
 `-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`,
 `--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
 `-d`/`--debug`, `--break=ADDR`, `--script=PATH`,
-`--screenshot=PATH` (writes a PPM of the composited frame —
+`--screenshot=PATH` (writes a PNG of the composited frame —
 graphics + text overlay if `font.rom` is loaded). Each non-debug
 flag has an env-var fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`,
 `PC88_TRACE_IO`, `PC88_RAW_TVRAM`, `LOG_TO_FILE`, `PC88_SCRIPT`,
@@ -328,10 +328,11 @@ Roughly ordered by what's blocking what.
   via `putImageData`; CLI can dump as PPM. Both targets share the
   same data model.
 - [x] **CLI screenshot renderer**. `yarn pc88 --screenshot=PATH`
-  writes the composited frame as a PPM (P6) — zero deps, every
-  major image viewer opens it natively, and `magick`/`convert`
-  rewrites to PNG without flags. Helper:
-  `pixelFrameToPPM(frame): Uint8Array`.
+  writes the composited frame as a PNG via `pngjs`. Helper:
+  `pixelFrameToPNG(frame): Uint8Array` lives in
+  `src/machines/pc88-screenshot.ts` (Node-only — pngjs uses
+  node:zlib; pulling that into pc88-display.ts would break the
+  web bundle). N-BASIC boot screen at 640×200 is ~3 KB.
 - [x] **Text glyph overlay from font ROM**. `LoadedROMs.font`
   loaded via the loader's slot allowlist; `PC88Machine` passes the
   bytes to `PC88TextDisplay`; `getPixelFrame()` overlays each TVRAM
