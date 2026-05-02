@@ -67,6 +67,29 @@
 0x705b crtc_params_40col    ; CRTC SET MODE parameters for 40-col mode
 0x7066 crtc_params_80col    ; CRTC SET MODE parameters for 80-col mode
 
+# --- Disk-subsystem detection / IPC (PC-8031 add-on) ---
+# 0x36DB tests port 0x40 bit 3 (EXTON, active-low: 0 = disk unit
+# present). Returns nonzero in A when a disk is attached. The
+# emulator clears EXTON automatically when the disk subsystem is
+# wired (see PC88Machine constructor); without that, BIOS skips the
+# whole disk init and falls straight through to BASIC.
+0x36db disk_present_check    ; IN(0x40); AND 0x08; XOR 0x08 — Z if no disk
+
+# 0x37C9..0x37F4 is the main-side of the PPI handshake used to ship
+# a command byte from main BIOS to the sub-CPU PC-8031 ROM. Sequence:
+#   1. assert ATN: write i8255 control 0x0F (port-C bit-set bit 7)
+#   2. spin reading port C until the receiver-ready bits arrive
+#      (sub-CPU's writer-side bits 5/6 = RFD/DAC, cross-down to
+#       reader-side bits 1/2 — see μPD8255 port-C remap)
+#   3. clear ATN: write control 0x0E (bit-reset bit 7)
+#   4. write the data byte to port B (0xFD), which the sub reads on
+#      its port A (0xFC) — the PA/PB crossover.
+0x37c9 ppi_send_byte         ; entry: data byte in A; preserves A
+0x37cd ppi_assert_atn        ; LD A,0x0F; OUT (0xff),A — port-C bit 7 set
+0x37dc ppi_wait_receiver     ; IN (0xfe); AND 0x06; CP 0x06 — wait DAC+RFD
+0x37ee ppi_clear_atn         ; LD A,0x0E; OUT (0xff),A — port-C bit 7 clear
+0x37f4 ppi_strobe_data       ; OUT (0xfd),A — main writes B → sub reads A
+
 # --- E-ROM bank-switch helpers ---
 # These are the routines that read port 0x71 (E-ROM bank readback),
 # stash the current bank in AF, push a restore-trampoline onto the

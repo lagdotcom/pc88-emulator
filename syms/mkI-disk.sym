@@ -1,0 +1,44 @@
+# Symbol file for mkI-disk (PC-8031 / PC-80S31 sub-CPU disk-board
+# ROM, 2 KB). Discovered tracing the disk-boot handshake from the
+# main BIOS through the μPD8255 PPI cross-over. Auto-loaded by
+# `yarn dis roms/mkI-disk.rom` from the basename match. Not yet
+# wired into the live debugger (sub-CPU disassembly is a separate
+# follow-up).
+# md5: 793f86784e5608352a5d7f03f03e0858
+
+# --- Reset / interrupt vectors ---
+0x0000 reset_vector         ; JP 0x007E
+0x0008 rst08_dispatch       ; DI; CALL (0x7F22 RAM hook); JP 0x004E
+0x0010 rst10_dispatch       ; JP 0x06D9 — ATN-received command dispatch
+
+# --- Boot init ---
+0x007e boot_init            ; LD SP,0x8000; init RAM jump-table at 0x7F00..
+
+# --- Idle / ATN polling loop ---
+# After init the sub-CPU spins reading port C bit 3 (= main BIOS's
+# port-C bit 7 ATN, cross-down remapped). When the timeout B/H/L
+# triple expires without an ATN, falls through to OUT (0xF8),A and
+# loops back. The PC-8031 boot ROM was stuck here for the entire
+# boot window before the cross-down remap landed.
+0x00cc poll_atn_loop        ; IN (0xfe); BIT 3,A; jr nz on ATN-asserted
+0x00d2 poll_atn_dec_b       ; DJNZ-style decrement of B inner counter
+0x00d5 poll_atn_dec_h       ; H middle counter
+0x00d8 poll_atn_dec_l       ; L outer counter
+0x00e4 poll_atn_idle_kick   ; OUT (0xf8),A; JR poll_atn_loop
+0x00e8 atn_received         ; ATN asserted: clear flag, RST 10 dispatch
+
+# --- FDC primitives (port 0xFA = MSR, 0xFB = data FIFO) ---
+0x029a fdc_wait_data_ready  ; IN (0xfa); CPL; AND 0xC0; JR nz wait — wait RQM=1, DIO=1
+0x02a1 fdc_read_byte        ; IN (0xfb); RET
+0x02a4 fdc_write_byte_save  ; LD (0x7f0c),A; PUSH AF — entry that saves byte
+0x02a8 fdc_wait_write_ready ; IN (0xfa); XOR 0x80; AND 0xC0; JR nz — wait RQM=1, DIO=0
+0x02b1 fdc_write_byte       ; OUT (0xfb),A
+
+# --- RAM (sub-CPU 0x7F00..0x7FFF, separate address space) ---
+# 0x7F00..0x7F08 — interrupt-vector copies stamped at boot:
+#   each of (0x7F00),(0x7F02),(0x7F04),(0x7F06) initialised to 0x07F0
+#   (likely "RET" trampoline / default IRQ vector).
+# 0x7F09 — flag tested in atn_received path
+# 0x7F0C — last byte sent to FDC (saved by fdc_write_byte_save)
+# 0x7F16 — flag cleared on ATN reception
+# 0x7F22 — RAM RST 08 hook (default 0xC9 RET, written by boot_init)

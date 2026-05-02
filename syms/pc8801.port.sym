@@ -8,7 +8,7 @@
 0x30 sysctrl_dip1            ; system DIP switch 1 (cols/colour/USART)
 0x31 sysctrl_dip2_basic      ; DIP 2 + BASIC mode select; bit 2: 1=N80 0=N88
 0x32 vram_window             ; VRAM/TVRAM window selector
-0x40 sysctrl_status          ; bit 5 = VBL active; bit 3 = beeper; sub-CPU strobes
+0x40 sysctrl_status          ; r: bit 5=VBL, bit 3=EXTON (active-low: 0=disk unit attached); w: bit 5=beeper, bit 3=sub-CPU strobe
 0x5C gvram_plane_select     ; GVRAM plane select
 
 # --- CRTC (μPD3301) ---
@@ -42,3 +42,19 @@
 0xE7 misc_e7                ; alt IRQ mask on later models
 0xEB calendar_strobe        ; OUT'd as part of sysctrl init at 0x72e0
 0xF8 boot_fdd_select        ; boot-mode / FDD-IF select on later models
+
+# --- Sub-CPU bus: μPD765a FDC (sub-side only) ---
+# Visible on the sub-CPU's IOBus, not the main bus. Surfaces here
+# because the port file is shared across both Z80s.
+0xFA fdc_status             ; main status register: bit 7=RQM, bit 6=DIO, bit 4=BUSY
+0xFB fdc_data               ; command/parameter/result byte FIFO
+
+# --- Sub-CPU IPC PPI (μPD8255, both sides) ---
+# Symmetric layout: each side's port A is "outgoing" (write to send),
+# port B is "incoming" (read to receive). Port C carries the
+# handshake bits with a high-nibble cross-down remap: writer's bits
+# 7/6/5/4 land as reader's bits 3/2/1/0 (ATN/DAC/RFD/DAV).
+0xFC ppi_port_a             ; outgoing data latch
+0xFD ppi_port_b             ; incoming data latch (read clears the fresh-flag)
+0xFE ppi_port_c             ; high nibble = own outgoing; low nibble = peer's outgoing >> 4
+0xFF ppi_control            ; bit 7=1: i8255 mode word; bit 7=0: port-C bit set/reset
