@@ -326,3 +326,178 @@ describe("pixelFrameToPNG", () => {
     }
   });
 });
+
+// 80-col CRTC programming + DMAC source. Repeated in several attr
+// tests so it's worth a helper.
+function programCRTC80Col(machine: PC88Machine): void {
+  machine.ioBus.write(0x30, 0x01); // COLS_80 set → 80-col / 1-byte cells
+  machine.ioBus.write(0x51, 0x00);
+  machine.ioBus.write(0x50, 0xce);
+  machine.ioBus.write(0x50, 0x93);
+  machine.ioBus.write(0x50, 0x69);
+  machine.ioBus.write(0x50, 0xbe);
+  machine.ioBus.write(0x50, 0x13);
+  machine.ioBus.write(0x64, 0x00); // DMAC ch2 src lo
+  machine.ioBus.write(0x64, 0xf3); // DMAC ch2 src hi → 0xF300
+}
+
+// Replace the 40-byte attr-pair area at the end of `row` of TVRAM
+// with a list of (col, attr) tuples, padding unused slots with
+// col=0xFF (which the parser drops because it's >= cellRunBytes).
+// Real BIOS programs all 20 slots explicitly; tests need this
+// padding so zero-init RAM doesn't leak into the parser as
+// 20 × (col=0, attr=0) overriding the real pairs.
+function setAttrPairs(
+  machine: PC88Machine,
+  row: number,
+  pairs: ReadonlyArray<readonly [number, number]>,
+): void {
+  const PAIR_BASE = 80; // chars [0..79], pair area [80..119]
+  const rowOff = 0x300 + row * 120 + PAIR_BASE;
+  for (let p = 0; p < 20; p++) {
+    const tup = pairs[p];
+    machine.memoryMap.tvram[rowOff + p * 2] = tup ? tup[0] : 0xff;
+    machine.memoryMap.tvram[rowOff + p * 2 + 1] = tup ? tup[1] : 0x00;
+  }
+}
+
+describe("PC88TextDisplay text attribute parsing (80-col)", () => {
+  it("default attrs are 0xE800 (white text, no decoration)", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    programCRTC80Col(machine);
+    const frame = machine.display.getTextFrame();
+    expect(frame.attrs[0]).toBe(0xe800);
+    expect(frame.attrs[79]).toBe(0xe800);
+    expect(frame.attrs[80]).toBe(0xe800); // row 1, col 0
+  });
+
+  it("colour pair (bit 3 set) updates the high byte from its column", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    programCRTC80Col(machine);
+    // (col=10, attr=0x48) = colour byte (bit 3 set) with bits 7-5 =
+    // 010 → colour index 2 (red). Cells 0..9 stay default (white);
+    // cells 10..79 become red.
+    setAttrPairs(machine, 0, [[10, 0x48]]);
+    const frame = machine.display.getTextFrame();
+    expect(frame.attrs[9] >> 8).toBe(0xe8); // pre-pair: white
+    expect(frame.attrs[10] >> 8).toBe(0x48); // post-pair: red
+    expect(frame.attrs[79] >> 8).toBe(0x48); // remains red until row end
+  });
+
+  it("decoration pair (bit 3 clear) updates the low byte; reverse persists", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    programCRTC80Col(machine);
+    setAttrPairs(machine, 0, [[5, 0x04]]); // bit 2 = REVERSE, bit 3 = 0
+    const frame = machine.display.getTextFrame();
+    expect(frame.attrs[4] & 0xff).toBe(0x00); // pre-pair
+    expect(frame.attrs[5] & 0xff).toBe(0x04); // reverse on
+    // Colour state untouched.
+    expect(frame.attrs[5] >> 8).toBe(0xe8);
+  });
+
+  it("multiple pairs apply in column order; later pair for same col wins", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    programCRTC80Col(machine);
+    setAttrPairs(machine, 0, [
+      [10, 0x68], // red+G+colour-marker → colour 0x68 at col 10
+      [20, 0x04], // reverse on at col 20
+      [10, 0xa8], // override col 10: 1010 1000 → colour 0xa8
+    ]);
+    const frame = machine.display.getTextFrame();
+    expect(frame.attrs[10] >> 8).toBe(0xa8); // last writer wins
+    expect(frame.attrs[19] >> 8).toBe(0xa8); // colour persists
+    expect(frame.attrs[19] & 0xff).toBe(0x00); // decoration not yet set
+    expect(frame.attrs[20] & 0xff).toBe(0x04); // reverse turns on
+    expect(frame.attrs[20] >> 8).toBe(0xa8); // colour still in effect
+  });
+
+  it("attrs reset to 0xE800 at the start of each row", () => {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    programCRTC80Col(machine);
+    setAttrPairs(machine, 0, [[0, 0x28]]); // row 0: red colour from col 0
+    const frame = machine.display.getTextFrame();
+    expect(frame.attrs[0] >> 8).toBe(0x28);
+    expect(frame.attrs[79] >> 8).toBe(0x28);
+    expect(frame.attrs[80] >> 8).toBe(0xe8); // row 1, col 0 → default
+  });
+});
+
+describe("PC88TextDisplay text overlay honours attrs", () => {
+  function makeFontDiagonal(): Uint8Array {
+    const font = new Uint8Array(2048);
+    const stripe = [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01];
+    for (let ch = 0; ch < 256; ch++) {
+      for (let r = 0; r < 8; r++) font[ch * 8 + r] = stripe[r]!;
+    }
+    return font;
+  }
+
+  it("renders glyph in the cell's foreground colour from attr", () => {
+    const machine = new PC88Machine(MKI, {
+      n80: filledROM(0x8000, 0x76),
+      n88: filledROM(0x8000, 0x76),
+      e0: filledROM(0x2000, 0x76),
+      font: makeFontDiagonal(),
+    } as LoadedROMs);
+    machine.reset();
+    programCRTC80Col(machine);
+    // Char 'A' at col 0, plus a colour pair at col 0 setting colour
+    // index 2 (red) → 0x48 = 0100 1000 (bit 6 set = colour byte's
+    // bit 6 → maps to bit 14 in 16-bit → colour index bit 1 = red).
+    machine.memoryMap.tvram[0x300] = 0x41;
+    setAttrPairs(machine, 0, [[0, 0x48]]);
+    const { rgba } = machine.display.getPixelFrame()!;
+    // Diagonal stripe → first lit pixel is (0, 0). Should be red.
+    expect([rgba[0]!, rgba[1]!, rgba[2]!]).toEqual([0xff, 0x00, 0x00]);
+  });
+
+  it("reverse video swaps fg/bg across the whole cell box", () => {
+    const machine = new PC88Machine(MKI, {
+      n80: filledROM(0x8000, 0x76),
+      n88: filledROM(0x8000, 0x76),
+      e0: filledROM(0x2000, 0x76),
+      font: makeFontDiagonal(),
+    } as LoadedROMs);
+    machine.reset();
+    programCRTC80Col(machine);
+    machine.memoryMap.tvram[0x300] = 0x41; // 'A' at col 0
+    // Default colour (white). Set decoration: REVERSE.
+    setAttrPairs(machine, 0, [[0, 0x04]]);
+    const { rgba } = machine.display.getPixelFrame()!;
+    // Reverse paints the cell white and knocks out diagonal pixels
+    // back to bg (default black).
+    // (0,0) is on the diagonal → should be the original bg (black,
+    // since reverse paints fg=white as cell box and then writes
+    // OFF pixels for the glyph hits).
+    expect([rgba[0]!, rgba[1]!, rgba[2]!]).toEqual([0x00, 0x00, 0x00]);
+    // (1, 0) is OFF the diagonal → should be the cell-box fill = white.
+    expect([rgba[(0 * 640 + 1) * 4]!, rgba[(0 * 640 + 1) * 4 + 1]!, rgba[(0 * 640 + 1) * 4 + 2]!])
+      .toEqual([0xff, 0xff, 0xff]);
+  });
+
+  it("secret attribute hides the cell entirely (graphics shows through)", () => {
+    const machine = new PC88Machine(MKI, {
+      n80: filledROM(0x8000, 0x76),
+      n88: filledROM(0x8000, 0x76),
+      e0: filledROM(0x2000, 0x76),
+      font: makeFontDiagonal(),
+    } as LoadedROMs);
+    machine.reset();
+    programCRTC80Col(machine);
+    machine.memoryMap.tvram[0x300] = 0x41; // 'A' at col 0
+    setAttrPairs(machine, 0, [[0, 0x01]]); // SECRET
+    // Set a graphic pixel at (0,0) so we can see the glyph would
+    // have masked it but secret skips the overlay.
+    machine.displayRegs.showGVRAM2 = true;
+    machine.memoryMap.gvram[2]![0] = 0x80;
+    const { rgba } = machine.display.getPixelFrame()!;
+    // (0,0) should still be the green graphics pixel, not the
+    // glyph's white.
+    expect([rgba[0]!, rgba[1]!, rgba[2]!]).toEqual([0x00, 0xff, 0x00]);
+  });
+});

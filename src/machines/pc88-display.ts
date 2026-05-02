@@ -7,11 +7,41 @@ import type { PC88MemoryMap } from "./pc88-memory.js";
 
 export interface TextFrame {
   readonly chars: Uint8Array; // length cols * rows
-  readonly attrs: Uint8Array; // same shape; attribute bytes from TVRAM
+  // Per-cell packed attribute, computed by walking the row's
+  // attribute-pair area: high byte = colour state, low byte =
+  // decoration state. See ATTR_* constants below for the bit
+  // layout. Default at row start is 0xE800 (white text, no
+  // decoration). Length matches `chars`.
+  readonly attrs: Uint16Array;
   readonly cursor: { row: Chars; col: Chars } | null;
   readonly cols: Chars;
   readonly rows: Chars;
 }
+
+// Text-attribute bit positions in the 16-bit packed attr (high byte
+// = colour state, low byte = decoration state). Each attribute byte
+// the BIOS writes to the (col, attr) pair area is *either* a colour
+// update (bit 3 set: bits 7-5 carry RGB) *or* a decoration update
+// (bit 3 clear: bits 5/4/2/1/0 carry flags). The CRTC tracks both
+// and combines them per cell. Cross-reference: MAME pc8001.cpp
+// draw_text + attr_fetch.
+export const ATTR = {
+  // Colour state (high byte).
+  FG_SHIFT: 13, // (attr >> 13) & 7 → colour 0..7 → DIGITAL_PALETTE
+  FG_MASK: 0x7 << 13,
+  SEMIGFX: 1 << 12, // semi-graphic char (glyph from TVRAM bits, not font)
+  // Decoration state (low byte).
+  LOWERLINE: 1 << 5,
+  UPPERLINE: 1 << 4,
+  REVERSE: 1 << 2,
+  BLINK: 1 << 1,
+  SECRET: 1 << 0,
+  // Default at row start: colour=0xE8 (white + colour-marker), decoration=0x00.
+  DEFAULT: (0xe8 << 8) | 0x00,
+  // Bit-3 of an incoming attribute byte selects which state to
+  // update: set = colour byte, clear = decoration byte.
+  TYPE_COLOUR: 1 << 3,
+} as const;
 
 export interface PixelFrame {
   readonly width: Pixels;
@@ -123,7 +153,7 @@ export class PC88TextDisplay implements PC88Display {
     if (cols === 0 || rows === 0) {
       return {
         chars: new Uint8Array(0),
-        attrs: new Uint8Array(0),
+        attrs: new Uint16Array(0),
         cursor: null,
         cols: 0,
         rows: 0,
@@ -133,6 +163,7 @@ export class PC88TextDisplay implements PC88Display {
     // attribute-pair area. Matches the DMAC count BASIC programs
     // (0x0960 = 20 × 120) regardless of cell stride.
     const stride = cellRunBytes + ATTR_AREA_BYTES;
+    const attrPairsPerRow = ATTR_AREA_BYTES >> 1; // 20 (col, attr) pairs.
     // DMAC ch 2 source is the absolute CPU-side address of the first
     // byte. TVRAM lives at 0xF000; subtracting gives the offset into
     // the 4 KB array. If DMAC isn't programmed (returns 0), assume
@@ -143,15 +174,46 @@ export class PC88TextDisplay implements PC88Display {
     const tvram = this.memory.tvram;
     const mask = tvram.length - 1;
     const chars = new Uint8Array(cols * rows);
-    const attrs = new Uint8Array(cols * rows);
+    const attrs = new Uint16Array(cols * rows);
+    // Scratch column→attr-byte lookup, reused per row.
+    const colToAttr = new Int16Array(cellRunBytes); // -1 = no pair lands here.
     for (let row = 0; row < rows; row++) {
       const rowBase = (tvramOrigin + row * stride) & mask;
-      for (let col = 0; col < cols; col++) {
-        const cellBase = (rowBase + col * cellSize) & mask;
-        chars[row * cols + col] = tvram[cellBase] ?? 0;
-        if (cellSize === 2) {
-          attrs[row * cols + col] = tvram[(cellBase + 1) & mask] ?? 0;
+      // Walk the attribute-pair area: 20 (col, attr) tuples sitting
+      // at offset cellRunBytes within the row. Last pair targeting
+      // a given column wins. Pairs whose col is >= cellRunBytes are
+      // ignored — the BIOS occasionally fills empty slots with high
+      // column numbers instead of zero.
+      colToAttr.fill(-1);
+      const pairBase = rowBase + cellRunBytes;
+      for (let p = 0; p < attrPairsPerRow; p++) {
+        const c = tvram[(pairBase + p * 2) & mask]!;
+        const a = tvram[(pairBase + p * 2 + 1) & mask]!;
+        if (c < cellRunBytes) colToAttr[c] = a;
+      }
+      // Scan the cell-run columns left-to-right, applying any pair
+      // that lands at this column to update the running colour or
+      // decoration state. Each visible cell snapshots the current
+      // 16-bit packed state.
+      let colourState = (ATTR.DEFAULT >> 8) & 0xff;
+      let decorationState = ATTR.DEFAULT & 0xff;
+      for (let bc = 0; bc < cellRunBytes; bc++) {
+        const a = colToAttr[bc]!;
+        if (a >= 0) {
+          if (a & ATTR.TYPE_COLOUR) colourState = a;
+          else decorationState = a;
         }
+        // Snapshot only at visible-cell positions: every byte in
+        // 80-col mode (cellSize=1), every other byte in 40-col mode
+        // (cellSize=2; chars at even, attr-pair area still tracked
+        // per byte column so per-line state changes line up with
+        // the byte run the BIOS programmed).
+        if (bc % cellSize !== 0) continue;
+        const visibleCol = bc / cellSize;
+        const cellBase = (rowBase + bc) & mask;
+        chars[row * cols + visibleCol] = tvram[cellBase] ?? 0;
+        attrs[row * cols + visibleCol] =
+          ((colourState << 8) | decorationState) & 0xffff;
       }
     }
     return { chars, attrs, cursor: null, cols, rows };
@@ -208,14 +270,17 @@ export class PC88TextDisplay implements PC88Display {
 
   // Overlay text glyphs from `fontRom` on top of an RGBA frame. Each
   // glyph is 8x8 (256 chars × 8 bytes); cell width and height are
-  // derived from the CRTC's programmed cols/rows. White on
-  // pass-through: glyph bit set → white pixel; bit clear → leave the
-  // underlying graphics pixel alone. Layer mask isn't checked because
-  // the text frame already follows the BIOS's CRTC programming —
-  // showText reflects real-silicon visibility but synthetic-ROM tests
-  // use the overlay directly without going through layer-mask
-  // programming. Cell widths > 8 (40-col mode) double the glyph
-  // horizontally; cell heights > 8 leave the bottom rows blank.
+  // derived from the CRTC's programmed cols/rows. Per-cell attributes
+  // come from `frame.attrs` (16-bit packed: colour byte at high,
+  // decoration at low). Honours:
+  //   - fg colour (bits 15-13 → DIGITAL_PALETTE)
+  //   - reverse video (swap fg/bg within the cell box)
+  //   - secret/hidden (skip the cell entirely)
+  //   - blink (rendered as solid fg in headless capture — no time
+  //     component is available; UI renderers should re-blink visually)
+  // TODO: upper/lower line + semi-graphics. Cell widths > 8 (40-col
+  // mode) double the glyph horizontally; cell heights > 8 leave the
+  // bottom rows of the cell blank.
   private overlayText(
     rgba: Uint8ClampedArray,
     width: number,
@@ -228,9 +293,38 @@ export class PC88TextDisplay implements PC88Display {
     if (cellW <= 0 || cellH <= 0) return;
     const stretchX = cellW / 8;
     const font = this.fontRom!;
+    const cellBgRgb = DIGITAL_PALETTE[this.displayRegs.bgColor & 0x07]!;
+
+    const setPixel = (x: number, y: number, rgb: readonly [number, number, number]) => {
+      const i = (y * width + x) * 4;
+      rgba[i] = rgb[0];
+      rgba[i + 1] = rgb[1];
+      rgba[i + 2] = rgb[2];
+    };
+
     for (let row = 0; row < text.rows; row++) {
       for (let col = 0; col < text.cols; col++) {
-        const ch = text.chars[row * text.cols + col]!;
+        const cellIdx = row * text.cols + col;
+        const ch = text.chars[cellIdx]!;
+        const attr = text.attrs[cellIdx]!;
+        if (attr & ATTR.SECRET) continue;
+        const fgIdx = (attr >> ATTR.FG_SHIFT) & 0x07;
+        const reverse = (attr & ATTR.REVERSE) !== 0;
+        const fgRgb = DIGITAL_PALETTE[fgIdx]!;
+        const onRgb = reverse ? cellBgRgb : fgRgb;
+        const offRgb = reverse ? fgRgb : null;
+        // Reverse video paints the whole cell box in fg first; the
+        // glyph then knocks out bg-coloured pixels on top. Without
+        // reverse the glyph just adds fg pixels and leaves the
+        // underlying graphics layer visible elsewhere.
+        if (offRgb) {
+          for (let py = 0; py < cellH; py++) {
+            const y = row * cellH + py;
+            for (let px = 0; px < cellW; px++) {
+              setPixel(col * cellW + px, y, offRgb);
+            }
+          }
+        }
         if (ch === 0) continue;
         const glyphBase = ch * 8;
         for (let py = 0; py < 8 && py < cellH; py++) {
@@ -241,12 +335,7 @@ export class PC88TextDisplay implements PC88Display {
             if ((glyphRow & (0x80 >> gx)) === 0) continue;
             const xStart = (col * cellW + gx * stretchX) | 0;
             const xEnd = (col * cellW + (gx + 1) * stretchX) | 0;
-            for (let x = xStart; x < xEnd; x++) {
-              const i = (y * width + x) * 4;
-              rgba[i] = 0xff;
-              rgba[i + 1] = 0xff;
-              rgba[i + 2] = 0xff;
-            }
+            for (let x = xStart; x < xEnd; x++) setPixel(x, y, onRgb);
           }
         }
       }

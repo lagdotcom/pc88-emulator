@@ -343,10 +343,23 @@ Roughly ordered by what's blocking what.
   loaded via the loader's slot allowlist; `PC88Machine` passes the
   bytes to `PC88TextDisplay`; `getPixelFrame()` overlays each TVRAM
   cell's glyph (8×8 from the 2 KB mkI font ROM, char-code-indexed,
-  MSB-leftmost) on top of the GVRAM composite. White-on-passthrough
-  (graphics shows wherever the glyph bit is clear). Cell width
-  derived from CRTC's cols (8 in 80-col mode, 16 with 1-pixel
-  doubling in 40-col).
+  MSB-leftmost) on top of the GVRAM composite. Cell width derived
+  from CRTC's cols (8 in 80-col mode, 16 with 1-pixel doubling in
+  40-col).
+- [x] **Text attributes from the 40-byte (col, attr) pair area**
+  (per MAME pc8001.cpp). `getTextFrame().attrs` is now a
+  `Uint16Array` packing colour-state in the high byte and
+  decoration-state in the low byte. Each row reset to 0xE800
+  (white text, no decoration), then walked: bit 3 set on an attr
+  byte → it's a colour update (bits 7-5 = RGB); bit 3 clear → it's
+  a decoration update (bit 5 lower-line, bit 4 upper-line, bit 2
+  reverse, bit 1 blink, bit 0 secret). `getPixelFrame()` honours
+  fg colour (DIGITAL_PALETTE), reverse video (paints the cell box
+  in fg, then draws glyph "off" pixels in bg), and secret (skips
+  the cell, graphics layer shows through). Blink is parsed but
+  rendered as solid-on in static captures — the visual blink is
+  a renderer concern (web canvas can toggle by frame count). Upper
+  / lower line + semi-graphics still TODO.
 - [ ] **Web canvas renderer for the pixel frame**.
   `src/web/canvas-renderer.ts` should call `getPixelFrame()` and
   `putImageData` it onto a 640×200 canvas — same data the CLI now
