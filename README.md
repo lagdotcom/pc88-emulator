@@ -315,16 +315,29 @@ Roughly ordered by what's blocking what.
 - [ ] **Cycle-accurate FDC timing**. Seek/step rate, head load /
   unload, rotational latency. Today the chip transitions phases
   on demand. Copy-protected disks need the real silicon timing.
-- [ ] **Pixel-accurate CRT controller**. The μPD3301 stub consumes
-  SET MODE / START DISPLAY / etc. correctly but doesn't generate
-  raster timing or scanlines. Renderer + text+graphics composite
-  blocks on this.
-- [ ] **Graphics VRAM rendering** (3 planes, 16 KB per plane,
-  switched in at 0xC000-0xEFFF via port 0x5C-0x5F).
-- [ ] **Palette + analogue colour**. `display-regs.ts` latches
-  port 0x52 (border/bg) + 0x54-0x5B (palette RAM) but doesn't
-  feed a renderer yet. mkII SR onwards has the analogue palette
-  (selectable via port 0x32 bit 5 / `PMODE_ANALOG`).
+- [x] **Graphics VRAM rendering — pixel frame**.
+  `PC88TextDisplay.getPixelFrame()` composites the three GVRAM
+  planes into a 640×200 RGBA buffer using the digital 8-colour
+  palette (`DIGITAL_PALETTE` exported from pc88-display.ts: plane
+  0 = blue, 1 = red, 2 = green; combined index → RGB). MSB-first
+  within each byte, layer mask honoured, port-0x52 background
+  colour fills the rest. Renderer-agnostic: web canvas can blit
+  via `putImageData`; CLI can dump as PPM. Both targets share the
+  same data model.
+- [ ] **Renderers for the pixel frame**. Web canvas `putImageData`
+  pass; CLI `--screenshot=PATH` PPM/PNG dump. Tests already drive
+  the data path end-to-end without renderers.
+- [ ] **Pixel-accurate CRT controller (raster timing, text overlay)**.
+  The μPD3301 stub consumes SET MODE / START DISPLAY correctly but
+  doesn't generate scanline timing. `getPixelFrame` returns a
+  graphics-only frame — the text layer composite (CRTC reads font
+  ROM glyphs from TVRAM cells and overlays them at fixed cell
+  positions) is still TODO.
+- [ ] **400-line mode + analogue palette**. `getPixelFrame` only
+  handles the 200-line digital-palette path today. mkII SR onwards
+  has 4096-colour analogue palette (port 0x32 bit 5 = `PMODE_ANALOG`,
+  programmed at port 0x54-0x5B); V2 mode bumps to 640×400 with
+  doubled GVRAM. Both extend the same composite path.
 - [ ] **YM2203 / YM2608 sound generation**. `YM2203.ts` latches
   register writes (0x44 = addr, 0x45 = data) but doesn't generate
   audio. Needs FM synth + SSG + per-channel mixer.

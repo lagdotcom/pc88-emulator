@@ -102,3 +102,95 @@ describe("PC88TextDisplay visible region", () => {
     expect(dump.split("\n")[0]).toContain("O.F.F.");
   });
 });
+
+// Read the RGB triplet at (x, y) from a 640-wide RGBA frame.
+function px(rgba: Uint8ClampedArray, x: number, y: number): [number, number, number] {
+  const i = (y * 640 + x) * 4;
+  return [rgba[i]!, rgba[i + 1]!, rgba[i + 2]!];
+}
+
+describe("PC88TextDisplay.getPixelFrame — GVRAM composite", () => {
+  function setup() {
+    const machine = new PC88Machine(MKI, syntheticRoms([0x76]));
+    machine.reset();
+    // Make all GVRAM planes visible (PC-88 layer-mask is active-low —
+    // a 0 bit in port 0x53 means "show this layer"). Reset leaves
+    // showGVRAM* false until the BIOS programs the mask, but the
+    // pixel frame should be testable without going through the boot.
+    machine.displayRegs.showGVRAM0 = true;
+    machine.displayRegs.showGVRAM1 = true;
+    machine.displayRegs.showGVRAM2 = true;
+    return machine;
+  }
+
+  it("returns a 640x200 RGBA frame", () => {
+    const machine = setup();
+    const frame = machine.display.getPixelFrame()!;
+    expect(frame.width).toBe(640);
+    expect(frame.height).toBe(200);
+    expect(frame.rgba.length).toBe(640 * 200 * 4);
+  });
+
+  it("plane 0 alone produces blue pixels (digital index 1)", () => {
+    const machine = setup();
+    // Set the leftmost 8 pixels of row 0 in plane 0 only.
+    machine.memoryMap.gvram[0]![0] = 0xff;
+    const { rgba } = machine.display.getPixelFrame()!;
+    for (let x = 0; x < 8; x++) {
+      expect(px(rgba, x, 0)).toEqual([0x00, 0x00, 0xff]);
+    }
+    // The next byte over should still be background (black).
+    expect(px(rgba, 8, 0)).toEqual([0x00, 0x00, 0x00]);
+  });
+
+  it("planes combine with bit 0 = blue, bit 1 = red, bit 2 = green", () => {
+    const machine = setup();
+    // Same pixel position in all three planes — should give white (7).
+    const off = 10 * 80 + 5;
+    machine.memoryMap.gvram[0]![off] = 0x80;
+    machine.memoryMap.gvram[1]![off] = 0x80;
+    machine.memoryMap.gvram[2]![off] = 0x80;
+    const { rgba } = machine.display.getPixelFrame()!;
+    expect(px(rgba, 5 * 8, 10)).toEqual([0xff, 0xff, 0xff]);
+    // Plane 1 + plane 2 only at a different bit (col 1) → magenta? No,
+    // plane 1 = red, plane 2 = green → yellow.
+    machine.memoryMap.gvram[0]![off] = 0x00;
+    machine.memoryMap.gvram[1]![off] = 0x40;
+    machine.memoryMap.gvram[2]![off] = 0x40;
+    const frame2 = machine.display.getPixelFrame()!;
+    expect(px(frame2.rgba, 5 * 8 + 1, 10)).toEqual([0xff, 0xff, 0x00]);
+  });
+
+  it("MSB is leftmost pixel of each byte", () => {
+    const machine = setup();
+    machine.memoryMap.gvram[1]![20] = 0b1000_0001; // bit 7 + bit 0 → cols 0 + 7
+    const { rgba } = machine.display.getPixelFrame()!;
+    // 20 = byte index in row 0 / col 20 mod 80. y=0, xByte=20 → x=160..167.
+    expect(px(rgba, 160, 0)).toEqual([0xff, 0x00, 0x00]); // red (plane 1)
+    expect(px(rgba, 161, 0)).toEqual([0x00, 0x00, 0x00]); // bg
+    expect(px(rgba, 167, 0)).toEqual([0xff, 0x00, 0x00]);
+  });
+
+  it("layer mask hides individual planes", () => {
+    const machine = setup();
+    machine.memoryMap.gvram[0]![0] = 0xff; // would be blue
+    machine.memoryMap.gvram[1]![0] = 0xff; // would add red
+    machine.displayRegs.showGVRAM0 = false; // hide plane 0
+    const { rgba } = machine.display.getPixelFrame()!;
+    // With plane 0 hidden, only red survives.
+    expect(px(rgba, 0, 0)).toEqual([0xff, 0x00, 0x00]);
+  });
+
+  it("background colour fills pixels where every visible plane bit is 0", () => {
+    const machine = setup();
+    // bgColor field stores the 0..7 index from port 0x52 bits 4..6.
+    machine.displayRegs.bgColor = 5; // cyan
+    const { rgba } = machine.display.getPixelFrame()!;
+    // Anywhere we haven't written planes is now cyan.
+    expect(px(rgba, 100, 50)).toEqual([0x00, 0xff, 0xff]);
+    // A foreground pixel still draws its own colour.
+    machine.memoryMap.gvram[2]![50 * 80 + 12] = 0x80;
+    const { rgba: r2 } = machine.display.getPixelFrame()!;
+    expect(px(r2, 12 * 8, 50)).toEqual([0x00, 0xff, 0x00]); // green plane 2
+  });
+});

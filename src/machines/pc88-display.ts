@@ -74,6 +74,22 @@ const HEX_DUMP_WIDTH = 16;
 // hex dump so addresses match what a Z80 disassembler would print.
 const TVRAM_BASE = 0xf000;
 
+// PC-88 digital 8-colour palette. The 3 GVRAM plane bits combine
+// into an index 0..7 with plane 0 = blue, plane 1 = red, plane 2 =
+// green (so c = (g<<2) | (r<<1) | b). Pre-SR variants are hardwired
+// to this; SR+ in analogue-palette mode replaces it with a
+// programmable lookup at port 0x54-0x5B.
+export const DIGITAL_PALETTE: ReadonlyArray<readonly [number, number, number]> = [
+  [0x00, 0x00, 0x00], // 0 black
+  [0x00, 0x00, 0xff], // 1 blue
+  [0xff, 0x00, 0x00], // 2 red
+  [0xff, 0x00, 0xff], // 3 magenta
+  [0x00, 0xff, 0x00], // 4 green
+  [0x00, 0xff, 0xff], // 5 cyan
+  [0xff, 0xff, 0x00], // 6 yellow
+  [0xff, 0xff, 0xff], // 7 white
+];
+
 export class PC88TextDisplay implements PC88Display {
   constructor(
     private readonly memory: PC88MemoryMap,
@@ -137,8 +153,50 @@ export class PC88TextDisplay implements PC88Display {
     return { chars, attrs, cursor: null, cols, rows };
   }
 
+  // 640x200 frame composited from the three 16 KB GVRAM planes. Each
+  // GVRAM plane stores one bit per pixel (MSB-first within a byte);
+  // the three plane bits combine into a 0..7 colour index that maps
+  // through the 8-colour digital palette below. Pixels where no plane
+  // bit is set fall through to the bgColor latched at port 0x52.
+  //
+  // Layer mask honoured: a plane whose `showGVRAMn` is false is read
+  // as all zeros (effectively hidden). Analogue palette (SR+ via
+  // PMODE bit) and 400-line mode (V2) aren't covered yet — both
+  // produce different bytes-per-row layouts.
   getPixelFrame(): PixelFrame | null {
-    return null;
+    const width = (640 as Pixels);
+    const height = (200 as Pixels);
+    const bytesPerRow = 80;
+    const planes = this.memory.gvram;
+    const showG0 = this.displayRegs.showGVRAM0;
+    const showG1 = this.displayRegs.showGVRAM1;
+    const showG2 = this.displayRegs.showGVRAM2;
+    const bgRgb = DIGITAL_PALETTE[this.displayRegs.bgColor & 0x07]!;
+    const rgba = new Uint8ClampedArray(width * height * 4);
+
+    for (let y = 0; y < height; y++) {
+      const rowOff = y * bytesPerRow;
+      for (let xByte = 0; xByte < bytesPerRow; xByte++) {
+        const off = rowOff + xByte;
+        const b0 = showG0 ? planes[0]![off]! : 0;
+        const b1 = showG1 ? planes[1]![off]! : 0;
+        const b2 = showG2 ? planes[2]![off]! : 0;
+        for (let bit = 0; bit < 8; bit++) {
+          const mask = 0x80 >> bit;
+          const idx =
+            ((b0 & mask) ? 1 : 0) |
+            ((b1 & mask) ? 2 : 0) |
+            ((b2 & mask) ? 4 : 0);
+          const rgb = idx === 0 ? bgRgb : DIGITAL_PALETTE[idx]!;
+          const i = (y * width + xByte * 8 + bit) * 4;
+          rgba[i] = rgb[0];
+          rgba[i + 1] = rgb[1];
+          rgba[i + 2] = rgb[2];
+          rgba[i + 3] = 255;
+        }
+      }
+    }
+    return { width, height, rgba };
   }
 
   toASCIIDump(): string {

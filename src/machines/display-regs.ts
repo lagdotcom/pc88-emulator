@@ -75,6 +75,10 @@ export interface DisplayRegistersSnapshot {
   showGVRAM3: boolean;
   // 0..3 — the latched GVRAM plane index for readback at 0x5C.
   vramSel: 0 | 1 | 2 | 3;
+  // Palette RAM at ports 0x54-0x5B. Eight entries × 1 byte each;
+  // digital-mode variants ignore the contents, analogue-mode (SR+)
+  // splits each entry into 4-bit R/G/B fields.
+  palram: number[];
 }
 
 export class DisplayRegisters {
@@ -85,6 +89,7 @@ export class DisplayRegisters {
   showGVRAM2 = false;
   showGVRAM3 = false;
   vramSel: 0 | 1 | 2 | 3 = 0;
+  readonly palram = new Uint8Array(8);
 
   constructor(private readonly memoryMap: PC88MemoryMap) {}
 
@@ -97,6 +102,7 @@ export class DisplayRegisters {
       showGVRAM2: this.showGVRAM2,
       showGVRAM3: this.showGVRAM3,
       vramSel: this.vramSel,
+      palram: Array.from(this.palram),
     };
   }
 
@@ -108,6 +114,7 @@ export class DisplayRegisters {
     this.showGVRAM2 = s.showGVRAM2;
     this.showGVRAM3 = s.showGVRAM3;
     this.vramSel = s.vramSel;
+    if (s.palram) for (let i = 0; i < 8; i++) this.palram[i] = s.palram[i] ?? 0;
   }
 
   register(bus: IOBus): void {
@@ -137,10 +144,12 @@ export class DisplayRegisters {
 
     for (let i = 0; i < 8; i++) {
       const port = 0x54 + i;
+      const idx = i;
       bus.register(port, {
         name: `display/pal${i}`,
         write: (_p, v) => {
-          log.warn(`pal${i} := 0x${byte(v)} (stub)`);
+          this.palram[idx] = v;
+          log.info(`pal${idx} := 0x${byte(v)}`);
         },
       });
     }
