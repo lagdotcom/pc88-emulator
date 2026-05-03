@@ -1,6 +1,6 @@
 import {
-  disassemble,
   type DisasmOptions,
+  disassemble,
   type ResolveLabel,
   type ResolvePort,
 } from "../chips/z80/disasm.js";
@@ -14,13 +14,13 @@ import type {
   u16,
 } from "../flavours.js";
 import { getLogger } from "../log.js";
-import type { PixelFrame } from "../machines/pc88-display.js";
 import {
   makeVblState,
   PC88Machine,
   pumpVbl,
   stepOneInstruction,
 } from "../machines/pc88.js";
+import type { PixelFrame } from "../machines/pc88-display.js";
 import type { LoadedROMs } from "../machines/pc88-memory.js";
 import { byte, word } from "../tools.js";
 import {
@@ -565,7 +565,9 @@ function printSubRegs(machine: PC88Machine): void {
   printRegsFromSnapshot(sub.snapshot().cpu);
 }
 
-function printRegsFromSnapshot(snap: ReturnType<PC88Machine["snapshot"]>["cpu"]): void {
+function printRegsFromSnapshot(
+  snap: ReturnType<PC88Machine["snapshot"]>["cpu"],
+): void {
   const f = snap.AF & 0xff;
   const flagStr =
     (f & 0x80 ? "S" : "-") +
@@ -703,11 +705,7 @@ function doPeek(machine: PC88Machine, addr: u16, count: Bytes): void {
   doPeekRead((a) => machine.memBus.read(a), addr, count);
 }
 
-function doPeekRead(
-  read: (a: u16) => u8,
-  addr: u16,
-  count: Bytes,
-): void {
+function doPeekRead(read: (a: u16) => u8, addr: u16, count: Bytes): void {
   let line = `  ${word(addr)}:`;
   for (let i = 0; i < count; i++) {
     if (i > 0 && i % 16 === 0) {
@@ -831,7 +829,12 @@ function listPortWatches(state: DebugState): void {
 // next slot to fill, so the oldest of `count` entries lives at
 // `(write - count) mod size` and we walk forward from there.
 function readPcTrace(state: DebugState, n: number): u16[] {
-  return readRingTrace(state.pcTrace, state.pcTraceWrite, state.pcTraceFilled, n);
+  return readRingTrace(
+    state.pcTrace,
+    state.pcTraceWrite,
+    state.pcTraceFilled,
+    n,
+  );
 }
 
 function readSubPcTrace(state: DebugState, n: number): u16[] {

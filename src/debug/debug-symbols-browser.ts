@@ -113,6 +113,16 @@ export const addLabel = (
 ): Promise<{ scope: string; path: string }> =>
   core.addLabel(opfsBackend, machine, loaded, syms, addr, name, comment);
 
+export const addSubLabel = (
+  machine: PC88Machine,
+  loaded: LoadedROMs,
+  syms: DebugSymbols,
+  addr: number,
+  name: string,
+  comment?: string,
+): Promise<{ scope: string; path: string }> =>
+  core.addSubLabel(opfsBackend, machine, loaded, syms, addr, name, comment);
+
 export const addPortLabel = (
   machine: PC88Machine,
   syms: DebugSymbols,
@@ -134,3 +144,10 @@ export const deleteLabel = (
   addrOrName: number | string,
 ): Promise<{ scope: string; path: string } | null> =>
   core.deleteLabel(opfsBackend, machine, syms, addrOrName);
+
+export const deleteSubLabel = (
+  machine: PC88Machine,
+  syms: DebugSymbols,
+  addrOrName: number | string,
+): Promise<{ scope: string; path: string } | null> =>
+  core.deleteSubLabel(opfsBackend, machine, syms, addrOrName);
