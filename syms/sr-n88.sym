@@ -56,3 +56,54 @@
 0x6f0e erom_dispatch_1d     ; → sr-e0 0x75a1
 0x4551 erom_dispatch_helper ; DI; CALL 0xedf3 (RAM hook); IN A,(0x71); switch slot 0
 0x4581 erom_bank_restore    ; trampoline that restores port 0x71 + EI on return
+
+# --- VBL sync helper ---
+# Called from text-display init at 0x6fd1+. Polls port 0x40 bit 5
+# (VBL_ACTIVE) and waits for a falling+rising edge — i.e.
+# synchronises the next instruction with the start of the visible
+# region. Returns when VBL goes ACTIVE again.
+0x433f vsync_wait           ; IN (0x40); AND 0x20; spin-while-nz; spin-while-z; RET
+
+# --- Text-display init helper (called from sys_init_dispatch) ---
+# 0x6fd1 entry programs DIPs from RAM cache (0xe6c2/0xe6c1), waits
+# for VBL via vsync_wait, then issues the standard CRTC RESET +
+# DMAC channel-2 setup + SET MODE + SET INTERRUPT MASK + START
+# DISPLAY sequence. Body runs 0x6fd1-0x705a. The constant param
+# table for SET MODE lives at 0x705b-0x7065 (5 bytes;
+# 0xCE 0x93 0x69 0xBE 0x13 = 80×20, char-DMA, gfx-mode 000,
+# attr-pairs/row=20).
+0x6fd1 crtc_dmac_init       ; CRTC RESET + DMAC ch2 reload + SET MODE + START DISPLAY
+0x705b crtc_setmode_params  ; 5 bytes: 0xCE 0x93 0x69 0xBE 0x13
+
+# --- Disk-handshake byte-send (called from disk_detect_entry) ---
+# 0x37c9 implements the per-byte protocol over the sub-CPU PPI:
+# (1) assert ATN (port-C bit 7 → reader bit 3) so the sub-CPU's
+#     ATN-poll loop at sub 0x00cc fires;
+# (2) wait for sub's RFD (writer bit 5 → reader bit 1) HIGH and
+#     DAC (writer bit 6 → reader bit 2) LOW — i.e. peer is ready
+#     to receive but hasn't latched yet (loop at 0x37dc-0x37eb);
+# (3) deassert ATN, write the byte to port B (0xfd; PPI mode word
+#     0x91 makes B the OUTPUT direction), assert DAV (writer bit
+#     4 → reader bit 0);
+# (4) wait for sub to assert DAC (peer bit 6 / reader bit 2)
+#     acknowledging receipt;
+# (5) deassert DAV, return.
+# The handshake is functionally correct in the emulator — the
+# bytes flow through both sides — but each round-trip costs many
+# polling iterations on both CPUs because neither side wakes the
+# other via IRQ during the protocol bits.
+0x36db disk_present_check   ; IN (0x40); AND 0x08; XOR 0x08; RET — Z if EXTON set (no disk)
+0x36e2 disk_detect_entry    ; PUSH BC/DE/AF; CALL disk_present_check; if disk: CALL 0x3700
+0x3700 disk_init_send_seq   ; sends cmd 0x00 then cmd 0x07 via ppi_send_byte → reads 1 byte → ...
+0x37c9 ppi_send_byte        ; per-byte ATN/DAV/DAC handshake to sub-CPU
+0x37dc disk_handshake_wait  ; wait-for-RFD-not-DAC loop at the heart of ppi_send_byte
+0x382b ppi_handshake_step   ; called from spinner branches of ppi_send_byte
+
+# --- System-init dispatcher (called from boot_disk_detect) ---
+# Top-level boot init: DI; mask all IRQs (0xE6=0); restore DIP
+# shadows from RAM (0xE6C0/C1/C2) → ports 0x30/0x40/0x31; CALL a
+# chain of subsystem init helpers; configure USART channels 1+2
+# at 0xC1/0xC3 with a 6-byte init block from 0x7342.
+0x72cd sys_init_dispatch    ; DI; OUT 0xE6=0; restore DIPs; CALL chain
+0x69d1 sys_init_69d1        ; first init helper (display? called from 0x72e5)
+0x69e1 sys_init_69e1        ; second init helper — wraps crtc_dmac_init via 0x6f8f

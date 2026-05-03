@@ -426,16 +426,39 @@ Roughly ordered by what's blocking what.
   banner. With the IRQ-mask default fix above, SR N88 mode is no
   longer trapped in a reset loop and now reaches the soft-key
   label area (`load "  auto  go to  list  run`). It still
-  doesn't print the banner / "How many files?" prompt though —
-  TVRAM oscillates between "labels visible" and "blank" depending
-  on the budget, suggesting another race or a missing chip
-  surface. The analogue-palette protocol is now in (PMODE bit on
-  port 0x32 → 2 byte/port writes at 0x54-0x5B, see "V2 palette"
-  below) and `--dip31=0x69` exercises the V2 dispatch path
-  (sr-n88 0x3D7B), but neither V1 nor V2 yet completes the boot.
-  Remaining suspects are YM2203 status/IRQ surface and the V2
-  CRTC programming. This is the prerequisite to using SR's real
-  sector-IPL path on disk games.
+  doesn't print the banner / "How many files?" prompt though.
+  Investigation findings:
+    - **CRTC programming is correct**. V1 and V2 modes issue the
+      same SET MODE param block (0xCE 0x93 0x69 0xBE 0x13 = 80×20).
+      All commands (RESET, SET INTERRUPT MASK, START DISPLAY)
+      dispatch correctly. The vsync_wait helper (sr-n88 0x433f)
+      reads port 0x40 bit 5 and resolves both edges fine.
+    - **PPI sub-CPU handshake is functionally correct**. Tracing
+      with breakpoints + `chips` shows the bytes flow both ways:
+      main asserts ATN at sr-n88 0x37c9, sub responds at disk-rom
+      0x06d9 setting RFD via `OUT (0xff),0x0B`, main writes to
+      port B (PPI mode word 0x91 makes B output), sub reads from
+      its A. Latches inspected at the success branch (PC=0x37ee)
+      show exactly the expected pattern: main port-C = 0x80
+      (ATN), sub port-C = 0x20 (RFD), data on port-B-out latch.
+    - **Real blocker is downstream in sr-e0 disk-IPL**. After the
+      handshake exchanges its first few bytes the BIOS calls into
+      sr-e0 0x6eb6 → 0x6734 which clears each of the three GVRAM
+      planes via a 16376-byte LDIR at sr-e0 0x6740-0x6749 (the
+      LDIR also clears TVRAM 0xF000-0xFFF7 as a side effect since
+      it spans 0xC000-0xFFF7 with VRAM mapped). With ROM time-
+      sliced under our 4 MHz simulation, each LDIR is ~86ms
+      simulated; the BIOS ends up looping in this region with
+      TVRAM never re-filled, even at 100M ops (53s wall time).
+      The enclosing routine is at sr-e0 0x6eb6 (called from
+      sr-n88 0x7324) and probably depends on a sub-CPU command
+      response that we're returning the wrong value for. Next
+      step: trace which cmd flows through `cmd_dispatch` on the
+      sub side and what data it loops back to main.
+  Symbols captured this round: sr-n88 0x37c9 ppi_send_byte +
+  family, 0x36e2 disk_detect_entry, 0x433f vsync_wait, 0x6fd1
+  crtc_dmac_init, 0x72cd sys_init_dispatch; mkI-disk 0x06d9
+  ppi_recv_byte + per-step labels.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

@@ -11,6 +11,21 @@
 0x0008 rst08_dispatch       ; DI; CALL (0x7F22 RAM hook); JP 0x004E
 0x0010 rst10_dispatch       ; JP 0x06D9 — ATN-received command dispatch
 
+# --- ATN-received byte-receive handshake (per-byte) ---
+# RST 10 from atn_received lands here. Sets sub's RFD (port-C bit 5
+# OUT, peer reads at bit 1), then polls peer's DAV (sub bit 0 = main
+# writer bit 4). When DAV asserted: deassert RFD, read data byte
+# from port A (0xFC; PPI mode word 0x91 makes A the INPUT direction
+# from main's port-B output). After receiving: assert DAC (sub bit
+# 6 OUT, peer reads at bit 2). The main BIOS then deasserts DAV;
+# sub deasserts DAC; loop returns for the next byte.
+0x06d9 ppi_recv_byte        ; per-byte handshake: assert RFD, wait DAV, read A, assert DAC
+0x06db ppi_recv_assert_rfd  ; OUT (0xff),0x0B — port-C bit 5 SET (RFD HIGH)
+0x06dd ppi_recv_poll_dav    ; IN (0xfe); BIT 0 → DAV; on assert read data
+0x06f1 ppi_recv_clear_rfd   ; OUT (0xff),0x0A — RFD LOW
+0x06f3 ppi_recv_data_read   ; IN A,(0xfc) — read incoming byte
+0x06fa ppi_recv_assert_dac  ; OUT (0xff),0x0D — port-C bit 6 SET (DAC HIGH)
+
 # --- Boot init ---
 0x007e boot_init            ; LD SP,0x8000; init RAM jump-table at 0x7F00..
 
