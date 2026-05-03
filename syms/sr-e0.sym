@@ -1,0 +1,34 @@
+# Symbol file for sr-e0 — SR's E-ROM slot 0 (N88-DISK-BASIC).
+# Mapped at 0x6000-0x7FFF when port 0x71 selects slot 0 AND port
+# 0x31 has MMODE=0 + RMODE=0. Reached via the
+# `erom_dispatch_helper` at sr-n88 0x4551, which switches to this
+# slot and reads a target pointer from the table at 0x600D
+# (16-bit entries, indexed by the byte after the CALL site).
+#
+# Dispatch entries discovered tracing the SR boot (one per
+# main-side dispatch site sr-n88 0x6e96 + idx*4):
+#   0x08 → 0x6700  GVRAM clear (3 planes × 16K LDIR — boot's hottest path)
+#   0x18 → 0x7324  post-disk-detect setup
+#   0x1A → 0x752a
+#   0x1B → 0x74ee  invoked from sys_init_dispatch 0x72f2 if EXTON probe fails
+#   0x1C → 0x754f  drive-detect, invoked by sr_disk_detect
+#   0x1D → 0x75a1
+# md5: d675a2ca186c6efcd6277b835de4c7e5
+
+# --- Dispatch-table helpers ---
+# 0x6700 entry: clears all 3 GVRAM planes, leaves VRAM in main-RAM
+# mode. Sequence:
+#   - bg-color = 0, layer mask = 0 (visible)
+#   - palette ports 0x54..0x5B written 0..7 (digital 8-colour init)
+#   - per-plane: select via port 0x5C/D/E, fill 0xC000-0xFFF7 with
+#     0 via memory-fill LDIR trick (one LDIR per plane, so this
+#     entry alone runs ~1M cycles)
+#   - port 0x5F = main-RAM mode, EI, JP 0x69ea
+0x6700 init_video_clear     ; entry 0x08 — palette + layer + clear all 3 planes
+0x6734 clear_gvram_plane    ; per-plane clear: select via C, LD HL,0xC000, LDIR fill
+0x6740 plane_clear_ldir     ; the 16K-iteration LDIR (PC=0x6744 dominates SR boot)
+
+# --- Dispatch table at 0x600D ---
+# 31 16-bit entries (0x00..0x1E). Indexed by the post-CALL byte at
+# main-side dispatch sites in sr-n88 0x6e96-0x6f12.
+0x600d erom_dispatch_table  ; 31 × 16-bit pointers; idx = byte at sr-n88 dispatch site

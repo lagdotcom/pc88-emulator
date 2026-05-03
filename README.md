@@ -459,6 +459,31 @@ Roughly ordered by what's blocking what.
   family, 0x36e2 disk_detect_entry, 0x433f vsync_wait, 0x6fd1
   crtc_dmac_init, 0x72cd sys_init_dispatch; mkI-disk 0x06d9
   ppi_recv_byte + per-step labels.
+- [ ] **SR boot speed — LDIR-bound at sr-e0 init_video_clear**.
+  Follow-up: profiling 200M-op SR boot runs shows ~95% of cycles
+  spent in `LDIR` at sr-e0 `plane_clear_ldir` (0x6740). The
+  dispatch-table entry idx 0x08 (sr-n88 0x6eb6 → sr-e0 0x6700)
+  fills all three GVRAM planes via three 16376-byte
+  memory-fill LDIRs (0xC000-0xFFF7 with 0). At 21 t-states per
+  iteration that's ~1M cycles per call. The dispatch entry is
+  called once per boot prologue, but the BIOS does multiple
+  passes through sys_init_dispatch (0x72cd) → boot prologue, so
+  in 200M ops we accumulate ~580 LDIRs. PC samples consistently
+  inside this LDIR at high op counts.
+  Symbols captured this round: sr-n88 dispatch table 0x6eb6
+  erom_dispatch_08, 0x6ef6 erom_dispatch_18; new sr-e0.sym with
+  init_video_clear / clear_gvram_plane / plane_clear_ldir labels;
+  sr-n88 0x38e9 boot_io_init_or_spin path (NOT on default boot
+  path — keyboard row 0 = 0xff bypasses it; only deadlocks if
+  RAM[0xef4e] gets set to a port that returns 0 in bit 0).
+  Outer loop CONFIRMED — ~3188 writes to port 0x71 in an 80M-op
+  boot trace, of which 798 fire at sr-n88 0x4571 (standard
+  `erom_dispatch_helper` bank-out) and 796 at sr-n88 0x3a66 (a
+  second E-ROM bank-switch trampoline). With ~2 writes per
+  dispatch call that's ~1594 distinct dispatch invocations
+  over 80M ops. Some higher-level state machine keeps re-entering
+  the dispatcher on each iteration. Next step is to find what
+  RAM-state condition is unsatisfied, causing the retry.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

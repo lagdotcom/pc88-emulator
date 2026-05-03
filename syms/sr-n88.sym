@@ -107,3 +107,38 @@
 0x72cd sys_init_dispatch    ; DI; OUT 0xE6=0; restore DIPs; CALL chain
 0x69d1 sys_init_69d1        ; first init helper (display? called from 0x72e5)
 0x69e1 sys_init_69e1        ; second init helper — wraps crtc_dmac_init via 0x6f8f
+
+# --- E-ROM dispatch table (one CALL per index, 0x00..0x1E) ---
+# At 0x6e96-0x6f12 a 31-entry compact dispatch table: each entry is
+# `CALL erom_dispatch_helper; .DB idx`. The helper at 0x4551 reads
+# the post-CALL byte, switches to E-ROM slot 0 (sr-e0), reads the
+# 16-bit pointer at sr-e0 (0x600D + idx*2), and dispatches there.
+# The previously documented 1A..1D entries are members of this same
+# table. Selected entries seen during boot:
+#   idx 0x08 → sr-e0 0x6700 (GVRAM clear all 3 planes; runs 3 × 16K
+#              LDIR — the dominant cycle sink during sr-e0 boot)
+#   idx 0x18 → sr-e0 0x7324 (post-disk-detect setup)
+#   idx 0x1A → sr-e0 0x752a
+#   idx 0x1B → sr-e0 0x74ee (called from sys_init_dispatch 0x72f2)
+#   idx 0x1C → sr-e0 0x754f (drive-detect, called by sr_disk_detect)
+#   idx 0x1D → sr-e0 0x75a1
+0x6eb6 erom_dispatch_08     ; → sr-e0 0x6700 (clear GVRAM planes 0..2)
+0x6ef6 erom_dispatch_18     ; → sr-e0 0x7324
+
+# --- 0xef3d spin-on-IRQ helper (NOT on default boot path) ---
+# 0x38e9 is called twice from sys_init_dispatch tail (0x7334/0x733b).
+# Inside, after some vector-table init, it CALLs 0x3aed which
+# returns NZ via keyboard row 0 read (port 0; default 0xff → bit 0
+# = 1 → NZ → RET). On NZ this entire helper RETs without
+# touching 0xef3d.
+# If 0x3aed returned Z (e.g. host-key probe gives bit 0 = 0), the
+# code at 0x3910-0x3918 would spin waiting for an IRQ handler in
+# sr-e2 (writers at sr-e2 0x71eb / 0x7237 / 0x723d / 0x72b6 /
+# 0x731d / 0x7325 / 0x74ab) to clear (0xef3d) from 0x80. sr-e2 is
+# the SR's runtime / event-handler ROM; reaching that branch
+# without sr-e2 IRQ handling wired up would deadlock.
+# Both mkI-n88 and sr-n88 ship the same body; mkI's boot doesn't
+# trip it because keyboard row 0 = 0xff at idle.
+0x38e9 boot_io_init_or_spin ; CALL 0x3aed; RET nz; (else fall to spin on 0xef3d)
+0x3aed io_probe_or_propagate ; CALL 0x391f (port read via RAM[0xef4e]); propagate Z
+0x391f port_keyboard_probe  ; LD A,(0xef4e); LD C,A; IN A,(C); AND 0x01; RET nz
