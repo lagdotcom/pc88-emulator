@@ -69,6 +69,16 @@ interface CliFlags {
   // unmap the BASIC ROM via a port-0x31 write, jump to RAM. Only
   // useful when --disk0 is also set.
   bootMode: "rom" | "disk";
+  // Arbitrary DIP override. The variant config provides factory
+  // defaults; --basic= and --boot= flip specific bits on top.
+  // --dip30=NN / --dip31=NN replace the byte wholesale (after the
+  // other overrides have done their work), so power users can
+  // experiment with bits that don't have a friendlier flag — e.g.
+  // port31 bit 7 selects between V1 and V2 video mode on SR
+  // (`--dip31=0x69` for V2 with N88 + 200-line + GRPH +
+  // HIGHRES, vs the SR default 0xE9). Null = no override.
+  dip30Override: number | null;
+  dip31Override: number | null;
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -95,6 +105,8 @@ function parseCliFlags(argv: string[]): CliFlags {
       disk0: { type: "string" },
       "trace-ipc": { type: "boolean" },
       boot: { type: "string" },
+      dip30: { type: "string" },
+      dip31: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -174,6 +186,26 @@ function parseCliFlags(argv: string[]): CliFlags {
   }
   const bootMode: CliFlags["bootMode"] = bootArg;
 
+  // --dip30 / --dip31 wholesale overrides. Accept hex (`0xff`,
+  // `ff`) or decimal. Null when the flag isn't passed; the
+  // composing logic below applies after --basic= / --boot= so a
+  // raw byte override stays the final word.
+  const parseDipFlag = (flag: string | undefined): number | null => {
+    const raw = flag ?? null;
+    if (raw === null || raw === "") return null;
+    const a = parseAddrFlag(raw);
+    if (a === null) {
+      throw new Error(`bad DIP byte: ${raw}`);
+    }
+    return a & 0xff;
+  };
+  const dip30Override = parseDipFlag(
+    values["dip30"] ?? process.env.PC88_DIP30,
+  );
+  const dip31Override = parseDipFlag(
+    values["dip31"] ?? process.env.PC88_DIP31,
+  );
+
   return {
     romDir,
     maxOps,
@@ -192,6 +224,8 @@ function parseCliFlags(argv: string[]): CliFlags {
     disk0,
     traceIpc,
     bootMode,
+    dip30Override,
+    dip31Override,
     config,
   };
 }
@@ -240,6 +274,17 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       bit 1 (MMODE) so the BIOS takes the disk-
                       boot path. Only useful when --disk0= is set
                       (env: PC88_BOOT)
+  --dip30=NN          override DIP port30 byte (hex 0xNN, ff, or
+                      decimal). Replaces the variant default
+                      AFTER --basic / --boot have done their work
+                      (env: PC88_DIP30)
+  --dip31=NN          override DIP port31 byte. Same shape as
+                      --dip30. Useful for bits without a friendlier
+                      flag — port31 bit 7 selects V1/V2 video mode
+                      on SR; port31 bit 5 toggles HIGHRES; etc.
+                      Bit map: 0=LINES_200, 1=MMODE, 2=RMODE_N80,
+                      3=GRPH, 4=HCOLOR, 5=HIGHRES, 6/7 model-specific
+                      (env: PC88_DIP31)
   -h, --help          show this help
 `;
 
@@ -344,22 +389,30 @@ async function main(): Promise<void> {
   // as definitely-present. No runtime null-check needed here.
   const loaded = await loadRoms(flags.config, { dir: flags.romDir });
 
-  // Apply the --basic override (if any) to the variant's DIP byte
-  // before constructing the machine. Bit 2 of port31 is the rmode
-  // flag: 1 = N-BASIC, 0 = N88-BASIC. Cleanest is to clone the
-  // config so the source variant object stays untouched. Both
-  // --basic= and --boot= edit port31 bits without mutating the
-  // shared variant object: MMODE_RAM is bit 1, RMODE_N80 is bit 2.
+  // Apply per-feature DIP overrides (--basic, --boot) to the
+  // variant's DIP byte before constructing the machine, then a
+  // wholesale --dip30= / --dip31= override on top. Bit 2 of port31
+  // is the rmode flag (1 = N-BASIC, 0 = N88-BASIC); bit 1 is MMODE.
+  // Cleanest is to clone the config so the source variant object
+  // stays untouched.
+  let port30 = flags.config.dipSwitches.port30;
   let port31 = flags.config.dipSwitches.port31;
   if (flags.basicOverride === "n80") port31 |= 0x04;
   if (flags.basicOverride === "n88") port31 &= ~0x04;
   if (flags.bootMode === "disk") port31 |= 0x02;
   if (flags.bootMode === "rom") port31 &= ~0x02;
+  // Wholesale overrides win — they replace the byte after the
+  // per-feature flags above have done their work, so power users
+  // can experiment with bits that don't have a friendlier flag
+  // (e.g. port31 bit 7 for SR's V1/V2 video-mode select).
+  if (flags.dip30Override !== null) port30 = flags.dip30Override;
+  if (flags.dip31Override !== null) port31 = flags.dip31Override;
   const config: PC88Config =
+    port30 !== flags.config.dipSwitches.port30 ||
     port31 !== flags.config.dipSwitches.port31
       ? {
           ...flags.config,
-          dipSwitches: { ...flags.config.dipSwitches, port31 },
+          dipSwitches: { ...flags.config.dipSwitches, port30, port31 },
         }
       : flags.config;
 

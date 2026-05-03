@@ -138,7 +138,10 @@ yarn web:host            # static-serve web/ via local-server (regenerates the
 `--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
 `-d`/`--debug`, `--break=ADDR`, `--script=PATH`,
 `--screenshot=PATH` (writes a PNG of the composited frame —
-graphics + text overlay if `font.rom` is loaded). Each non-debug
+graphics + text overlay if `font.rom` is loaded),
+`--disk0=PATH.d88`, `--boot=rom|disk`, `--dip30=NN` / `--dip31=NN`
+(arbitrary DIP byte override for bits without a friendlier flag —
+e.g. `--dip31=0x69` puts SR into V2 video mode). Each non-debug
 flag has an env-var fallback (`PC88_ROM_DIR`, `PC88_MAX_OPS`,
 `PC88_TRACE_IO`, `PC88_RAW_TVRAM`, `LOG_TO_FILE`, `PC88_SCRIPT`,
 `PC88_SCREENSHOT`) so values you'd want to keep across runs can
