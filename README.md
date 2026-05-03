@@ -507,13 +507,39 @@ Roughly ordered by what's blocking what.
   0xffff, wraps to 0x0000.
   Verified at break 0x7842: chip state shows `erom slot=0
   enabled=true` — confirming E-ROM was NOT correctly disabled
-  before the RET. Some E-ROM dispatch trampoline (likely the
-  0x3a35 family) is leaving E-ROM enabled on its return path
-  even though the exit-side `OUT (0x71), 0xFF` was supposed to
-  clear it. Next session: trace which dispatch site leaks the
-  E-ROM bank, and either fix the trampoline modelling in
-  sysctrl.ts or audit the BIOS exit path for an off-by-one in
-  the saved port-71 byte.
+  before the RET.
+  LEAKER ISOLATED: logging every `OUT (0x71)` write before
+  the bad PC=0x7842 lands shows the pattern:
+  ```
+  PC=4571 OUT 71=fe  (simple helper bank-IN)
+  PC=4589 OUT 71=ff  (simple helper bank-OUT) ✓ paired
+  PC=3a66 OUT 71=fe  (alt helper bank-IN)
+  PC=3dc7 OUT 71=ff  (alt helper bank-OUT) ✓ paired
+  PC=3a66 OUT 71=fe  (alt helper bank-IN)  ← leaker; no 0x3dc7 follows
+  ```
+  The third dispatch via sr-n88 0x3a66 (alt trampoline at 0x3ab4)
+  bank-ins slot 0 but never reaches the matching 0x3DBE
+  bank-out. The handler invoked from this dispatch lands at
+  sr-e0 0x7340-0x7357 — three CP / JR-checks ending in `POP HL;
+  SCF; RET` at 0x7355, which RETs to PC=0x7842 (the value just
+  popped from the stack). With E-ROM still mapped, 0x7842 reads
+  sr-e0's `LD B,0x0B; POP HL; RET` instead of sr-n88's
+  `boot_disk_detect: CALL sr_disk_detect`, and the cascade
+  begins.
+  Open question: is the BIOS deliberately bypassing the
+  bank-out (relying on the caller to restore E-ROM later), or
+  is the trampoline's stack-rewrite math off by one for this
+  specific dispatch? The handler exit `POP HL; SCF; RET` is
+  consistent with the BIOS expecting POP-HL to consume the
+  trampoline-pushed `0x3DBE` bank-out marker — but the bytes
+  popped are `0xFFFF` (the saved-ports word) and the RET pops
+  `0x7842` (which would be the actual return address). That
+  mismatch suggests the trampoline's IY-offset writes at
+  sr-n88 0x3a4d-0x3a53 might be one slot off in our emulation
+  vs. real silicon, OR the AF-as-target dispatch ABI requires
+  an additional condition we haven't decoded yet. Symbols
+  added: 0x3ab4 erom_alt_trampoline_in, 0x3a35 alt entry,
+  0x3a66/0x3a7b/0x3dbe/0x3dc7 in/out points.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

@@ -125,6 +125,34 @@
 0x6eb6 erom_dispatch_08     ; → sr-e0 0x6700 (clear GVRAM planes 0..2)
 0x6ef6 erom_dispatch_18     ; → sr-e0 0x7324
 
+# --- E-ROM bank-switch trampolines (two flavours) ---
+# 0x4551 = simple helper (used by 0x6e96-0x6f12 dispatch table); the
+# matching exit at 0x4581-0x4589 restores port 0x71 cleanly.
+# 0x3ab4 = elaborate helper that takes the target via inline data
+# after `CALL 0x3ab4`; it rewrites the stack-saved AF slots so that
+# the JP-restore-RET at 0x3a7b lands on the handler in slot 0, with
+# 0x3DBE (the matching bank-out trampoline) queued as the next RET
+# target. Calls to 0x3ab4 are scattered (~41 in sr-n88); the alt
+# entry at 0x3a35 (jumped to via the `JP nz, 0x3a35` at 0x3ae0)
+# bypasses the inline-control-byte read and is the path the
+# leaking dispatch takes.
+# Bank-switch port writes:
+#   0x4571 = simple helper bank-IN  (OUT 0x71, 0xfe)
+#   0x4589 = simple helper bank-OUT (OUT 0x71, 0xff)
+#   0x3a66 = alt helper bank-IN     (OUT 0x71, 0xfe — the LEAKER)
+#   0x3dc7 = alt helper bank-OUT    (inside 0x3DBE; OUT 0x71, A)
+# In the SR boot-stall reproduction, the ratio is roughly 1:1:1:1
+# for the first ~398 dispatch cycles, then a third 0x3a66 fires
+# WITHOUT a matching 0x3dc7 — the BIOS lands at PC=0x7842 with
+# E-ROM still mapped, reads sr-e0 instead of sr-n88, and unwinds
+# off the end of TVRAM into the reset wraparound.
+0x3ab4 erom_alt_trampoline_in ; AF-as-target inline-data dispatch
+0x3a35 erom_alt_trampoline_alt ; alt-A' entry point (skips control byte)
+0x3a66 erom_alt_bank_in     ; OUT (0x71), 0xfe; JP 0x3a7b
+0x3a7b erom_alt_restore     ; POP IY/BC/DE/HL/AF/AF'; EI; RET → handler
+0x3dbe erom_alt_bank_out    ; EX (SP),HL; OUT 0x32 + 0x71 from peeked HL
+0x3dc7 erom_alt_bank_out_71 ; OUT (0x71), A inside 0x3DBE
+
 # --- 0xef3d spin-on-IRQ helper (NOT on default boot path) ---
 # 0x38e9 is called twice from sys_init_dispatch tail (0x7334/0x733b).
 # Inside, after some vector-table init, it CALLs 0x3aed which
