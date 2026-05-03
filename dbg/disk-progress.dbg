@@ -1,0 +1,7 @@
+# 0x0337 is the instruction AFTER `EI; HALT` — if we reach it,
+# the result-phase IRQ fired and woke the sub.
+subbreak 0x0337
+continue 100000000
+subregs
+chips
+quit

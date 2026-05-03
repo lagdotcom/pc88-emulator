@@ -271,6 +271,15 @@ export class μPD765a {
       const v = buf[this.dataIndex]!;
       this.dataIndex++;
       if (this.dataIndex >= buf.length) this.advanceReadDataSector();
+      // Per-µPD765 datasheet: in non-DMA mode the FDC raises INT on
+      // every byte ready in execution phase, and the CPU clears it
+      // by reading the data register. The sub-CPU's read loop is
+      // `EI;HALT;IN A,(0xfb)` per byte, so without this re-assert
+      // it gets the first byte and then HALTs forever.
+      // `enterRWResult` (terminal) and `enterResult` (any sector
+      // boundary) already assertIrq for their phases, so we only
+      // re-arm INT when we're still streaming data bytes.
+      if (this.nonDma && this.phase === "data-read") this.assertIrq();
       return v;
     }
     log.warn(`data read in phase ${this.phase} (idle / no command active)`);
@@ -625,6 +634,8 @@ export class μPD765a {
     buf[this.dataIndex] = value;
     this.dataIndex++;
     if (this.dataIndex >= buf.length) this.commitWriteDataSector();
+    // Same per-byte INT re-assert as readDataReg (non-DMA mode).
+    if (this.nonDma && this.phase === "data-write") this.assertIrq();
   }
 
   // One sector's worth of bytes received: write it back and either
@@ -778,6 +789,31 @@ export class μPD765a {
     this.irqAsserted = true;
     if (this.tracer) this.tracer({ kind: "irq" });
     this.onInterrupt?.();
+  }
+
+  // Real µPD765 has a TC (Terminal Count) input that the host or
+  // DMAC pulses to force the current data-read / data-write command
+  // to terminate immediately and enter result phase. On the PC-80S31
+  // sub-CPU bus this is wired to a port read — the disk ROM does
+  // `IN A,(0xF8)` after the byte counter hits zero so the FDC
+  // doesn't keep streaming sectors past the requested count. Without
+  // a TC trigger the FDC would happily run from the START sector
+  // through EOT (up to ~4 KB) and the per-byte IRQ keeps re-firing
+  // long after the sub-CPU has left the read loop, corrupting the
+  // wait-for-end-of-cmd HALT into a false wake.
+  terminalCount(): void {
+    if (this.phase !== "data-read" && this.phase !== "data-write") return;
+    const drive = this.drives[this.selectedDrive];
+    const cyl = drive ? drive.cylinder : 0;
+    this.enterRWResult(
+      this.makeST0(0),
+      ST1.EN,
+      0,
+      cyl,
+      this.targetH,
+      this.currentR,
+      this.targetN,
+    );
   }
 
   snapshot(): FDCSnapshot {

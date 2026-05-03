@@ -356,20 +356,37 @@ Roughly ordered by what's blocking what.
   convention so 0x7F00 doesn't collide with N88-BASIC's RAM
   symbols on the same numeric address. Port labels stay shared
   with the main side. `help` is now topic-paged (`help <topic>`)
-  to keep the listing scannable as commands accumulate. With drives
-  attached + EXTON cleared + PPI cross-down remap + IM 0 + NOP
-  IRQ wake-up all in place, the full handshake runs end-to-end:
-  main's `ppi_send_byte` (cmd 0x00 init / 0x07 drive count / 0x06
-  status) round-trips, the sub-CPU dispatches each cmd, the FDC
-  asserts IRQ on RECALIBRATE completion, and the sub wakes from
-  HALT and reads SENSE INT. The N88-BASIC disk-detect path now
-  CALLs into the disk-BASIC E-ROM at 0x6F06 with bytes flowing
-  on the PPI both ways. The remaining gap is the actual boot-
-  sector read: cmd 0x06 returns the init-state status (0x80),
-  which BIOS interprets as "no boot disk", so it falls through
-  to the N88-BASIC "How many files(0-15)?" prompt. Need to
-  understand the E-ROM disk-BASIC's boot-sector-read protocol
-  to drive the sub-CPU into a path that reports a bootable disk.
+  to keep the listing scannable as commands accumulate.
+- [x] **Non-DMA per-byte IRQ + /TC support in `μPD765a`**. Real
+  silicon in non-DMA mode raises INT on every byte ready in the
+  data-read / data-write phase; the CPU clears it by reading /
+  writing the data register. Our FDC fired only one IRQ at the
+  phase transition, so the PC-80S31 disk ROM's `EI;HALT;IN A,(0xfb)`
+  loop got the first byte and stalled forever. Both `readDataReg`
+  and `acceptWriteDataByte` now re-assert INT after each byte while
+  still in execution phase. Companion fix: a new `terminalCount()`
+  method on the FDC, wired to a sub-side port read at 0xF8 (mirrors
+  the PC-80S31 hardware /TC line), forces the current data phase
+  into result phase. Without TC the FDC streams sectors past the
+  caller's byte count (FDC EOT defaults to 16 = whole track) and
+  the per-byte IRQ keeps re-firing into a result-phase HALT, false-
+  waking it. With both fixes, READ_DATA returns a clean result row
+  (e.g. `[0x00 0x80 0x00 0x00 0x00 0x02 0x01]` — ST1.EN flagging
+  TC termination) and the disk-BASIC E-ROM proceeds to follow-up
+  commands (cmd 0x11 memory upload, WRITE_DATA, …). Tests cover
+  the IRQ-per-byte invariant + a TC-mid-transfer round-trip.
+- [ ] **Sub-CPU disk-boot handshake completion**. With sector reads
+  + writes now flowing cleanly, the BIOS reaches deep into the disk-
+  BASIC init: it reads the boot sector (whose contents are valid
+  N88-DISK-BASIC boot code), sends back 0x81 success, and proceeds
+  to a memory-upload + WRITE_DATA exchange. But the run still ends
+  at the N88-BASIC "How many files(0-15)?" prompt rather than auto-
+  booting the game. Likely culprit: DIP port31 bit 1 (MMODE) — our
+  mkI default is "ROM boot"; real disk-game boot needs "RAM boot"
+  to skip into the disk-BASIC autoexec path. Next step is to
+  validate that hypothesis and surface a `--boot=disk` flag (or
+  toggle the variant's MMODE default) so disk-bootable variants
+  actually try the boot sector instead of falling into BASIC.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

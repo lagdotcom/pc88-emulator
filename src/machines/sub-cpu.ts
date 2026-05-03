@@ -42,6 +42,12 @@ const RAM_END = RAM_BASE + RAM_SIZE;
 
 const PORT_IRQ_VECTOR = 0xf0;
 const PORT_DRIVE_MODE = 0xf4;
+// PC-80S31 wires the FDC's /TC pin to a sub-side port read at
+// 0xF8. The disk ROM's READ_DATA loop does `IN A,(0xF8)` after the
+// byte counter hits zero to force the FDC out of execution phase
+// and into the result phase. Without it our FDC keeps streaming
+// past the requested byte count.
+const PORT_FDC_TC = 0xf8;
 
 export interface SubCPUSnapshot {
   readonly cpu: Z80CPUSnapshot;
@@ -118,6 +124,13 @@ export class SubCPU {
       this.fdc.onInterrupt = () => {
         this.cpu.requestIrq(this.irqVector);
       };
+      this.ioBus.register(PORT_FDC_TC, {
+        name: "subcpu/fdc-tc",
+        read: () => {
+          this.fdc!.terminalCount();
+          return 0xff;
+        },
+      });
     }
   }
 

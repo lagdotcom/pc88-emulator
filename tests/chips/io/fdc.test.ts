@@ -197,6 +197,63 @@ describe("μPD765a READ DATA", () => {
     expect(result[0]! & ST0.IC_MASK).toBe(ST0.IC_NORMAL);
   });
 
+  it("re-asserts IRQ on every byte in non-DMA mode (no DMAC = sub-CPU drives flow)", () => {
+    const { bus, fdc } = setup();
+    let irqs = 0;
+    fdc.onInterrupt = () => irqs++;
+    // SPECIFY with ND (non-DMA) bit set so the FDC mirrors how the
+    // PC-80S31 sub-CPU runs the chip.
+    writeCmd(bus, CMD.SPECIFY, 0xda, 0x19);
+    irqs = 0;
+    // READ DATA — one sector, EOT = 1, expect 256 byte-IRQs + 1 result-IRQ.
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x1b, 0xff);
+    // Drain the data + result phase.
+    let drained = 0;
+    while (
+      (bus.read(0xfa) & (MSR.RQM | MSR.DIO | MSR.CB)) ===
+      (MSR.RQM | MSR.DIO | MSR.CB)
+    ) {
+      bus.read(0xfb);
+      if (++drained > 1024) break;
+    }
+    // ≥ 256: at least one IRQ per byte plus the result-phase entry,
+    // which is the semantic the sub-CPU's `EI;HALT` per-byte loop
+    // relies on. The exact count varies with how the chip pipelines
+    // the start-of-cmd vs first-byte IRQ.
+    expect(irqs).toBeGreaterThanOrEqual(256);
+  });
+
+  it("terminalCount() forces data-read into result phase mid-transfer", () => {
+    const { bus, fdc } = setup();
+    // SPECIFY non-DMA so the read is per-byte gated.
+    writeCmd(bus, CMD.SPECIFY, 0xda, 0x19);
+    // READ DATA across multiple sectors (EOT = 16 = "read to end of
+    // track"). The PC-80S31 host normally requests fewer bytes than
+    // EOT*sector and ends the transfer with TC.
+    writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x01, 0x01, 0x10, 0x1b, 0xff);
+    expect(bus.read(0xfa) & MSR.DIO).toBe(MSR.DIO);
+    bus.read(0xfb);
+    bus.read(0xfb);
+    bus.read(0xfb);
+    fdc.terminalCount();
+    // TC transitions the FDC into result phase. ST1.EN (0x80) is our
+    // "transfer terminated by TC" marker.
+    const result = readResult(bus, 7);
+    expect(result[0]! & ST0.IC_MASK).toBe(ST0.IC_NORMAL);
+    expect(result[1]).toBe(0x80);
+    // Back in idle after the result drain.
+    expect(bus.read(0xfa) & MSR.CB).toBe(0);
+  });
+
+  it("terminalCount() is a no-op outside data phases", () => {
+    const { fdc } = setup();
+    let irqs = 0;
+    fdc.onInterrupt = () => irqs++;
+    fdc.terminalCount();
+    expect(irqs).toBe(0);
+    expect(fdc.snapshot().phase).toBe("idle");
+  });
+
   it("flags ND when the sector ID is not on the track", () => {
     const { bus } = setup();
     writeCmd(bus, CMD.READ_DATA | CMD_FLAGS.MF, 0x00, 0x00, 0x00, 0x99, 0x01, 0x01, 0x1b, 0xff);

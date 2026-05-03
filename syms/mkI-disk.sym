@@ -34,6 +34,29 @@
 0x02a8 fdc_wait_write_ready ; IN (0xfa); XOR 0x80; AND 0xC0; JR nz — wait RQM=1, DIO=0
 0x02b1 fdc_write_byte       ; OUT (0xfb),A
 
+# --- READ_DATA helper (cmd 0x02 entrypoint into FDC) ---
+# 0x02D5 reads N sectors into HL=destination, BC=byte count.
+# Issues SEEK, then READ_DATA, then drives a per-byte EI;HALT;IN
+# loop. EOT in the FDC params is set to 0x10 (= "stream to end of
+# track"), so the host MUST assert TC after the requested bytes —
+# that's the `IN A,(0xF8)` at 0x0332 which routes to the FDC's
+# /TC pin on PC-80S31 silicon. Without TC the FDC keeps streaming
+# whole sectors past the byte count and corrupts the result-phase
+# wait.
+0x02d5 read_sector_to_ram   ; HL=dest, BC=count; → C=fail/Z=success
+0x02fe read_byte_loop       ; EI;HALT;IN A,(0xfa);AND 0x20;...
+0x0332 read_done_tc         ; IN A,(0xF8) — assert TC to end transfer
+0x0335 read_done_halt       ; EI;HALT — wait for result-phase IRQ
+
+# --- Cmd-dispatch handlers (table at 0x011B, 16-bit entries) ---
+0x015d cmd_init             ; cmd 0x00: SPECIFY + per-drive RECAL+SEEK+RECAL
+0x045e cmd_write_sector     ; cmd 0x01: receive bytes from main, WRITE_DATA
+0x048c cmd_read_sector      ; cmd 0x02: READ_DATA → 0x5000 sub RAM
+0x050b cmd_get_status       ; cmd 0x06: send back RAM[0x7F14] (status byte)
+0x0511 cmd_get_drive_count  ; cmd 0x07: send back RAM[0x7F15] (drive bitmap)
+0x052f cmd_upload_to_main   ; cmd 0x0B: stream sub RAM[BC..BC+DE-1] to main
+0x05bc cmd_set_drive_mask   ; cmd 0x17: receive byte → 4-byte drive mask at 0x7F1C
+
 # --- RAM (sub-CPU 0x7F00..0x7FFF, separate address space) ---
 # 0x7F00..0x7F08 — interrupt-vector copies stamped at boot:
 #   each of (0x7F00),(0x7F02),(0x7F04),(0x7F06) initialised to 0x07F0

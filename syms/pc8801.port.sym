@@ -46,6 +46,9 @@
 # --- Sub-CPU bus: μPD765a FDC (sub-side only) ---
 # Visible on the sub-CPU's IOBus, not the main bus. Surfaces here
 # because the port file is shared across both Z80s.
+0xF0 subcpu_irq_vector      ; sub-side IRQ vector latch (write-only)
+0xF4 subcpu_drive_mode      ; sub-side drive-mode register (write-only)
+0xF8 fdc_tc                 ; sub reads → asserts FDC /TC pin: ends current data-read/write into result phase
 0xFA fdc_status             ; main status register: bit 7=RQM, bit 6=DIO, bit 4=BUSY
 0xFB fdc_data               ; command/parameter/result byte FIFO
 
