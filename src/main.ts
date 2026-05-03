@@ -61,6 +61,14 @@ interface CliFlags {
   // easier to read than `--trace-io` for disk-boot debugging where
   // most port traffic is the PPI handshake polling loops.
   traceIpc: boolean;
+  // Boot mode override. "rom" (default) leaves DIP port31 bit 1
+  // (MMODE) clear so the BIOS runs N88/N-BASIC from ROM and the
+  // user gets the "How many files?" prompt. "disk" flips MMODE=1
+  // (and clears RMODE so N88-DISK-BASIC is the active variant) so
+  // the BIOS takes the disk-boot path: load the boot sector,
+  // unmap the BASIC ROM via a port-0x31 write, jump to RAM. Only
+  // useful when --disk0 is also set.
+  bootMode: "rom" | "disk";
 }
 
 // Parse CLI flags with env-var fallback so .env still works for
@@ -86,6 +94,7 @@ function parseCliFlags(argv: string[]): CliFlags {
       screenshot: { type: "string" },
       disk0: { type: "string" },
       "trace-ipc": { type: "boolean" },
+      boot: { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -158,6 +167,13 @@ function parseCliFlags(argv: string[]): CliFlags {
   const traceIpc =
     !!values["trace-ipc"] || process.env.PC88_TRACE_IPC === "1";
 
+  const bootArg =
+    (values["boot"] ?? process.env.PC88_BOOT ?? "rom").toLowerCase();
+  if (bootArg !== "rom" && bootArg !== "disk") {
+    throw new Error(`--boot must be "rom" or "disk", got ${bootArg}`);
+  }
+  const bootMode: CliFlags["bootMode"] = bootArg;
+
   return {
     romDir,
     maxOps,
@@ -175,6 +191,7 @@ function parseCliFlags(argv: string[]): CliFlags {
     screenshot,
     disk0,
     traceIpc,
+    bootMode,
     config,
   };
 }
@@ -218,6 +235,11 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       variant's hasSubCpu — needed for mkI to use
                       its PC-8031 external floppy unit
                       (env: PC88_DISK0)
+  --boot=rom|disk     ROM (default): N-/N88-BASIC from ROM, "How
+                      many files?" prompt. disk: flip DIP port31
+                      bit 1 (MMODE) so the BIOS takes the disk-
+                      boot path. Only useful when --disk0= is set
+                      (env: PC88_BOOT)
   -h, --help          show this help
 `;
 
@@ -325,19 +347,21 @@ async function main(): Promise<void> {
   // Apply the --basic override (if any) to the variant's DIP byte
   // before constructing the machine. Bit 2 of port31 is the rmode
   // flag: 1 = N-BASIC, 0 = N88-BASIC. Cleanest is to clone the
-  // config so the source variant object stays untouched.
-  const config: PC88Config = flags.basicOverride
-    ? {
-        ...flags.config,
-        dipSwitches: {
-          ...flags.config.dipSwitches,
-          port31:
-            flags.basicOverride === "n80"
-              ? flags.config.dipSwitches.port31 | 0x04
-              : flags.config.dipSwitches.port31 & ~0x04,
-        },
-      }
-    : flags.config;
+  // config so the source variant object stays untouched. Both
+  // --basic= and --boot= edit port31 bits without mutating the
+  // shared variant object: MMODE_RAM is bit 1, RMODE_N80 is bit 2.
+  let port31 = flags.config.dipSwitches.port31;
+  if (flags.basicOverride === "n80") port31 |= 0x04;
+  if (flags.basicOverride === "n88") port31 &= ~0x04;
+  if (flags.bootMode === "disk") port31 |= 0x02;
+  if (flags.bootMode === "rom") port31 &= ~0x02;
+  const config: PC88Config =
+    port31 !== flags.config.dipSwitches.port31
+      ? {
+          ...flags.config,
+          dipSwitches: { ...flags.config.dipSwitches, port31 },
+        }
+      : flags.config;
 
   const machine = new PC88Machine(config, loaded, {
     enableDiskSubsystem: flags.disk0 !== null,

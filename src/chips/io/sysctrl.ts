@@ -241,19 +241,18 @@ export class SystemController {
       `0x31 write: lines=${lines} mmode=${mmode === 0 ? "rom" : "ram"} rmode=${rmode === 0 ? "n88" : "n80"} graph=${graph} hcolor=${hcolor} highres=${highres}`,
     );
 
-    // Earlier code propagated `mmode` to setBasicRomEnabled() and
-    // `rmode` to setBasicMode() on every port-0x31 write, on the
-    // theory that the BIOS would use those bits to flip BASIC modes
-    // at runtime. That tripped the BIOS into "ROM mapped out"
-    // mid-init and stuck it before CRTC programming. Cold-boot DIP
-    // selection is handled in PC88Machine.reset() instead.
+    // RMODE doesn't propagate to setBasicMode() at runtime — the
+    // BIOS writes port 0x31 mid-init for unrelated reasons (LINES,
+    // GRPH, HCOLOR) and we'd flip BASIC mode underneath it. Cold-
+    // boot DIP selection of n80 vs n88 is handled in
+    // PC88Machine.reset() instead.
     //
-    // We DO latch mmode + rmode here for one purpose: gating EROM
-    // enablement. Per the maroon.dk port table and the PC-8801 mkII
-    // hardware manual, EROM only maps in when mmode=0 (ROM mode) AND
-    // rmode=0 (N88-BASIC). When either bit flips, EROM must drop
-    // immediately — otherwise N88-BASIC's runtime ROM-bank swap
-    // would leave a stale EROM image at 0x6000 across a mode change.
+    // MMODE *does* propagate now: when the BIOS sets bit 1 it's
+    // explicitly asking for "ROM unmapped, RAM at 0x0000-0x7FFF"
+    // — that's the disk-boot transfer-to-RAM step. The EROM gate
+    // (only valid when both bits clear) re-evaluates on every
+    // write, same as before.
+    this.memoryMap.setBasicRomEnabled(mmode === 0);
     this.mmode = mmode;
     this.rmode = rmode;
     this.applyEROMEnable();

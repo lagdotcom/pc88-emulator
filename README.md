@@ -375,18 +375,32 @@ Roughly ordered by what's blocking what.
   TC termination) and the disk-BASIC E-ROM proceeds to follow-up
   commands (cmd 0x11 memory upload, WRITE_DATA, …). Tests cover
   the IRQ-per-byte invariant + a TC-mid-transfer round-trip.
-- [ ] **Sub-CPU disk-boot handshake completion**. With sector reads
-  + writes now flowing cleanly, the BIOS reaches deep into the disk-
-  BASIC init: it reads the boot sector (whose contents are valid
-  N88-DISK-BASIC boot code), sends back 0x81 success, and proceeds
-  to a memory-upload + WRITE_DATA exchange. But the run still ends
-  at the N88-BASIC "How many files(0-15)?" prompt rather than auto-
-  booting the game. Likely culprit: DIP port31 bit 1 (MMODE) — our
-  mkI default is "ROM boot"; real disk-game boot needs "RAM boot"
-  to skip into the disk-BASIC autoexec path. Next step is to
-  validate that hypothesis and surface a `--boot=disk` flag (or
-  toggle the variant's MMODE default) so disk-bootable variants
-  actually try the boot sector instead of falling into BASIC.
+- [x] **MMODE wired through port-0x31 writes + `--boot=disk` flag**.
+  Real silicon: writing port 0x31 bit 1 = 1 unmaps the BASIC ROM at
+  0x0000-0x7FFF and exposes main RAM, which is how the BIOS hands
+  off to a disk-loaded program — copy the boot sector into RAM, set
+  MMODE=1, JP into RAM. We previously latched MMODE for EROM
+  gating only; `handle31` now also propagates to
+  `setBasicRomEnabled(mmode === 0)` on every port write. CLI flag
+  `--boot=rom|disk` (env: PC88_BOOT) flips DIP port31 bit 1 so the
+  BIOS sees the disk-boot DIP at cold boot. Tested in `sysctrl`:
+  MMODE=1 makes a previously-shadowed RAM byte at 0x0100 readable;
+  MMODE=0 puts the ROM back. Trace shows multiple READ_DATA cycles
+  under `--boot=disk` (disk-BASIC starts loading the program), but
+  the actual auto-run / IPL handoff is still incomplete — the
+  remaining gap is documented below.
+- [ ] **Disk auto-boot / IPL handoff**. With `--boot=disk` set,
+  N88-DISK-BASIC reads the boot sector and follow-up sectors but
+  the run still ends at "How many files?". The boot sector itself
+  has valid Z80 code (`DI; OUT (0x51), 0; LD SP, 0xC000; CALL
+  ppi_send_byte; …`) intended to run on the main CPU after the
+  BIOS copies it from sub RAM into main RAM and jumps to it. We're
+  not seeing that copy + jump happen yet — likely the trigger is
+  either a specific cmd path in the disk-BASIC E-ROM (which our
+  EROM bank-readback at port 0x71 may still be confusing) or a
+  signature check on the boot sector that decides whether to
+  auto-execute it. Next step: trace the disk-BASIC E-ROM's flow
+  after sector-1 is loaded into sub RAM 0x5000.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

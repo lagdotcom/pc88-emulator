@@ -87,14 +87,37 @@ describe("SystemController EROM banking", () => {
     expect(memoryMap.read(0x6000)).toBe(0xe0);
   });
 
-  it("port 0x31 MMODE=1 (RAM at 0x0000-0x7FFF) disables EROM mapping", () => {
+  it("port 0x31 MMODE=1 unmaps the BASIC ROM at 0x0000-0x5FFF too", () => {
+    // Disk-boot transfer step: BIOS loads the boot sector, copies it
+    // into main RAM at 0x0000-…, then writes MMODE=1 to unmap the
+    // ROM and lets the boot sector code run from RAM. Without the
+    // ROM unmap, executing JP 0 would just re-enter the BIOS reset
+    // vector instead of the loaded code.
+    const { bus, memoryMap } = setup();
+    const romByte = memoryMap.read(0x0100);
+    // Stash a known byte in main RAM at the same address — write-
+    // through shadowing means writes always reach RAM regardless of
+    // the ROM map state.
+    memoryMap.write(0x0100, 0x42);
+    expect(memoryMap.read(0x0100)).toBe(romByte); // ROM still wins.
+    bus.write(0x31, 0x02); // MMODE = 1
+    expect(memoryMap.read(0x0100)).toBe(0x42); // RAM exposed.
+    bus.write(0x31, 0x00); // MMODE = 0
+    expect(memoryMap.read(0x0100)).toBe(romByte); // ROM back.
+  });
+
+  it("port 0x31 MMODE=1 unmaps BASIC ROM (RAM at 0x0000-0x7FFF) — disables EROM as a side effect", () => {
     const { bus, memoryMap } = setup();
     bus.write(0x71, 0xfe);
     bus.write(0x32, 0x00);
     expect(memoryMap.read(0x6000)).toBe(0xe0);
-    bus.write(0x31, 0x02); // MMODE = 1
-    expect(memoryMap.read(0x6000)).toBe(0x80);
-    bus.write(0x31, 0x00); // MMODE = 0
+    bus.write(0x31, 0x02); // MMODE = 1: BASIC ROM unmapped, RAM exposed.
+    // 0x6000 now reads main RAM (zeroed by reset) — the disk-boot
+    // path writes its loaded boot code into RAM here before flipping
+    // MMODE=1, so this is the path the BIOS takes to hand off
+    // execution to a disk-loaded program.
+    expect(memoryMap.read(0x6000)).toBe(0x00);
+    bus.write(0x31, 0x00); // MMODE = 0: BASIC ROM + EROM both back.
     expect(memoryMap.read(0x6000)).toBe(0xe0);
   });
 });
