@@ -72,28 +72,32 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
     switch (msg.type) {
       case "ready":
         break;
-      case "tick":
+      case "tick": {
+        const bpAddrs = msg.debug.breakpoints.map((b) => b.addr);
         renderFrame(ui, msg.pixels, msg.width, msg.height, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
+        ui.disasm.render(msg.pc, msg.disasm, bpAddrs);
         ui.breakpoints.render(msg.debug.breakpoints);
         ui.watches.render(msg.debug.ramWatches, msg.debug.portWatches);
         ui.stack.render(msg.debug.callStack);
         ui.status.textContent = `${msg.running ? "running" : "paused"} pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}${msg.halted ? " halted" : ""}`;
         setRunUi(ui, msg.running);
         break;
-      case "stopped":
+      }
+      case "stopped": {
+        const bpAddrs = msg.debug.breakpoints.map((b) => b.addr);
         renderFrame(ui, msg.pixels, msg.width, msg.height, msg.ascii);
         ui.registers.render(msg.cpu);
-        ui.disasm.render(msg.pc, msg.disasm, msg.debug.breakpoints);
+        ui.disasm.render(msg.pc, msg.disasm, bpAddrs);
         ui.breakpoints.render(msg.debug.breakpoints);
         ui.watches.render(msg.debug.ramWatches, msg.debug.portWatches);
         ui.stack.render(msg.debug.callStack);
         ui.status.textContent = `stopped (${msg.reason}) pc=${formatU16(msg.pc)} cycles=${msg.cycles} ops=${msg.ops}`;
         setRunUi(ui, false);
         break;
+      }
       case "memory":
-        ui.memory.render(msg.addr, new Uint8Array(msg.bytes));
+        ui.memory.render(msg.addr, new Uint8Array(msg.bytes), msg.label);
         break;
       case "out":
         ui.repl.appendOutput(msg.text);

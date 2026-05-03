@@ -556,9 +556,15 @@ Roughly ordered by what's blocking what.
   (CSS-scaled to 480 px tall, pixel-aligned) plus Registers /
   Disassembly (with ●
   breakpoint + ► PC markers + per-row label headers) / Memory
-  / Breakpoints / Watches / Stack / REPL panels. The REPL
-  flows through the same `dispatch()` as the CLI debugger via
-  a `setDebugWriter` callback. Keyboard input maps
+  / Breakpoints / Watches / Stack / REPL panels. Labels from
+  the loaded `.sym` files surface in every panel that shows an
+  address: stack frames render the called routine name (and the
+  call-site label, fuzzy-resolved for mid-routine sites);
+  breakpoints + RAM watches list their symbol; port watches
+  show the per-variant port name from `<slug>.port.sym`; the
+  Memory panel emits a `name:` header above the hex dump. The
+  REPL flows through the same `dispatch()` as the CLI debugger
+  via a `setDebugWriter` callback. Keyboard input maps
   `KeyboardEvent.code` → `PC88Key` matrix when no form has
   focus. Symbol files persist in OPFS and feed disasm
   resolution; an "Import labels" panel takes one or more `.sym`

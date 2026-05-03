@@ -1,5 +1,6 @@
 import { byte as b, word as w } from "../tools.js";
 import type {
+  BreakpointSnapshot,
   CallFrameSnapshot,
   CPUSnapshot,
   DisasmLine,
@@ -159,8 +160,9 @@ export class MemoryPanel {
     this.element.appendChild(this.out);
   }
 
-  render(addr: number, bytes: Uint8Array): void {
+  render(addr: number, bytes: Uint8Array, label?: string): void {
     const lines: string[] = [];
+    if (label) lines.push(`${label}:`);
     const width = 16;
     for (let off = 0; off < bytes.length; off += width) {
       const lineAddr = (addr + off) & 0xffff;
@@ -335,7 +337,7 @@ export class BreakpointsPanel {
     this.element.appendChild(this.list);
   }
 
-  render(breakpoints: number[]): void {
+  render(breakpoints: BreakpointSnapshot[]): void {
     this.list.textContent = "";
     if (breakpoints.length === 0) {
       const empty = document.createElement("li");
@@ -344,16 +346,18 @@ export class BreakpointsPanel {
       this.list.appendChild(empty);
       return;
     }
-    const sorted = [...breakpoints].sort((a, b) => a - b);
-    for (const addr of sorted) {
+    const sorted = [...breakpoints].sort((a, b) => a.addr - b.addr);
+    for (const bp of sorted) {
       const li = document.createElement("li");
       const text = document.createElement("span");
-      text.textContent = `0x${w(addr)}`;
+      text.textContent = bp.label
+        ? `0x${w(bp.addr)} ${bp.label}`
+        : `0x${w(bp.addr)}`;
       const remove = document.createElement("button");
       remove.type = "button";
       remove.textContent = "×";
       remove.title = "Remove breakpoint";
-      remove.addEventListener("click", () => this.send(`bd 0x${w(addr)}`));
+      remove.addEventListener("click", () => this.send(`bd 0x${w(bp.addr)}`));
       li.appendChild(text);
       li.appendChild(remove);
       this.list.appendChild(li);
@@ -461,7 +465,8 @@ export class WatchesPanel {
       for (const w_ of sorted) {
         const li = document.createElement("li");
         const text = document.createElement("span");
-        text.textContent = `0x${w(w_.addr)} ${w_.mode} ${w_.action}`;
+        const labelTag = w_.label ? ` ${w_.label}` : "";
+        text.textContent = `0x${w(w_.addr)}${labelTag} ${w_.mode} ${w_.action}`;
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "×";
@@ -486,7 +491,8 @@ export class WatchesPanel {
       for (const p of sorted) {
         const li = document.createElement("li");
         const text = document.createElement("span");
-        text.textContent = `0x${b(p.port)} ${p.mode} ${p.action}`;
+        const labelTag = p.label ? ` ${p.label}` : "";
+        text.textContent = `0x${b(p.port)}${labelTag} ${p.mode} ${p.action}`;
         const remove = document.createElement("button");
         remove.type = "button";
         remove.textContent = "×";
@@ -525,10 +531,25 @@ export class StackPanel {
     const lines: string[] = [];
     // Render top-of-stack first (most recent call is at the end of
     // the array; the user wants to see the deepest frame at the top).
+    // Labels: prefer `target` over `from` because the called routine
+    // name is more informative when scanning the stack. Fuzzy
+    // `name+N` matches OK — they show where in the routine the call
+    // landed (typically a CALL site near the start).
+    const padTo = (s: string, n: number): string =>
+      s.length >= n ? s : s + " ".repeat(n - s.length);
+    let widestTarget = 0;
+    for (const f of frames) {
+      const tgt = `${w(f.target)}${f.targetLabel ? " " + f.targetLabel : ""}`;
+      if (tgt.length > widestTarget) widestTarget = tgt.length;
+    }
     for (let i = frames.length - 1; i >= 0; i--) {
       const f = frames[i]!;
+      const tgt = `${w(f.target)}${f.targetLabel ? " " + f.targetLabel : ""}`;
+      const from = f.fromLabel
+        ? `${w(f.fromPC)} ${f.fromLabel}`
+        : w(f.fromPC);
       lines.push(
-        `${f.via.padEnd(4)} ${w(f.fromPC)} → ${w(f.target)}  ret=${w(f.expectedReturn)}  sp=${w(f.spAtCall)}`,
+        `${f.via.padEnd(4)} ${from} → ${padTo(tgt, widestTarget)}  ret=${w(f.expectedReturn)}  sp=${w(f.spAtCall)}`,
       );
     }
     this.pre.textContent = lines.join("\n");

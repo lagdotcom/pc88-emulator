@@ -13,7 +13,7 @@ import {
   importSymbols,
   loadDebugSymbols,
 } from "../debug/debug-symbols.js";
-import type { ROMID, u16 } from "../flavours.js";
+import type { ROMID, u16, u8 } from "../flavours.js";
 import { getLogger } from "../log.js";
 import { PC88Machine, VBL_HZ } from "../machines/pc88.js";
 import { loadRomsFromMap } from "../machines/rom-loader-browser.js";
@@ -100,23 +100,43 @@ function snapshotCpu(machine: PC88Machine): CPUSnapshot {
 }
 
 function snapshotDebug(s: State): DebugSnapshot {
-  const ramWatches = [...s.debug.ramWatches.entries()].map(([addr, spec]) => ({
-    addr,
-    mode: spec.mode,
-    action: spec.action,
-  }));
-  const portWatches = [...s.debug.portWatches.entries()].map(
-    ([port, spec]) => ({ port, mode: spec.mode, action: spec.action }),
-  );
-  return {
-    breakpoints: [...s.debug.breakpoints],
-    ramWatches,
-    portWatches,
-    // Defensive copy — the worker's state.debug.callStack is mutated
-    // in place by trackedStep, so structured cloning the live array
-    // would race with the next instruction's push/pop.
-    callStack: s.debug.callStack.map((f) => ({ ...f })),
-  };
+  const syms = s.syms;
+  // Resolve a code-address label, returning undefined when no symbol
+  // matches. Uses the fuzzy resolver so mid-routine call sites
+  // surface as `routine+N`.
+  const codeLabel = (addr: u16): string | undefined => syms?.resolver(addr);
+  const portLabel = (port: u8): string | undefined => syms?.portResolver(port);
+
+  const ramWatches = [...s.debug.ramWatches.entries()].map(([addr, spec]) => {
+    const label = codeLabel(addr);
+    return label !== undefined
+      ? { addr, mode: spec.mode, action: spec.action, label }
+      : { addr, mode: spec.mode, action: spec.action };
+  });
+  const portWatches = [...s.debug.portWatches.entries()].map(([port, spec]) => {
+    const label = portLabel(port);
+    return label !== undefined
+      ? { port, mode: spec.mode, action: spec.action, label }
+      : { port, mode: spec.mode, action: spec.action };
+  });
+  const breakpoints = [...s.debug.breakpoints].map((addr) => {
+    const label = codeLabel(addr);
+    return label !== undefined ? { addr, label } : { addr };
+  });
+  // Defensive copy — the worker's state.debug.callStack is mutated
+  // in place by trackedStep, so structured cloning the live array
+  // would race with the next instruction's push/pop.
+  const callStack = s.debug.callStack.map((f) => {
+    const targetLabel = codeLabel(f.target);
+    const fromLabel = codeLabel(f.fromPC);
+    const out: typeof f & { targetLabel?: string; fromLabel?: string } = {
+      ...f,
+    };
+    if (targetLabel !== undefined) out.targetLabel = targetLabel;
+    if (fromLabel !== undefined) out.fromLabel = fromLabel;
+    return out;
+  });
+  return { breakpoints, ramWatches, portWatches, callStack };
 }
 
 function disasmAround(
@@ -185,7 +205,12 @@ function postPeek(s: State, addr: u16, count: number): void {
   const view = new Uint8Array(buf);
   for (let i = 0; i < c; i++)
     view[i] = s.machine.memBus.read((addr + i) & 0xffff);
-  post({ type: "memory", addr: addr & 0xffff, bytes: buf }, [buf]);
+  const label = s.syms?.resolver(addr & 0xffff);
+  const msg =
+    label !== undefined
+      ? { type: "memory" as const, addr: (addr & 0xffff) as u16, bytes: buf, label }
+      : { type: "memory" as const, addr: (addr & 0xffff) as u16, bytes: buf };
+  post(msg, [buf]);
 }
 
 // Single canonical run loop. Uses trackedStep so RAM/port watches
