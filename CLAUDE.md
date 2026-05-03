@@ -904,6 +904,9 @@ giving the operator room for interactive follow-up.
 | `dbg/n88-print-entry.dbg` | Run N88 boot, log port 0x71 EROM gating, break at 0x5550, dump the RAM hooks (0xEC88/0xED42/0xED99/0xE64C). The hooks staying as `C9` RET stubs at print-call time is *expected* — they're user-replaceable hooks whose default state is RET; the actual RST 18h dispatch is at ROM 0x0018, always present. The original "BIOS hasn't installed RST 18h" diagnosis was a red herring — the real banner blocker was the IRQ controller bit layout. |
 | `dbg/erom-cycle.dbg` | Log every port 0x32 + 0x71 hit during a fixed boot window. Diff between N88 and N-BASIC to see who actually exercises the EROM dispatch. |
 | `dbg/vbl-acceptance.dbg` | Log writes to port 0xE6 (IRQ mask), break at 0x0038 to catch IM 1 acceptance. Stack will show `via=IRQ` from the about-to-execute PC. |
+| `dbg/disk-handshake.dbg` | Step through the mkI + PC-8031 disk-detect path: break on sysctrl init at 0x72CD, EXTON probe at 0x36DB, the PPI mode-word write at 0x36EA, and the per-cmd send. Used to verify EXTON clears, the PPI handshake handshake completes, and the cmd 0x00 init sequence flows. |
+| `dbg/disk-progress.dbg` | mkI + rogue.d88 IPL trace: stop when sub-CPU reaches the post-data-read `IN A,(0xF8)` TC trigger at sub PC 0x0332. Verifies the per-byte non-DMA IRQ + TC fixes hold across a full sector read. |
+| `dbg/sr-trace.dbg` | mkII SR boot diagnosis. Stops at sr-n88 0x2089 — the body of the RST-28 polling loop the BIOS sits in after the disk-init handshake completes but before any TVRAM write. Captures the call chain to identify which SR-specific chip surface (YM2203 / V2-mode CRTC / IRQ priority) is missing. |
 
 When you write a new recipe (or significantly change one), update
 this table and the README's debugger paragraph in the same commit.

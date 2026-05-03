@@ -389,31 +389,49 @@ Roughly ordered by what's blocking what.
   under `--boot=disk` (disk-BASIC starts loading the program), but
   the actual auto-run / IPL handoff is still incomplete — the
   remaining gap is documented below.
-- [ ] **Disk auto-boot — needs keyboard input simulation OR mkII+
-  ROM**. Investigation finding: the PC-8801 mkI BIOS does **not**
-  have an automatic boot-sector IPL path. The boot sector code in
-  `rogue.d88` (`DI; LD SP, 0xC000; CALL ppi_send_byte 0x0D; …`) is
-  a `BOOT.BIN`-style payload — N88-DISK-BASIC reads it via
-  `BLOAD"BOOT.BIN",R` only after the user types that command. The
-  `cmd 0x0D` (sub-CPU JP-to-address) the boot code uses also
-  requires sub-RAM 0x5000+ and 0x6E00+ to be populated by prior
-  `cmd 0x02` reads — state that only exists *after* DISK-BASIC has
-  done its load. A synthetic IPL that yanks main PC to the boot
-  sector won't work for that reason; tried it (and reverted)
-  because the sub-RAM pre-state can't be trivially reproduced. The
-  two real paths forward:
-    1. **mkII SR onwards** — those BIOSes do have a sector-IPL
+- [x] **mkII SR ROM dump landed locally**. The eight SR ROMs
+  (`sr-n80`, `sr-n88`, `sr-e0..e3`, `sr-font`, `sr-kanji2`) match
+  every md5 in the variant config and the loader accepts them.
+  `--machine=sr` is now usable end-to-end.
+- [ ] **mkII SR boots to BASIC banner**. `--machine=sr` (no disk)
+  boots N-BASIC cleanly to the "NEC PC-8001 BASIC Ver 1.5"
+  banner. **N88 mode does not yet work** — `--basic=n88` (or
+  inserting a disk, which auto-flips to N88-DISK-BASIC) ends with
+  main spinning in the RST-28 polling loop at sr-n88 0x2089
+  (poll `(0xEC43) == 0x2F`) without writing TVRAM. Disk init
+  itself completes — the SPECIFY+RECALIBRATE+SEEK per-drive flow
+  runs through and the sub-CPU returns to its 0x00CC polling
+  loop. The block must be a missing SR-specific chip surface:
+  YM2203 sound init, V2-mode CRTC bits, the analogue palette
+  registers, or the SR's IRQ priority encoder. Recipe at
+  `dbg/sr-trace.dbg` captures the call chain. This is the
+  prerequisite to using SR's real sector-IPL path on disk games.
+- [ ] **Disk auto-boot — needs SR N88 banner first OR keyboard
+  input simulation on mkI**. Investigation finding: the PC-8801
+  mkI BIOS does **not** have an automatic boot-sector IPL path.
+  The boot sector code in `rogue.d88` (`DI; LD SP, 0xC000; CALL
+  ppi_send_byte 0x0D; …`) is a `BOOT.BIN`-style payload —
+  N88-DISK-BASIC reads it via `BLOAD"BOOT.BIN",R` only after the
+  user types that command. The `cmd 0x0D` (sub-CPU JP-to-address)
+  the boot code uses also requires sub-RAM 0x5000+ and 0x6E00+ to
+  be populated by prior `cmd 0x02` reads — state that only exists
+  *after* DISK-BASIC has done its load. A synthetic IPL that
+  yanks main PC to the boot sector won't work for that reason;
+  tried it (and reverted) because the sub-RAM pre-state can't be
+  trivially reproduced. The two real paths forward:
+    1. **mkII SR sector-IPL** — those BIOSes do have a sector-IPL
        entry (DIP MMODE=1 → read sector + JP to RAM at reset).
-       Requires the mkII-n80/n88 ROMs we don't have locally yet.
+       SR ROMs are now landed but N88-DISK-BASIC doesn't reach a
+       runnable state yet (see above).
     2. **Keyboard input simulation on mkI** — wait for the "How
        many files?" + "Ok" prompts, drive the matrix to type
        `BLOAD"BOOT.BIN",R\n` (or whatever the disk's autoexec
        command is). The keyboard module already supports
        row/column poking; needs a CLI `--type=STRING` flag that
        feeds a string at appropriate prompt-detection points.
-  Either way, the MMODE wiring landed in the previous commit is a
-  prerequisite — the boot sector itself uses `OUT (0x31), 0x1F`
-  to unmap ROM at the moment of handoff.
+  Either way, the MMODE wiring is a prerequisite — the boot
+  sector itself uses `OUT (0x31), 0x1F` to unmap ROM at the
+  moment of handoff.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is

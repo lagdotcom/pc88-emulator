@@ -1,0 +1,17 @@
+# Diagnose where SR's main BIOS gets stuck during boot. With SR
+# ROMs loaded and rogue.d88 inserted, main reaches a tight RST 28
+# polling loop checking 0xEC43/0xEC44 (sr-n88.rom 0x2083 entry).
+# The disk-init handshake completes cleanly (sub-CPU returns to
+# its 0x00CC polling loop), but main never breaks out of the
+# polling loop and TVRAM stays empty. Likely root cause: an SR-
+# specific chip surface (YM2203 init, analogue palette, V2 mode
+# CRTC bits, IRQ priority encoder) that one of our stubs doesn't
+# model correctly. This recipe stops at the polling-loop body to
+# capture the call chain.
+#
+#   yarn pc88 --machine=sr --basic=n88 --disk0=disks/rogue.d88 \
+#     --script=dbg/sr-trace.dbg --max-ops=30000000
+break 0x2089
+continue 50000000
+trace 24
+chips
