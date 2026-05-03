@@ -30,9 +30,13 @@ describe("runMachine VBL gating via IRQ mask register", () => {
     0x76, // HALT
   ];
 
-  it("delivers VBL when bit 2 of the IRQ mask is set (default)", () => {
+  it("delivers VBL when bit 2 of the IRQ mask is set", () => {
     const machine = new PC88Machine(MKI, syntheticRoms(HALT_WITH_EI));
     machine.reset();
+    // Real silicon resets with the mask register cleared (all
+    // sources masked). Manually enable VBL bit 2 — the BIOS does
+    // this same write before relying on VBL.
+    machine.ioBus.write(0xe6, 0x04);
     // I = 0; vector 0x04 → IM 2 reads PC from RAM[0x0004-0x0005].
     // The synthetic ROM at PC=0 starts with `ED 5E FB 76` so the
     // indirect load at 0x0004 reads two HALT bytes (0x7676); the test

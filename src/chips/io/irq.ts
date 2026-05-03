@@ -25,10 +25,13 @@ const log = getLogger("irq");
 // soft-resetting mid-banner.
 //
 // Reset state: real silicon comes up with the mask register cleared
-// (all interrupts disabled) and BASIC ROM enables what it needs. We
-// default to "all enabled" because that matches what the existing
-// pc88-irq test expects, and the BIOS overwrites the mask with its
-// own value within the first few hundred ops anyway.
+// (all interrupts disabled) and BASIC ROM enables what it needs.
+// Mirroring that here: SR's BIOS races a VBL pulse against the
+// LDIR that installs the default IRQ handler at RAM[0xE669] (a
+// `JP 0` reset trampoline). Defaulting to all-enabled meant the
+// race fired a VBL IRQ in the gap, the IRQ handler reset the
+// machine, and SR boot looped on its own banner. mkI happens to
+// program the mask soon enough that the same race didn't trip it.
 
 // Per-bit enables for the mask register at 0xE6. A bit set to 1
 // means that source can fire; cleared means masked.
@@ -47,7 +50,7 @@ export interface IrqSnapshot {
 }
 
 export class IrqController {
-  mask: u8 = 0xff;
+  mask: u8 = 0;
   priority: u8 = 0xff;
   // Set to true when the BIOS has explicitly programmed the mask. Used
   // by diagnostics to distinguish "default still in force" from

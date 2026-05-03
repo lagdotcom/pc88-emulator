@@ -393,19 +393,30 @@ Roughly ordered by what's blocking what.
   (`sr-n80`, `sr-n88`, `sr-e0..e3`, `sr-font`, `sr-kanji2`) match
   every md5 in the variant config and the loader accepts them.
   `--machine=sr` is now usable end-to-end.
+- [x] **`IrqController` mask defaults to all-masked (real-silicon
+  reset state)**. We were defaulting `mask = 0xFF` so the VBL pump
+  fired its first IRQ as soon as the cycle counter passed
+  ~66 kHz. mkI N88 happens to program the mask to 0 fast enough
+  to avoid the race; SR N88 takes longer between the LDIR that
+  installs the default IM-1 handler at RAM[0xE669] (a `JP 0`
+  reset trampoline) and the eventual `OUT (0xE6), 0` that masks
+  VBL. The race fired a VBL IRQ in the gap, the `JP 0xE669` at
+  vector 0x0038 trampolined into `JP 0`, and SR boot looped on
+  its own boot prologue. Defaulting `mask = 0` matches real
+  silicon and unblocks the SR boot from the IRQ-induced reset.
+  `pc88-runner` test that wrote VBL-enabled implicitly now
+  writes `OUT (0xe6), 0x04` explicitly.
 - [ ] **mkII SR boots to BASIC banner**. `--machine=sr` (no disk)
   boots N-BASIC cleanly to the "NEC PC-8001 BASIC Ver 1.5"
-  banner. **N88 mode does not yet work** — `--basic=n88` (or
-  inserting a disk, which auto-flips to N88-DISK-BASIC) ends with
-  main spinning in the RST-28 polling loop at sr-n88 0x2089
-  (poll `(0xEC43) == 0x2F`) without writing TVRAM. Disk init
-  itself completes — the SPECIFY+RECALIBRATE+SEEK per-drive flow
-  runs through and the sub-CPU returns to its 0x00CC polling
-  loop. The block must be a missing SR-specific chip surface:
-  YM2203 sound init, V2-mode CRTC bits, the analogue palette
-  registers, or the SR's IRQ priority encoder. Recipe at
-  `dbg/sr-trace.dbg` captures the call chain. This is the
-  prerequisite to using SR's real sector-IPL path on disk games.
+  banner. With the IRQ-mask default fix above, SR N88 mode is no
+  longer trapped in a reset loop and now reaches the soft-key
+  label area (`load "  auto  go to  list  run`). It still
+  doesn't print the banner / "How many files?" prompt though —
+  TVRAM oscillates between "labels visible" and "blank" depending
+  on the budget, suggesting another race or a missing chip
+  surface (likely YM2203 / V2-mode CRTC / analogue palette).
+  This is the prerequisite to using SR's real sector-IPL path on
+  disk games.
 - [ ] **Disk auto-boot — needs SR N88 banner first OR keyboard
   input simulation on mkI**. Investigation finding: the PC-8801
   mkI BIOS does **not** have an automatic boot-sector IPL path.
