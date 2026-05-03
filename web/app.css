@@ -274,3 +274,11 @@ button:disabled { background: #555; cursor: not-allowed; }
   white-space: pre;
 }
 .import-syms-out:empty { display: none; }
+
+/* Disk panel — drag/drop highlight when a file is being dragged
+   over the panel. Subtle outline so the user notices without the
+   panel jumping around. */
+.disks-panel.dnd-hover {
+  outline: 2px dashed #ffd166;
+  outline-offset: -2px;
+}

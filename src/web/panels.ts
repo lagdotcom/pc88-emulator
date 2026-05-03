@@ -580,6 +580,120 @@ export interface ImportSymsResult {
   reason?: string;
 }
 
+// Per-drive insertion summary the worker pushes on boot + after
+// every insert/eject. The UI just renders the list — there's no
+// separate "drive count" because the worker already knows how
+// many drives are wired (variant config + force-enable on web).
+export interface DiskSlot {
+  inserted: boolean;
+  name?: string;
+  mediaType?: string;
+}
+
+// Load + eject D88 disks at runtime. Wraps a hidden `<input
+// type="file" multiple>` so users can browse, plus drag-and-drop
+// onto the panel area. First drive is the default insert target;
+// subsequent files go to drive 1 (and beyond if the variant has
+// more bays). Each row gets a per-drive eject button when a disk
+// is mounted.
+export type InsertDiskRequest = (
+  drive: number,
+  bytes: ArrayBuffer,
+  name: string,
+) => void;
+export type EjectDiskRequest = (drive: number) => void;
+
+export class DiskPanel {
+  readonly element: HTMLElement;
+  private readonly list: HTMLUListElement;
+
+  constructor(
+    private readonly onInsert: InsertDiskRequest,
+    private readonly onEject: EjectDiskRequest,
+  ) {
+    this.element = document.createElement("section");
+    this.element.className = "panel disks-panel";
+    const heading = document.createElement("h2");
+    heading.textContent = "Disks";
+    this.element.appendChild(heading);
+
+    const form = document.createElement("form");
+    form.className = "panel-add-form";
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".d88,.D88";
+    input.multiple = true;
+    const submit = document.createElement("button");
+    submit.type = "button";
+    submit.textContent = "Insert";
+    submit.addEventListener("click", () => {
+      void this.handleFiles(input.files);
+      input.value = "";
+    });
+    form.appendChild(input);
+    form.appendChild(submit);
+    this.element.appendChild(form);
+
+    // Drag-and-drop onto the panel — friendlier than the file
+    // picker for "drag this game from your downloads folder".
+    this.element.addEventListener("dragover", (ev) => {
+      ev.preventDefault();
+      this.element.classList.add("dnd-hover");
+    });
+    this.element.addEventListener("dragleave", () => {
+      this.element.classList.remove("dnd-hover");
+    });
+    this.element.addEventListener("drop", (ev) => {
+      ev.preventDefault();
+      this.element.classList.remove("dnd-hover");
+      const files = ev.dataTransfer?.files;
+      if (files) void this.handleFiles(files);
+    });
+
+    this.list = document.createElement("ul");
+    this.list.className = "watch-list";
+    this.element.appendChild(this.list);
+  }
+
+  private async handleFiles(files: FileList | null): Promise<void> {
+    if (!files || files.length === 0) return;
+    let drive = 0;
+    for (const file of files) {
+      const buf = await file.arrayBuffer();
+      this.onInsert(drive, buf, file.name);
+      drive++;
+    }
+  }
+
+  render(drives: DiskSlot[]): void {
+    this.list.textContent = "";
+    if (drives.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "watch-empty";
+      empty.textContent = "(no drives — variant has no FDD-IF)";
+      this.list.appendChild(empty);
+      return;
+    }
+    for (let i = 0; i < drives.length; i++) {
+      const d = drives[i]!;
+      const li = document.createElement("li");
+      const text = document.createElement("span");
+      const status = d.inserted ? d.name ?? "(unnamed)" : "(empty)";
+      text.textContent = `drive ${i}: ${status}`;
+      li.appendChild(text);
+      if (d.inserted) {
+        const ejectBtn = document.createElement("button");
+        ejectBtn.type = "button";
+        ejectBtn.textContent = "×";
+        ejectBtn.title = "Eject disk";
+        ejectBtn.addEventListener("click", () => this.onEject(i));
+        li.appendChild(ejectBtn);
+      }
+      this.list.appendChild(li);
+    }
+  }
+}
+
 export class ImportSymsPanel {
   readonly element: HTMLElement;
   private readonly out: HTMLPreElement;

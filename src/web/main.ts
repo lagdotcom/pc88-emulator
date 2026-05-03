@@ -8,6 +8,7 @@ import { openStore } from "./opfs.js";
 import {
   BreakpointsPanel,
   DisasmPanel,
+  DiskPanel,
   ImportSymsPanel,
   MemoryPanel,
   RegistersPanel,
@@ -53,6 +54,7 @@ interface RunningUI {
   watches: WatchesPanel;
   stack: StackPanel;
   importSyms: ImportSymsPanel;
+  disks: DiskPanel;
   repl: ReplPanel;
 }
 
@@ -105,6 +107,9 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
       case "importSymsResult":
         ui.importSyms.render(msg.results);
         break;
+      case "disks":
+        ui.disks.render(msg.drives);
+        break;
       case "error":
         ui.status.textContent = `worker error: ${msg.message}`;
         setRunUi(ui, false);
@@ -139,8 +144,17 @@ async function boot(req: BootRequest, root: HTMLElement): Promise<void> {
   send(worker, { type: "run" });
 }
 
-function send(w: Worker, msg: WorkerInbound): void {
-  w.postMessage(msg);
+function send(
+  w: Worker,
+  msg: WorkerInbound,
+  transfer: Transferable[] = [],
+): void {
+  // Optional transfer list — currently only insertDisk uses it (the
+  // D88 buffer hops to the worker without structured-clone). All
+  // other inbounds are small enough that the transfer arg is just
+  // an empty array.
+  if (transfer.length > 0) w.postMessage(msg, transfer);
+  else w.postMessage(msg);
 }
 
 function renderRunningView(
@@ -210,6 +224,11 @@ function renderRunningView(
   const importSyms = new ImportSymsPanel((files) => {
     send(worker, { type: "importSyms", files });
   });
+  const disks = new DiskPanel(
+    (drive, bytes, name) =>
+      send(worker, { type: "insertDisk", drive, bytes, name }, [bytes]),
+    (drive) => send(worker, { type: "ejectDisk", drive }),
+  );
   const repl = new ReplPanel(sendCommand);
   panels.appendChild(registers.element);
   panels.appendChild(disasm.element);
@@ -218,6 +237,7 @@ function renderRunningView(
   panels.appendChild(watches.element);
   panels.appendChild(stack.element);
   panels.appendChild(importSyms.element);
+  panels.appendChild(disks.element);
   panels.appendChild(repl.element);
   root.appendChild(panels);
 
@@ -249,6 +269,7 @@ function renderRunningView(
     watches,
     stack,
     importSyms,
+    disks,
     repl,
   };
 }

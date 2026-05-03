@@ -569,7 +569,13 @@ Roughly ordered by what's blocking what.
   focus. Symbol files persist in OPFS and feed disasm
   resolution; an "Import labels" panel takes one or more `.sym`
   uploads and merges them into the live tables, routing each
-  file by `# md5:` header → filename stem → explicit scope.
+  file by `# md5:` header → filename stem → explicit scope. A
+  "Disks" panel takes D88 file uploads (file picker or
+  drag-and-drop) and inserts them at runtime — first dropped
+  file goes to drive 0, second to drive 1, etc. Web boots
+  pass `enableDiskSubsystem: true` unconditionally so any
+  variant that ships a disk ROM can accept inserts; eject
+  buttons clear the drive and stop the motor.
   Native monospace font for now; a CG-ROM glyph atlas is
   deferred until the kanji ROM image lands. See "Web UI
   architecture" below for module layout + gotchas.

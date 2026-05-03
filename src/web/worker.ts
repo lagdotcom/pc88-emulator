@@ -1,4 +1,5 @@
 import { disassemble } from "../chips/z80/disasm.js";
+import { parseD88 } from "../disk/d88.js";
 import {
   callOpLength,
   type DebugState,
@@ -51,6 +52,10 @@ interface State {
   // Held alongside `syms` because the `label` command needs the
   // ROM bytes to compute md5s for first-mutation file seeding.
   loadedRoms: LoadedROMsLike | null;
+  // Per-drive human-readable names (filename or D88 image header).
+  // FloppyDrive.snapshot() doesn't include disk metadata, so the
+  // worker tracks them separately for the DiskPanel render.
+  diskNames: (string | undefined)[];
 }
 
 // Minimal alias of LoadedROMs — pulled in via debug.ts opts so the
@@ -199,6 +204,22 @@ function postTick(s: State, type: "tick" | "stopped", reason?: string): void {
   post(msg, [pixelsBuf]);
 }
 
+// Snapshot per-drive insertion state for the DiskPanel. Sent on
+// boot (so the panel renders the empty rows) and on any
+// insertDisk / ejectDisk so the UI updates without polling.
+// We keep the human-readable name on `state.diskNames` because
+// the FloppyDrive snapshot intentionally doesn't carry the parsed
+// Disk's metadata (it's owned by the disk subsystem; the drive
+// just tracks motor / cylinder / rotation).
+function postDisks(s: State): void {
+  const drives = s.machine.floppy.map((d, i) => {
+    if (!d.hasDisk()) return { inserted: false };
+    const name = s.diskNames[i];
+    return name ? { inserted: true, name } : { inserted: true };
+  });
+  post({ type: "disks", drives });
+}
+
 function postPeek(s: State, addr: u16, count: number): void {
   const c = Math.max(0, Math.min(0x10000, count));
   const buf = new ArrayBuffer(c);
@@ -271,7 +292,14 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
   const roms = new Map<ROMID, Uint8Array>();
   for (const [id, buf] of msg.roms) roms.set(id, new Uint8Array(buf));
   const loaded = loadRomsFromMap(msg.config, roms, md5);
-  const machine = new PC88Machine(msg.config, loaded);
+  // Always force the disk subsystem on for web boots. Variants like
+  // mkI default to no internal FDD-IF, but the web UI needs to be
+  // able to insert a D88 at runtime regardless. The machine wires
+  // sub-CPU + PPI + FDC only when `roms.disk` is also loaded —
+  // variants that don't ship a disk ROM stay disk-less.
+  const machine = new PC88Machine(msg.config, loaded, {
+    enableDiskSubsystem: true,
+  });
   machine.reset();
   const debug = makeDebugState();
   // installWatchHooks needs a `syms` slot for log-line label
@@ -286,11 +314,13 @@ function handleBoot(msg: Extract<WorkerInbound, { type: "boot" }>): void {
     debug,
     syms: null,
     loadedRoms: loaded,
+    diskNames: machine.floppy.map(() => undefined),
   };
   state = s;
   log.info(`booted ${msg.config.model}`);
   post({ type: "ready" });
   postTick(s, "tick");
+  postDisks(s);
   // Kick off OPFS-backed symbol-file load. Surfaces a "labels
   // loaded" line on the REPL when it lands; failures are
   // non-fatal.
@@ -441,6 +471,63 @@ workerSelf.addEventListener("message", (ev: MessageEvent<WorkerInbound>) => {
         break;
       case "keysAllUp":
         if (state) state.machine.keyboard.releaseAll();
+        break;
+      case "insertDisk":
+        if (state) {
+          if (state.machine.floppy.length === 0) {
+            post({
+              type: "out",
+              text: `  insert disk: variant has no FDD-IF (no disk ROM loaded)\n`,
+            });
+            break;
+          }
+          if (msg.drive < 0 || msg.drive >= state.machine.floppy.length) {
+            post({
+              type: "out",
+              text: `  insert disk: drive ${msg.drive} out of range (0..${state.machine.floppy.length - 1})\n`,
+            });
+            break;
+          }
+          try {
+            const disks = parseD88(new Uint8Array(msg.bytes));
+            if (disks.length === 0) {
+              post({
+                type: "out",
+                text: `  insert disk: ${msg.name ?? "(unnamed)"} contains no D88 images\n`,
+              });
+              break;
+            }
+            state.machine.insertDisk(msg.drive, disks[0]!);
+            const display =
+              msg.name ?? disks[0]!.name ?? `disk-${msg.drive}`;
+            state.diskNames[msg.drive] = display;
+            post({
+              type: "out",
+              text: `  drive ${msg.drive} ← ${display} (${disks[0]!.mediaType} ${disks[0]!.cylinders}×${disks[0]!.heads})\n`,
+            });
+            postDisks(state);
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            post({ type: "out", text: `  insert disk failed: ${message}\n` });
+          }
+        }
+        break;
+      case "ejectDisk":
+        if (state) {
+          const drive = state.machine.floppy[msg.drive];
+          if (!drive) {
+            post({
+              type: "out",
+              text: `  eject disk: drive ${msg.drive} out of range\n`,
+            });
+            break;
+          }
+          drive.eject();
+          drive.motorOn = false;
+          state.diskNames[msg.drive] = undefined;
+          post({ type: "out", text: `  drive ${msg.drive} ejected\n` });
+          postDisks(state);
+        }
         break;
       case "importSyms":
         if (state && state.syms) {

@@ -19,6 +19,22 @@ export type WorkerInbound =
   | { type: "peek"; addr: u16; count: number }
   | { type: "command"; line: string }
   | {
+      // Insert a parsed D88 image into a drive. The UI reads the
+      // file as an ArrayBuffer and ships it as a transferable so a
+      // 1 MB disk doesn't structured-clone. Worker parses with
+      // parseD88, takes image 0 (multi-image swap is a future
+      // refinement), and calls machine.insertDisk(drive, disk).
+      // Failure surfaces as an `out` line on the REPL.
+      type: "insertDisk";
+      drive: number;
+      bytes: ArrayBuffer;
+      // Optional filename for the REPL message + the DiskPanel
+      // status text. Just a label — the worker doesn't use it for
+      // anything else.
+      name?: string;
+    }
+  | { type: "ejectDisk"; drive: number }
+  | {
       // PC-88 keyboard matrix slot (row 0..15, col 0..7) plus
       // press/release direction. The UI thread translates JS
       // KeyboardEvent.code via keymap.ts before posting.
@@ -189,6 +205,14 @@ export type WorkerOutbound =
   // Buffered stdout from the worker's debugger dispatch — flushed in
   // chunks so the REPL pane can append plain text.
   | { type: "out"; text: string }
+  // Disk subsystem status: emitted on insertDisk / ejectDisk so the
+  // UI's DiskPanel can render the per-drive label. Shipped as a
+  // full snapshot of all attached drives — small and saves the UI
+  // having to track per-drive state.
+  | {
+      type: "disks";
+      drives: Array<{ inserted: boolean; name?: string; mediaType?: string }>;
+    }
   // Per-file result of an `importSyms` request — the UI surfaces this
   // so the user can see what got matched, what merged, and what
   // needs a manual destination override.
