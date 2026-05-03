@@ -607,9 +607,22 @@ Roughly ordered by what's blocking what.
   has 4096-colour analogue palette (port 0x32 bit 5 = `PMODE_ANALOG`,
   programmed at port 0x54-0x5B); V2 mode bumps to 640×400 with
   doubled GVRAM. Both extend the same composite path.
-- [ ] **YM2203 / YM2608 sound generation**. `YM2203.ts` latches
-  register writes (0x44 = addr, 0x45 = data) but doesn't generate
-  audio. Needs FM synth + SSG + per-channel mixer.
+- [x] **YM2203 timer A/B + SOUND IRQ wiring**. `YM2203.ts` now
+  models the chip's two timers (`T_A = (1024 - NA) × 72 cycles`,
+  `T_B = (256 - NB) × 1152 cycles`), the mode register at 0x27
+  (LOAD A/B, IRQ A/B, RESET A/B), and asserts /IRQ on overflow.
+  PC88Machine wires the chip's `onIrq` through
+  `IrqController.soundMasked()` (mask register at 0xE6 bit 1)
+  before requesting the Z80 IRQ with vector 0x02 (per μPD8214
+  priority encoder mapping). The runner + the debug single-step
+  pump both call `opn.tick(delta)` after each main-CPU
+  instruction. End-to-end test in pc88-boot.test.ts programs the
+  timer + irq mask, EI/HALTs, and confirms the IRQ vectors at
+  0x0038 in IM 1. Status read at port 0x45 returns the timer
+  overflow flags (bit 0 = TA, bit 1 = TB).
+- [ ] **YM2203 / YM2608 sound generation**. Timers + IRQ done
+  (above); FM synth + SSG + per-channel mixer is the
+  remaining work for actual audio output.
 - [ ] **Real serial / cassette traffic** through the μPD8251 USART
   stubs. Three channels at 0x20/0xC0/0xC2 currently latch mode +
   command bytes and return idle status — enough for boot init

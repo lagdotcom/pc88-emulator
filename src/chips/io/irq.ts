@@ -75,6 +75,16 @@ export class IrqController {
     return (this.mask & IRQ_MASK.VBL) === 0;
   }
 
+  // Masking accessor for the YM2203 /IRQ output. Mirrors `vblMasked`:
+  // YM2203 always asserts /IRQ on a timer overflow once the chip's
+  // own ENABLE bit (mode reg 0x27 bits 2-3) is set, but the PC-88
+  // IRQ-controller mask register at 0xE6 still gates the signal
+  // before it reaches the Z80. SR's BIOS programs this mask = 0x02
+  // (SOUND only) shortly after EI.
+  soundMasked(): boolean {
+    return (this.mask & IRQ_MASK.SOUND) === 0;
+  }
+
   register(bus: IOBus): void {
     bus.register(0xe4, {
       name: "irq/priority",

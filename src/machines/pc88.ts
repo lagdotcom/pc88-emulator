@@ -43,6 +43,10 @@ const VBL_PULSE_CYCLES = Math.round(Z80_HZ * 0.0008); // ~0.8 ms VBL pulse
 // IM 2 jump table at I:0x00 + vector; reading PC from I:0x04 means
 // VBL handlers live at the third pair of bytes.
 const VBL_IRQ_VECTOR = 0x04;
+// SOUND vector — YM2203 timer overflow asserts the same priority
+// encoder line. SR boots with mask=0x02 (SOUND only enabled) so this
+// is the first IRQ source the BIOS expects to fire post-EI.
+const SOUND_IRQ_VECTOR = 0x02;
 
 // Constructor options that don't belong in the variant config —
 // runtime overrides chosen at machine-build time.
@@ -148,6 +152,20 @@ export class PC88Machine {
     // bytes per port — see DisplayRegisters.setPMode for the toggle
     // reset that keeps "first byte after PMODE flip = low byte".
     this.sysctrl.onPModeChange = (pmode) => this.displayRegs.setPMode(pmode);
+
+    // YM2203 timer-overflow → SOUND IRQ pipeline. The chip asserts
+    // /IRQ on overflow; we gate it through the irq-controller mask
+    // here so the Z80 only sees the IRQ when the BIOS has programmed
+    // bit 1 of port 0xE6. SR boot programs mask=0x02 shortly after
+    // its EI, so this is the first IRQ source to drive the boot
+    // forward post-disk-init.
+    if (this.opn) {
+      this.opn.onIrq = () => {
+        if (!this.irq.soundMasked()) {
+          this.cpu.requestIrq(SOUND_IRQ_VECTOR);
+        }
+      };
+    }
 
     this.sysctrl.register(this.ioBus);
     this.keyboard.register(this.ioBus);
@@ -416,14 +434,15 @@ export function runMachine(
 
     const before = cpu.cycles;
     cpu.runOneOp();
+    const delta = (cpu.cycles - before) as Cycles;
     if (subcpu) {
       // Both CPUs are 4 MHz on real silicon — drive the sub for the
       // same cycle delta the main just consumed. runCycles bails on
       // sub-side HALT, so a sub-CPU waiting on a non-existent FDC IRQ
       // doesn't burn the budget.
-      const delta = cpu.cycles - before;
-      subcpu.runCycles(delta as Cycles);
+      subcpu.runCycles(delta);
     }
+    machine.opn?.tick(delta);
     ops++;
     if (opts.onProgress && opts.onProgress(ops)) {
       stopReason = "stopped";

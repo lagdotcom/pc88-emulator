@@ -387,13 +387,11 @@ export function trackedStep(machine: PC88Machine, state: DebugState): void {
 
   const beforeCycles = machine.cpu.cycles;
   stepOneInstruction(machine);
+  const delta = (machine.cpu.cycles - beforeCycles) as Cycles;
   if (machine.subcpu) {
-    runSubCyclesTracked(
-      machine,
-      state,
-      (machine.cpu.cycles - beforeCycles) as Cycles,
-    );
+    runSubCyclesTracked(machine, state, delta);
   }
+  machine.opn?.tick(delta);
   state.ops++;
 
   const postPC = machine.cpu.regs.PC;
