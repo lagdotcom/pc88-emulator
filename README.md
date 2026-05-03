@@ -392,6 +392,18 @@ Roughly ordered by what's blocking what.
   under `--boot=disk` (disk-BASIC starts loading the program), but
   the actual auto-run / IPL handoff is still incomplete — the
   remaining gap is documented below.
+- [x] **CLI `--dip30=NN` / `--dip31=NN` arbitrary DIP overrides**.
+  Power-user knob for poking DIP bits that don't have a friendlier
+  flag. The variant config still ships factory defaults; `--basic=`
+  and `--boot=` flip specific bits as before; the new flags replace
+  the byte wholesale AFTER the per-feature overrides, so they stay
+  the final word. Hex (`0xff`, `ff`) and decimal (`255`) accepted,
+  same shape as `--break=`. Env fallbacks `PC88_DIP30` / `PC88_DIP31`.
+  Surfaced examples in `--help`: `--dip31=0x69` puts SR into V2
+  video mode (port31 bit 7 = 0 routes the BIOS through the
+  analogue-palette / 0x3D7B dispatch path); flipping the model-
+  specific high bits (6, 7) experimentally without rebuilding the
+  variant config.
 - [x] **mkII SR ROM dump landed locally**. The eight SR ROMs
   (`sr-n80`, `sr-n88`, `sr-e0..e3`, `sr-font`, `sr-kanji2`) match
   every md5 in the variant config and the loader accepts them.
