@@ -127,6 +127,13 @@ export class SystemController {
   private mmode: 0 | 1 = 0;
   private rmode: 0 | 1 = 0;
 
+  // Latched PMODE bit (port 0x32 bit 5 / PORT32.PMODE_ANALOG). Tracked
+  // here only so we can fire `onPModeChange` on the rising/falling edge
+  // — the actual palette protocol lives in DisplayRegisters. SR boots
+  // with PMODE=1 (analogue) via `OUT (0x32),0xA8`; pre-SR variants
+  // never write port 0x32 and stay at the digital default.
+  private pmode: 0 | 1 = 0;
+
   // Latched port 0x70 ("Text Window"). High byte of a 1 KB ROM
   // window the BIOS can map into 0x8000-0x83FF when MMODE=0,
   // RMODE=0. Source-ROM details aren't yet confirmed (likely a
@@ -278,6 +285,14 @@ export class SystemController {
    * toggle the BIOS uses to switch between the two TVRAM sources;
    * we'll wire that to PC88MemoryMap when SR boot work starts.
    */
+  // Optional notify hook: fires whenever bit 5 of port 0x32 (PMODE)
+  // changes value. PC88Machine wires it to DisplayRegisters so the
+  // analogue palette's 2-byte protocol toggles in lockstep with the
+  // BIOS programming the SR's V2-mode dispatch (port 0x32 = 0xA8).
+  // Null when nothing's listening; called only on the rising/falling
+  // edge so listeners don't have to compare.
+  onPModeChange: ((pmode: 0 | 1) => void) | null = null;
+
   private handle32(v: u8): void {
     const eromsl = v & PORT32.EROMSL_MASK;
     const scroutLabels: Record<number, string> = {
@@ -288,13 +303,18 @@ export class SystemController {
     };
     const scrout = scroutLabels[v & PORT32.SCROUT_MASK];
     const tmode = v & PORT32.TMODE_MAIN_RAM ? "main-ram" : "dedicated-tvram";
-    const pmode = v & PORT32.PMODE_ANALOG ? "analog" : "digital";
+    const pmode = (v & PORT32.PMODE_ANALOG ? 1 : 0) as 0 | 1;
     const gvam = v & PORT32.GVAM_ALU ? "alu" : "independent";
     const sintm = v & PORT32.SINTM_MASK ? "masked" : "enabled";
 
     log.info(
-      `0x32 write: eromsl=${eromsl} scrout=${scrout} tmode=${tmode} pmode=${pmode} gvam=${gvam} sintm=${sintm}`,
+      `0x32 write: eromsl=${eromsl} scrout=${scrout} tmode=${tmode} pmode=${pmode === 1 ? "analog" : "digital"} gvam=${gvam} sintm=${sintm}`,
     );
+
+    if (pmode !== this.pmode) {
+      this.pmode = pmode;
+      this.onPModeChange?.(pmode);
+    }
 
     // bits 0-1 select the active extension-ROM slot, but they don't
     // gate enablement. The enable signal lives on port 0x71 (one-hot

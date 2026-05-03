@@ -122,6 +122,39 @@ describe("SystemController EROM banking", () => {
   });
 });
 
+describe("SystemController PMODE callback (port 0x32 bit 5)", () => {
+  it("fires onPModeChange only on rising / falling edges, not on every write", () => {
+    const { bus, sysctrl } = setup();
+    const events: (0 | 1)[] = [];
+    sysctrl.onPModeChange = (p) => events.push(p);
+
+    // First write with PMODE=0 → no event (already at default 0).
+    bus.write(0x32, 0x00);
+    expect(events).toEqual([]);
+
+    // PMODE=1: rising edge.
+    bus.write(0x32, 0x20);
+    expect(events).toEqual([1]);
+
+    // Same PMODE again with other bits noisy: no event.
+    bus.write(0x32, 0xa8); // PMODE=1, bits 3+5+7 set
+    expect(events).toEqual([1]);
+
+    // Falling edge.
+    bus.write(0x32, 0x00);
+    expect(events).toEqual([1, 0]);
+  });
+
+  it("missing listener (null) doesn't crash on PMODE changes", () => {
+    const { bus, sysctrl } = setup();
+    sysctrl.onPModeChange = null;
+    expect(() => {
+      bus.write(0x32, 0x20);
+      bus.write(0x32, 0x00);
+    }).not.toThrow();
+  });
+});
+
 describe("SystemController port 0x40 (status / beeper)", () => {
   it("VBL bit on port 0x40 read tracks setVBlank", () => {
     const { bus, sysctrl } = setup();

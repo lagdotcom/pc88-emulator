@@ -142,6 +142,13 @@ export class PC88Machine {
     this.misc = new MiscPorts();
     this.displayRegs = new DisplayRegisters(this.memoryMap);
 
+    // Bridge sysctrl PMODE (port 0x32 bit 5) to the palette protocol
+    // mode in DisplayRegisters. SR's V2 boot writes 0xA8 here, flipping
+    // analogue mode on, and the palette init that follows expects two
+    // bytes per port — see DisplayRegisters.setPMode for the toggle
+    // reset that keeps "first byte after PMODE flip = low byte".
+    this.sysctrl.onPModeChange = (pmode) => this.displayRegs.setPMode(pmode);
+
     this.sysctrl.register(this.ioBus);
     this.keyboard.register(this.ioBus);
     this.crtc.register(this.ioBus);

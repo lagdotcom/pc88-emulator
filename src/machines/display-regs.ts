@@ -75,10 +75,21 @@ export interface DisplayRegistersSnapshot {
   showGVRAM3: boolean;
   // 0..3 — the latched GVRAM plane index for readback at 0x5C.
   vramSel: 0 | 1 | 2 | 3;
-  // Palette RAM at ports 0x54-0x5B. Eight entries × 1 byte each;
-  // digital-mode variants ignore the contents, analogue-mode (SR+)
-  // splits each entry into 4-bit R/G/B fields.
-  palram: number[];
+  // 0 = digital palette (1 byte/entry), 1 = analogue (2 bytes/entry).
+  // Driven by sysctrl port 0x32 bit 5 (PMODE) via setPMode().
+  pmode: 0 | 1;
+  // Palette RAM at ports 0x54-0x5B. Eight entries:
+  //   digital  → low byte holds the 3-bit GRB code (bits 0-2)
+  //   analogue → low byte = G+R packed, high byte = B + sentinel
+  // The two halves are kept distinct in the snapshot so a future
+  // savestate restore (and the live renderer once it lands) can pick
+  // out either field without re-deriving from a packed value.
+  palramLow: number[];
+  palramHigh: number[];
+  // Per-port toggle state for the 2-byte analogue protocol. `true`
+  // = next write to that port lands in palramHigh; `false` = next
+  // write lands in palramLow. Reset on PMODE flip.
+  palramHighNext: boolean[];
 }
 
 export class DisplayRegisters {
@@ -89,9 +100,38 @@ export class DisplayRegisters {
   showGVRAM2 = false;
   showGVRAM3 = false;
   vramSel: 0 | 1 | 2 | 3 = 0;
-  readonly palram = new Uint8Array(8);
+  // Palette mode. 0 = digital (mkI/mkII; 1 byte/port, 8-colour fixed
+  // GRB), 1 = analogue (SR+; 2 bytes/port, 8 levels each of R/G/B).
+  // Toggled by sysctrl writing port 0x32 bit 5 (see setPMode).
+  pmode: 0 | 1 = 0;
+  // Palette RAM. Each of the 8 entries has a low + high byte:
+  //   - digital mode: only `palramLow` is meaningful; high stays 0.
+  //     Pre-SR BIOS writes 1 byte per port in arbitrary order.
+  //   - analogue mode: low first (G+R), high second (B + sentinel).
+  //     SR's V2-mode init at sr-n88 0x3D87 calls 0x3962, which loops
+  //     `OUT (C),A` twice per port with INC HL between — i.e. two
+  //     consecutive writes to the same port with the second being
+  //     the high byte. Per-port toggle below tracks "next byte".
+  readonly palramLow = new Uint8Array(8);
+  readonly palramHigh = new Uint8Array(8);
+  // `true` for entry i means the next write to port (0x54+i) lands
+  // in palramHigh[i]; `false` means it lands in palramLow[i] and
+  // flips the flag. All 8 reset to `false` whenever PMODE flips
+  // (see setPMode) so a digital→analogue transition starts each
+  // port in a known "expecting low byte" state.
+  readonly palramHighNext: boolean[] = new Array(8).fill(false);
 
   constructor(private readonly memoryMap: PC88MemoryMap) {}
+
+  // Called by SystemController whenever port 0x32 bit 5 (PMODE)
+  // changes value. Resets the per-port toggle state so the BIOS
+  // can rely on "first byte after pmode change is low byte" — that
+  // matches the SR boot sequence at sr-n88 0x3D7B which writes
+  // 0xA8 (PMODE=1) before issuing the first palette byte.
+  setPMode(pmode: 0 | 1): void {
+    this.pmode = pmode;
+    for (let i = 0; i < 8; i++) this.palramHighNext[i] = false;
+  }
 
   snapshot(): DisplayRegistersSnapshot {
     return {
@@ -102,7 +142,10 @@ export class DisplayRegisters {
       showGVRAM2: this.showGVRAM2,
       showGVRAM3: this.showGVRAM3,
       vramSel: this.vramSel,
-      palram: Array.from(this.palram),
+      pmode: this.pmode,
+      palramLow: Array.from(this.palramLow),
+      palramHigh: Array.from(this.palramHigh),
+      palramHighNext: this.palramHighNext.slice(),
     };
   }
 
@@ -114,7 +157,14 @@ export class DisplayRegisters {
     this.showGVRAM2 = s.showGVRAM2;
     this.showGVRAM3 = s.showGVRAM3;
     this.vramSel = s.vramSel;
-    if (s.palram) for (let i = 0; i < 8; i++) this.palram[i] = s.palram[i] ?? 0;
+    this.pmode = s.pmode ?? 0;
+    if (s.palramLow)
+      for (let i = 0; i < 8; i++) this.palramLow[i] = s.palramLow[i] ?? 0;
+    if (s.palramHigh)
+      for (let i = 0; i < 8; i++) this.palramHigh[i] = s.palramHigh[i] ?? 0;
+    if (s.palramHighNext)
+      for (let i = 0; i < 8; i++)
+        this.palramHighNext[i] = s.palramHighNext[i] ?? false;
   }
 
   register(bus: IOBus): void {
@@ -148,8 +198,24 @@ export class DisplayRegisters {
       bus.register(port, {
         name: `display/pal${i}`,
         write: (_p, v) => {
-          this.palram[idx] = v;
-          log.info(`pal${idx} := 0x${byte(v)}`);
+          if (this.pmode === 1) {
+            // Analogue: alternate between the low (G+R) and high
+            // (B + sentinel) halves on each consecutive write to the
+            // same port. SR boot writes both halves back-to-back.
+            if (this.palramHighNext[idx]) {
+              this.palramHigh[idx] = v;
+              this.palramHighNext[idx] = false;
+              log.info(`pal${idx}H := 0x${byte(v)}`);
+            } else {
+              this.palramLow[idx] = v;
+              this.palramHighNext[idx] = true;
+              log.info(`pal${idx}L := 0x${byte(v)}`);
+            }
+          } else {
+            // Digital: single byte (3-bit GRB code in bits 0-2).
+            this.palramLow[idx] = v;
+            log.info(`pal${idx} := 0x${byte(v)}`);
+          }
         },
       });
     }

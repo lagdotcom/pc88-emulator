@@ -429,9 +429,26 @@ Roughly ordered by what's blocking what.
   doesn't print the banner / "How many files?" prompt though —
   TVRAM oscillates between "labels visible" and "blank" depending
   on the budget, suggesting another race or a missing chip
-  surface (likely YM2203 / V2-mode CRTC / analogue palette).
-  This is the prerequisite to using SR's real sector-IPL path on
-  disk games.
+  surface. The analogue-palette protocol is now in (PMODE bit on
+  port 0x32 → 2 byte/port writes at 0x54-0x5B, see "V2 palette"
+  below) and `--dip31=0x69` exercises the V2 dispatch path
+  (sr-n88 0x3D7B), but neither V1 nor V2 yet completes the boot.
+  Remaining suspects are YM2203 status/IRQ surface and the V2
+  CRTC programming. This is the prerequisite to using SR's real
+  sector-IPL path on disk games.
+- [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
+  (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
+  3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high
+  = B + sentinel). `DisplayRegisters` tracks per-port `highNext`
+  toggles; `setPMode(p)` resets all 8 toggles so the BIOS can
+  rely on "first byte after PMODE flip = low byte" (matches SR's
+  V2 init sequence at sr-n88 0x3D7B-0x3D87 → 0x3962). `SystemController`
+  fires `onPModeChange(0|1)` on rising/falling edges only;
+  `PC88Machine` wires it to `displayRegs.setPMode`. Snapshot
+  carries `pmode`, `palramLow`, `palramHigh`, `palramHighNext`
+  for round-trip. Renderer support for the new colour data still
+  TODO — the existing `DIGITAL_PALETTE` path stays in effect for
+  pre-SR variants.
 - [ ] **Disk auto-boot — needs SR N88 banner first OR keyboard
   input simulation on mkI**. Investigation finding: the PC-8801
   mkI BIOS does **not** have an automatic boot-sector IPL path.
