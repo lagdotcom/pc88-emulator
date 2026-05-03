@@ -19,7 +19,7 @@ import { pixelFrameToPNG } from "./machines/pc88-screenshot.js";
 import { loadRoms } from "./machines/rom-loader.js";
 import { VARIANTS_BY_NICKNAME } from "./machines/variants/index.js";
 import { MKI } from "./machines/variants/mk1.js";
-import { hex, parseAddrFlag } from "./tools.js";
+import { hex, parseAddrFlag, parseSICount } from "./tools.js";
 
 const DEFAULT_MAX_OPS = kOps(15);
 
@@ -113,7 +113,9 @@ function parseCliFlags(argv: string[]): CliFlags {
 
   const romDir = values["rom-dir"] ?? process.env.PC88_ROM_DIR ?? "roms";
   const maxOpsRaw = values["max-ops"] ?? process.env.PC88_MAX_OPS;
-  const maxOps = maxOpsRaw ? parseInt(maxOpsRaw, 10) : DEFAULT_MAX_OPS;
+  const maxOps = maxOpsRaw
+    ? (parseSICount(maxOpsRaw) ?? DEFAULT_MAX_OPS)
+    : DEFAULT_MAX_OPS;
 
   // Trace mode: CLI wins over env, "raw" beats "deduped" beats "off".
   const traceRaw = values["trace-io"] ?? process.env.PC88_TRACE_IO ?? null;
@@ -239,6 +241,7 @@ yarn pc88 — boot a PC-88 variant, dump TVRAM after a fixed op budget
                       editing the variant (n80 = N-BASIC, n88 = N88-BASIC)
   --rom-dir=PATH      ROM directory (default: roms; env: PC88_ROM_DIR)
   --max-ops=N         instruction budget (default: ${DEFAULT_MAX_OPS}; env: PC88_MAX_OPS)
+                      accepts SI suffixes: 50M = 50000000, 60k = 60000, 1.5G = 1.5e9
   --trace-io[=raw]    log every IN/OUT with PC; bare flag dedupes
                       consecutive identical lines, =raw shows them all
                       (env: PC88_TRACE_IO=1 / =raw)

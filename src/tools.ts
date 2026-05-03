@@ -82,3 +82,42 @@ export function parseAddrFlag(raw: string | undefined): number | null {
   const dec = parseInt(s, 10);
   return Number.isFinite(dec) ? dec & 0xffff : null;
 }
+
+// Parse a count-style number with optional SI suffix. Accepts plain
+// decimal ("1500"), hex with "0x" prefix ("0x100"), or a decimal
+// (possibly fractional) with one of the suffixes:
+//   k / K → ×1_000
+//   M     → ×1_000_000
+//   G / B → ×1_000_000_000
+// e.g. "50M" → 50_000_000, "1.5k" → 1500, "200M" → 200_000_000.
+// Whitespace and case variants are tolerated. Returns null on
+// garbage input. Used by `--max-ops`, `continue N`, and any other
+// "this can be a really big number, let me type it ergonomically"
+// path. Hex stays exact (no SI prefix) so address-shaped inputs
+// don't accidentally collide with the "B" suffix.
+export function parseSICount(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  if (s.length === 0) return null;
+  if (s.toLowerCase().startsWith("0x")) {
+    const n = parseInt(s.slice(2), 16);
+    return Number.isFinite(n) ? n : null;
+  }
+  const m = /^(-?[0-9]+(?:\.[0-9]+)?)\s*([kKmMgGbB]?)$/.exec(s);
+  if (!m) return null;
+  const value = parseFloat(m[1]!);
+  if (!Number.isFinite(value)) return null;
+  const mult: Record<string, number> = {
+    "": 1,
+    k: 1_000,
+    K: 1_000,
+    m: 1_000_000,
+    M: 1_000_000,
+    g: 1_000_000_000,
+    G: 1_000_000_000,
+    b: 1_000_000_000,
+    B: 1_000_000_000,
+  };
+  const factor = mult[m[2]!] ?? 1;
+  return Math.round(value * factor);
+}

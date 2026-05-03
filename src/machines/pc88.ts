@@ -285,6 +285,7 @@ export class PC88Machine {
         basicMode: this.memoryMap.basicMode,
         basicRomEnabled: this.memoryMap.basicROMEnabled,
         eromSlot: this.memoryMap.eromSlot,
+        eromEnabled: this.memoryMap.eromEnabled,
         vramEnabled: this.memoryMap.vramEnabled,
       },
       sysctrl: this.sysctrl.snapshot(),

@@ -134,7 +134,9 @@ yarn web:host            # static-serve web/ via local-server (regenerates the
 ```
 
 `yarn pc88` accepts CLI flags (`yarn pc88 --help` for the full list):
-`-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`,
+`-m`/`--machine`, `--basic=n80|n88`, `--rom-dir`, `--max-ops`
+(SI suffixes accepted: `--max-ops=50M`, `60k`, `1.5G` — same in
+the debugger's `continue [cycles]`),
 `--trace-io[=raw]`, `--raw-tvram`, `--log-file[=PATH]`,
 `-d`/`--debug`, `--break=ADDR`, `--script=PATH`,
 `--screenshot=PATH` (writes a PNG of the composited frame —
@@ -481,9 +483,37 @@ Roughly ordered by what's blocking what.
   `erom_dispatch_helper` bank-out) and 796 at sr-n88 0x3a66 (a
   second E-ROM bank-switch trampoline). With ~2 writes per
   dispatch call that's ~1594 distinct dispatch invocations
-  over 80M ops. Some higher-level state machine keeps re-entering
-  the dispatcher on each iteration. Next step is to find what
-  RAM-state condition is unsatisfied, causing the retry.
+  over 80M ops.
+  ROOT CAUSE FOUND — the boot loops because **the CPU's PC walks
+  off the end of TVRAM and wraps to 0x0000 (reset)**. Captured
+  the PC trace at the wraparound moment:
+  ```
+  ...ffea NOP, ffeb NOP, ..., ffff NOP, 0000 DI (reset_vector!)
+  ```
+  The CPU is executing the zero-fill bytes that
+  `init_video_clear` (sr-e0 0x6700) wrote across 0xC000-0xFFF7,
+  including the TVRAM half. Those NOPs slide PC to 0xFFFF, then
+  PC wraps to 0x0000 = `reset_vector`. Each "wrap-reset" re-runs
+  boot_full_init from scratch, which is why we see ~400 calls to
+  `sys_init_dispatch` (writing port 0x30 = 0x22 at PC 0x72d6).
+  The PROXIMATE cause is a CALL chain that lands at PC=0x7842
+  while sr-e0 is still mapped at 0x6000-0x7FFF — so a `RET` that
+  was pushed expecting to return into sr-n88 0x7842
+  (`boot_disk_detect: CALL sr_disk_detect`) instead reads sr-e0
+  0x7842 (`LD B,0x0B; POP HL; RET`). The mis-mapped POP+RET
+  unwinds to data bytes in sr-n88 0x00d6+, slides through them
+  to 0x00e9 = `CD 98 D6` (CALL 0xd698 → main RAM, currently
+  zero-filled by init_video_clear), CALL into NOPs, slides to
+  0xffff, wraps to 0x0000.
+  Verified at break 0x7842: chip state shows `erom slot=0
+  enabled=true` — confirming E-ROM was NOT correctly disabled
+  before the RET. Some E-ROM dispatch trampoline (likely the
+  0x3a35 family) is leaving E-ROM enabled on its return path
+  even though the exit-side `OUT (0x71), 0xFF` was supposed to
+  clear it. Next session: trace which dispatch site leaks the
+  E-ROM bank, and either fix the trampoline modelling in
+  sysctrl.ts or audit the BIOS exit path for an off-by-one in
+  the saved port-71 byte.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

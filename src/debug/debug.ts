@@ -22,7 +22,7 @@ import {
 } from "../machines/pc88.js";
 import type { PixelFrame } from "../machines/pc88-display.js";
 import type { LoadedROMs } from "../machines/pc88-memory.js";
-import { byte, word } from "../tools.js";
+import { byte, parseSICount, word } from "../tools.js";
 import {
   addLabel,
   addPortLabel,
@@ -51,7 +51,7 @@ export function setDebugWriter(fn: (s: string) => void): void {
 // Cap on instructions executed by `continue` / step-over to keep a
 // runaway BIOS from locking up the REPL. ~5M is comfortably more
 // than a full N-BASIC banner takes.
-const CONTINUE_MAX_OPS = mOps(5);
+const CONTINUE_MAX_OPS = mOps(80);
 
 // Factory for a fresh `DebugState`. Used by the CLI runDebug() and
 // the web worker so both paths start from an identical shape.
@@ -188,7 +188,8 @@ Stepping / running:
   s, step                 single-step one instruction
   n, next                 step over (CALL/RST → run until after the call)
   c, continue [cycles]    run until breakpoint / watch / halt / op cap;
-                          with a numeric arg, also stop after N CPU cycles
+                          with a numeric arg, also stop after N CPU cycles.
+                          SI suffixes accepted: 50M, 60k, 1.5G
   q, quit, exit           leave the debugger / end script
 `,
   break: `\
@@ -288,20 +289,12 @@ Type "help <topic>" for the full listing of a section:
 `;
 
 // Parse a cycle-count argument (no u16 wrap, can be larger than
-// 0xFFFF). Accepts the same syntaxes as parseAddr but returns the
-// full integer value rather than masking to 16 bits.
+// 0xFFFF). Decimal accepts SI suffixes (`50M`, `60k`, `1.5G`) so
+// "run for ~one frame's worth" doesn't require typing the zeros.
+// Hex (`0x...` or letters-present) stays exact.
 function parseCycleArg(raw: string): number | null {
-  const s = raw.trim().toLowerCase();
-  if (s.startsWith("0x")) {
-    const n = parseInt(s.slice(2), 16);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
-  if (/^[0-9a-f]+$/.test(s) && /[a-f]/.test(s)) {
-    const n = parseInt(s, 16);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  }
-  const n = parseInt(s, 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const n = parseSICount(raw);
+  return n !== null && n > 0 ? n : null;
 }
 
 // Hex parser that accepts "0xff", "ff", or decimal "255".
@@ -593,7 +586,7 @@ function printChips(machine: PC88Machine): void {
   const cfg = machine.config;
   writer(
     `  variant      : ${cfg.model}\n` +
-      `  basic mode   : ${snap.memoryMap.basicMode} (rom enabled=${snap.memoryMap.basicRomEnabled}, eromSlot=${snap.memoryMap.eromSlot})\n` +
+      `  basic mode   : ${snap.memoryMap.basicMode} (rom enabled=${snap.memoryMap.basicRomEnabled}, erom slot=${snap.memoryMap.eromSlot} enabled=${snap.memoryMap.eromEnabled})\n` +
       `  vram window  : ${snap.memoryMap.vramEnabled ? "on" : "off"}\n` +
       `  DIP 30/31    : ${byte(cfg.dipSwitches.port30)} / ${byte(cfg.dipSwitches.port31)}\n` +
       `  sys status   : ${byte(snap.sysctrl.systemStatus)} (DIP1=${byte(snap.sysctrl.dipSwitch1)} DIP2=${byte(snap.sysctrl.dipSwitch2)})\n` +
