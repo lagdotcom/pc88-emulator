@@ -1,7 +1,4 @@
-break 0x77f7
-continue 100000
-stack
-trace 16
-continue 1000000
-stack
+break 0x6f0a
+break 0x6f0d
+continue 30000000
 trace 16

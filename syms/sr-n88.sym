@@ -1,0 +1,58 @@
+# Symbol file for sr-n88. Discovered while diagnosing the SR-N88
+# boot path past the IRQ-mask reset loop. Many entries are shared
+# with mkI-n88 since the BIOS layout largely matches; SR-specific
+# entries are flagged with `(SR)` in the comment.
+# md5: 4f984e04a99d56c4cfe36115415d6eb8
+
+# --- Reset / boot vectors ---
+0x0000 reset_vector         ; DI; LD SP, 0xe1a0; JP boot_entry_sr
+0x0028 rst28_break_check    ; LD A,(0xec44); OR A; JP nz,0x2083
+0x0030 rst30_event_check    ; LD A,(0xeabd); CP 0x08; JP 0x1527
+0x0038 irq_im1_vector       ; JP 0xe669 (default RAM IRQ handler — `JP 0` after LDIR)
+
+# --- SR-specific boot entry (mkI dispatches differently) ---
+# 0x3BE5 reads DIP30 + DIP31 to choose 80-col, 40-col, or V2 mode.
+# Then JPs to a mode-specific block (0x3D6E / 0x3D71 / 0x3D7B)
+# which programs port 0x32 (misc_ctrl) and port 0x71 (EROM bank
+# select), then JPs back to the standard 0x77F7 boot prologue.
+0x3be5 boot_entry_sr        ; (SR) IN (0x30); RRCA — picks 80- vs 40-col mode dispatch
+0x3d6e boot_init_80col      ; (SR) 80-col mode boot path: SCROUT=optional, EROMSL=0
+0x3d71 boot_init_40col      ; (SR) 40-col mode boot path
+0x3d7b boot_init_v2         ; (SR) V2-mode boot path (HCOLOR set): PMODE=analog
+0x043d sr_hires_erom_init   ; (SR) maps HIGHRES DIP bit into port 0x32 EROMSL bit 0
+0x3aa6 erom_disable         ; OUT (0x71), 0xff — disables EROM mapping
+
+# --- Standard boot prologue (shared with mkI-n88) ---
+0x77f7 boot_prologue        ; DJNZ delay; read DIPs into 0xef7f; check port 0x09
+0x77a6 basic_mode_switch    ; RRCA;RET nc — switch BASIC mode if A bit 0 set
+0x7820 boot_full_init       ; SP=0xe5fe; LDIR vectors; per-stage init calls
+0x7842 boot_disk_detect     ; CALL 0x458f — disk detect dispatch
+0x458f sr_disk_detect       ; CALL 0x6f0a (EROM idx 0x1D); LD A,(0xec7d); RET z
+0x7856 boot_init_basic      ; CALL 0x4fa9 — BASIC workspace init
+0x785d boot_print_crlf      ; CALL 0x5a69 — CRLF before banner
+
+# --- Banner / startup print sequence (mostly shared) ---
+0x78aa print_files_prompt   ; LD HL, str_how_many_files; CALL print_string
+0x7984 str_how_many_files   ; "How many files(0-15)?"
+0x79be str_n88_banner_sr    ; "C N-88 BASIC Version 1.4\r\nCopyright (C) 1981 by Microsoft\r\n"
+0x5550 print_string         ; print NUL-terminated string at HL via RST 18
+
+# --- RST 28 polling-loop helper ---
+# Reads RAM[0xec43] and tests bit 7 (the "fresh data ready" flag).
+# Returns A=0xff if bit 7 was set, A=1 if clear. The break-key /
+# event-check chain calls this through the dispatch at 0x0028.
+0x2083 break_check_inner    ; LD A,(0xec43); CP 0x2f; RLA; SBC A,A; RET nz; INC A; RET
+0x2134 wait_with_break      ; busy-wait + RST 28 polling chain
+
+# --- E-ROM dispatch table at 0x6F02-0x6F0E ---
+# Four CALL erom_dispatch_helper sites with one-byte indices
+# 0x1A..0x1D between them. Helper at 0x4551 reads port 0x71
+# (EROM slot), pushes a restore trampoline at 0x4581, switches to
+# slot 0 (sr-e0 = N88-DISK-BASIC), reads a 16-bit pointer from
+# (0x600D + idx*2) and dispatches to it.
+0x6f02 erom_dispatch_1a     ; → sr-e0 0x752a
+0x6f06 erom_dispatch_1b     ; → sr-e0 0x74ee
+0x6f0a erom_dispatch_1c     ; → sr-e0 0x754f (drive-detect, called by sr_disk_detect)
+0x6f0e erom_dispatch_1d     ; → sr-e0 0x75a1
+0x4551 erom_dispatch_helper ; DI; CALL 0xedf3 (RAM hook); IN A,(0x71); switch slot 0
+0x4581 erom_bank_restore    ; trampoline that restores port 0x71 + EI on return
