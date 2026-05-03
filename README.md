@@ -389,18 +389,31 @@ Roughly ordered by what's blocking what.
   under `--boot=disk` (disk-BASIC starts loading the program), but
   the actual auto-run / IPL handoff is still incomplete — the
   remaining gap is documented below.
-- [ ] **Disk auto-boot / IPL handoff**. With `--boot=disk` set,
-  N88-DISK-BASIC reads the boot sector and follow-up sectors but
-  the run still ends at "How many files?". The boot sector itself
-  has valid Z80 code (`DI; OUT (0x51), 0; LD SP, 0xC000; CALL
-  ppi_send_byte; …`) intended to run on the main CPU after the
-  BIOS copies it from sub RAM into main RAM and jumps to it. We're
-  not seeing that copy + jump happen yet — likely the trigger is
-  either a specific cmd path in the disk-BASIC E-ROM (which our
-  EROM bank-readback at port 0x71 may still be confusing) or a
-  signature check on the boot sector that decides whether to
-  auto-execute it. Next step: trace the disk-BASIC E-ROM's flow
-  after sector-1 is loaded into sub RAM 0x5000.
+- [ ] **Disk auto-boot — needs keyboard input simulation OR mkII+
+  ROM**. Investigation finding: the PC-8801 mkI BIOS does **not**
+  have an automatic boot-sector IPL path. The boot sector code in
+  `rogue.d88` (`DI; LD SP, 0xC000; CALL ppi_send_byte 0x0D; …`) is
+  a `BOOT.BIN`-style payload — N88-DISK-BASIC reads it via
+  `BLOAD"BOOT.BIN",R` only after the user types that command. The
+  `cmd 0x0D` (sub-CPU JP-to-address) the boot code uses also
+  requires sub-RAM 0x5000+ and 0x6E00+ to be populated by prior
+  `cmd 0x02` reads — state that only exists *after* DISK-BASIC has
+  done its load. A synthetic IPL that yanks main PC to the boot
+  sector won't work for that reason; tried it (and reverted)
+  because the sub-RAM pre-state can't be trivially reproduced. The
+  two real paths forward:
+    1. **mkII SR onwards** — those BIOSes do have a sector-IPL
+       entry (DIP MMODE=1 → read sector + JP to RAM at reset).
+       Requires the mkII-n80/n88 ROMs we don't have locally yet.
+    2. **Keyboard input simulation on mkI** — wait for the "How
+       many files?" + "Ok" prompts, drive the matrix to type
+       `BLOAD"BOOT.BIN",R\n` (or whatever the disk's autoexec
+       command is). The keyboard module already supports
+       row/column poking; needs a CLI `--type=STRING` flag that
+       feeds a string at appropriate prompt-detection points.
+  Either way, the MMODE wiring landed in the previous commit is a
+  prerequisite — the boot sector itself uses `OUT (0x31), 0x1F`
+  to unmap ROM at the moment of handoff.
 - [ ] **DMAC channel scheduling**. The `μPD8257` stub accepts the
   init handshake (channel address/count + mode-set) but doesn't
   actually perform character-pull transfers; once the renderer is
