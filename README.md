@@ -566,6 +566,23 @@ Roughly ordered by what's blocking what.
   entry, 0x3a66/0x3a7b/0x3dbe/0x3dc7 in/out points; new
   sr-e0 handler_64e5/handler_650f/handler_64e5_alt labels for
   the dispatch-table targets.
+  E-ROM port handling re-validated against MAME pc8801.cpp
+  `mem_r`. The exact mapping condition is
+  `(offset >= 0x6000 && offset <= 0x7fff && (m_ext_rom_bank & 1) == 0)`
+  with slot from `m_misc_ctrl & 3`. Two divergences fixed:
+  (a) `applyEROMEnable` now keys on port 0x71 bit 0 alone (was
+  "any of bits 0-3 clear"); and (b) `handle71` no longer picks
+  the slot from "lowest clear bit" (slot index is purely from
+  port 0x32 bits 0-1, which `handle32` already sets via
+  `setEROMSlot`). MAME notes bits 1-3 of port 0x71 as TODO
+  ("selection for EXP slot ROMs?") so we log when they're
+  cleared but don't act on them. Doesn't fix the SR boot stall
+  on its own (the bypass-handler's missing bank-out is a
+  separate issue), but locks in MAME-correct behavior for
+  inputs not exercised by SR boot — sysctrl tests gained 4
+  cases covering port 0x71 = 0xFD/0xFC/0xF8/0xF0 etc. and
+  slot selection across multiple port-32 writes with port-71
+  fixed.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

@@ -358,15 +358,17 @@ export class SystemController {
   }
 
   private handle71(v: u8): void {
-    // One-hot, active-low slot selection: the lowest clear bit in
-    // bits 0..3 picks the active EROM slot. Bits 4..7 are described
-    // in some references as additional ROM banks beyond the four
-    // extension slots, but the hardware they correspond to is
-    // documented inconsistently — neither the PC-8801 nor mkII
-    // wire all eight, and which models do is unclear. Log a warning
-    // when the BIOS clears any of them so we notice if a real boot
-    // depends on them.
-    const slotBits = v & PORT71.SLOT_MASK;
+    // Per MAME pc8801.cpp `mem_r`: only port 0x71 bit 0 gates the
+    // E-ROM at 0x6000-0x7FFF (mapped when `m_ext_rom_bank & 1 == 0`).
+    // The active-slot index comes from port 0x32 bits 0-1
+    // (`m_misc_ctrl & 3`), set in handle32 — port 0x71 does NOT
+    // pick the slot. Bits 1-3 are written at POST but their use is
+    // documented as TODO in MAME ("selection for EXP slot ROMs?")
+    // and we don't model EXP slots; log when they're touched in
+    // an unexpected pattern but don't act on them.
+    // Bits 4-7 are described in some references as additional ROM
+    // banks beyond the four extension slots; their wiring is
+    // model-specific. Log a warning when they're cleared.
     const upperBits = v & PORT71.EXT_BANK_MASK;
     if (upperBits !== PORT71.EXT_BANK_MASK) {
       log.warn(
@@ -374,38 +376,30 @@ export class SystemController {
       );
     }
 
-    if (slotBits !== PORT71.SLOT_MASK) {
-      // At least one slot bit clear → that slot is "selected" for
-      // enablement. If multiple are clear (unusual), the lowest
-      // wins. Real silicon's behaviour with multiple bits clear is
-      // model-specific; this matches the convention older emulators use.
-      let slot: 0 | 1 | 2 | 3 = 0;
-      if ((v & 0x01) === 0) slot = 0;
-      else if ((v & 0x02) === 0) slot = 1;
-      else if ((v & 0x04) === 0) slot = 2;
-      else if ((v & 0x08) === 0) slot = 3;
-      this.memoryMap.setEROMSlot(slot);
-    }
-
     this.eromSelection = v;
     this.applyEROMEnable();
 
     log.info(
-      `0x71 write: eromsl=${this.memoryMap.eromSlot}/${this.memoryMap.eromEnabled} raw=${byte(v)}`,
+      `0x71 write: bit0=${v & 1 ? "off" : "on"} (E-ROM ${this.memoryMap.eromEnabled ? "enabled" : "disabled"}) slot=${this.memoryMap.eromSlot} raw=${byte(v)}`,
     );
   }
 
-  // EROM is mapped in when ALL of the following hold:
-  //   - mmode = 0 (port 0x31 bit 1 → ROM at 0x0000-0x7FFF, not RAM)
-  //   - rmode = 0 (port 0x31 bit 2 → N88-BASIC selected)
-  //   - at least one of port 0x71 bits 0..3 is clear (slot enabled)
-  // Per maroon.dk's PC-88 port reference + the mkII hardware manual.
-  // Earlier the enable was driven solely by `eromsl == 0` on port
-  // 0x32, which let EROM map even when the BIOS had banked-out the
-  // ROM range or switched to N80; both broke real boot paths.
+  // E-ROM mapping at 0x6000-0x7FFF (per MAME pc8801.cpp `mem_r`):
+  //   if (offset >= 0x6000 && offset <= 0x7fff && (m_ext_rom_bank & 1) == 0)
+  //     return n88basic_rom_r(0x8000 + (offset & 0x1fff)
+  //                           + (0x2000 * (m_misc_ctrl & 3)));
+  // Required for E-ROM to read:
+  //   - port 0x71 bit 0 = 0 (only bit 0; bits 1-3 are EXP TODO,
+  //     bits 4-7 model-specific)
+  //   - mmode = 0 (port 0x31 bit 1 cleared — RAM at 0x0000-0x7FFF
+  //     would short-circuit the read before E-ROM is checked)
+  //   - rmode = 0 (port 0x31 bit 2 cleared — N-BASIC mode would
+  //     short-circuit the read before E-ROM is checked)
+  // The slot index (0..3) comes from port 0x32 bits 0-1 and is
+  // applied via handle32 → setEROMSlot, NOT from port 0x71's
+  // bits 1-3 as some older emulators (and our prior version) did.
   private applyEROMEnable(): void {
-    const slotEnabled =
-      (this.eromSelection & PORT71.SLOT_MASK) !== PORT71.SLOT_MASK;
+    const slotEnabled = (this.eromSelection & 0x01) === 0;
     const gateOpen = this.mmode === 0 && this.rmode === 0;
     this.memoryMap.setEROMEnabled(slotEnabled && gateOpen);
   }

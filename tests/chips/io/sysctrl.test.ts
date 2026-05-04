@@ -120,6 +120,99 @@ describe("SystemController EROM banking", () => {
     bus.write(0x31, 0x00); // MMODE = 0: BASIC ROM + EROM both back.
     expect(memoryMap.read(0x6000)).toBe(0xe0);
   });
+
+  // The following four cases lock in the MAME-validated semantics
+  // (per pc8801.cpp `mem_r`):
+  //
+  //   if (offset >= 0x6000 && offset <= 0x7fff
+  //       && ((m_ext_rom_bank & 1) == 0))
+  //     return n88basic_rom_r(0x8000 + (offset & 0x1fff)
+  //                           + (0x2000 * (m_misc_ctrl & 3)));
+  //
+  // i.e. port 0x71 bit 0 alone gates enable; bits 1-3 are
+  // documented as TODO ("selection for EXP slot ROMs?") in MAME
+  // and DO NOT pick the slot. The active slot index comes from
+  // port 0x32 bits 0-1.
+
+  it("port 0x71 bit 0 alone gates E-ROM enable (MAME-validated)", () => {
+    const { bus, memoryMap } = setup();
+    bus.write(0x32, 0x00); // slot 0
+    // bit 0 = 0 → enabled
+    bus.write(0x71, 0xfe);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    // bit 0 = 1, bit 1 = 0 → DISABLED per MAME (older emulators
+    // treat as "slot 1 enabled" but real silicon does not).
+    bus.write(0x71, 0xfd);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    // bit 0 = 1, bits 1-3 = 0 → DISABLED.
+    bus.write(0x71, 0xf1);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    // bit 0 = 0 only → enabled.
+    bus.write(0x71, 0xfe);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    // bit 0 = 0 with all other low bits also 0 → enabled (bits 1-3
+    // shouldn't toggle the gate either way).
+    bus.write(0x71, 0xf0);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+  });
+
+  it("slot index comes from port 0x32 bits 0-1, not port 0x71", () => {
+    const { bus, memoryMap } = setup();
+    // Enable E-ROM (bit 0 of 0x71 = 0).
+    bus.write(0x71, 0xfe);
+    // Slot 0 — sr-e0 byte 0xE0 is the only loaded slot in the
+    // fixture; slots 1-3 fall through to BASIC ROM continuation.
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    // Selecting slot 1-3 via port 0x32 → BASIC continuation byte.
+    // Crucially, port 0x71 hasn't changed; the slot is purely from
+    // port 0x32, NOT from "which port-71 bit is clear".
+    bus.write(0x32, 0x01);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x32, 0x02);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    bus.write(0x32, 0x03);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+    // Slot 0 again.
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+  });
+
+  it("port 0x71 bits 1-3 set or clear don't affect slot selection", () => {
+    const { bus, memoryMap } = setup();
+    bus.write(0x32, 0x00); // slot 0 selected
+    // Try several port-71 values that all have bit 0 = 0 but
+    // various bits 1-3 patterns. All should map slot 0 (= 0xE0).
+    bus.write(0x71, 0xfe); // 1111 1110
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    bus.write(0x71, 0xfc); // 1111 1100
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    bus.write(0x71, 0xf8); // 1111 1000
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+    bus.write(0x71, 0xf0); // 1111 0000
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+  });
+
+  it("MMODE / RMODE gates take precedence over the port-71 bit-0 enable", () => {
+    const { bus, memoryMap } = setup();
+    bus.write(0x71, 0xfe);
+    bus.write(0x32, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0); // baseline: slot 0 mapped
+
+    // RMODE = 1 (N-BASIC) → 0x6000 reads N80 ROM byte 0x80, not
+    // E-ROM, even with port-71 bit 0 = 0.
+    bus.write(0x31, 0x04);
+    expect(memoryMap.read(0x6000)).toBe(0x80);
+
+    // RMODE back to 0; MMODE = 1 (RAM) → 0x6000 reads main RAM
+    // (zero-init), not E-ROM.
+    bus.write(0x31, 0x02);
+    expect(memoryMap.read(0x6000)).toBe(0x00);
+
+    // Both clear → E-ROM mapped.
+    bus.write(0x31, 0x00);
+    expect(memoryMap.read(0x6000)).toBe(0xe0);
+  });
 });
 
 describe("SystemController PMODE callback (port 0x32 bit 5)", () => {
