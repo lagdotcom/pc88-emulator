@@ -431,12 +431,21 @@ Roughly ordered by what's blocking what.
   silicon and unblocks the SR boot from the IRQ-induced reset.
   `pc88-runner` test that wrote VBL-enabled implicitly now
   writes `OUT (0xe6), 0x04` explicitly.
-- [ ] **mkII SR boots to BASIC banner**. `--machine=sr` (no disk)
-  boots N-BASIC cleanly to the "NEC PC-8001 BASIC Ver 1.5"
-  banner. With the IRQ-mask default fix above, SR N88 mode is no
-  longer trapped in a reset loop and now reaches the soft-key
-  label area (`load "  auto  go to  list  run`). It still
-  doesn't print the banner / "How many files?" prompt though.
+- [x] **mkII SR boots to BASIC banner**. SR-N88 reaches
+  "How many files(0-15)?" cleanly; SR-N80 reaches
+  "NEC PC-8001 BASIC Ver 1.5". The MAME-aligned port-71 fix in
+  commit e26d66b unblocked the boot stall: the BIOS POSTs
+  port 0x71 with values 0xFD / 0xFB / 0xF7 / 0xEF / 0xDF / 0xBF /
+  0x7F as a slot-test sequence. Our prior "any of bits 0-3 clear
+  → enable" logic incorrectly enabled E-ROM with the wrong slot
+  on those writes; MAME's "bit 0 only" semantics correctly
+  disable E-ROM, leaving the BIOS in a clean state when the
+  unwind RET lands at sr-n88 0x7842 (`CALL sr_disk_detect`).
+  The earlier-suspected sr-e0 0x64E5 "bypass handler" turned
+  out NOT to be the leaker: dispatches via the alt trampoline
+  pair correctly under the corrected port-71 semantics.
+  Smoke locked in at tests/machines/pc88-real-rom.test.ts under
+  `PC88_REAL_ROMS=1`.
   Investigation findings:
     - **CRTC programming is correct**. V1 and V2 modes issue the
       same SET MODE param block (0xCE 0x93 0x69 0xBE 0x13 = 80×20).
@@ -469,128 +478,32 @@ Roughly ordered by what's blocking what.
   family, 0x36e2 disk_detect_entry, 0x433f vsync_wait, 0x6fd1
   crtc_dmac_init, 0x72cd sys_init_dispatch; mkI-disk 0x06d9
   ppi_recv_byte + per-step labels.
-- [ ] **SR boot speed — LDIR-bound at sr-e0 init_video_clear**.
-  Follow-up: profiling 200M-op SR boot runs shows ~95% of cycles
-  spent in `LDIR` at sr-e0 `plane_clear_ldir` (0x6740). The
-  dispatch-table entry idx 0x08 (sr-n88 0x6eb6 → sr-e0 0x6700)
-  fills all three GVRAM planes via three 16376-byte
-  memory-fill LDIRs (0xC000-0xFFF7 with 0). At 21 t-states per
-  iteration that's ~1M cycles per call. The dispatch entry is
-  called once per boot prologue, but the BIOS does multiple
-  passes through sys_init_dispatch (0x72cd) → boot prologue, so
-  in 200M ops we accumulate ~580 LDIRs. PC samples consistently
-  inside this LDIR at high op counts.
-  Symbols captured this round: sr-n88 dispatch table 0x6eb6
-  erom_dispatch_08, 0x6ef6 erom_dispatch_18; new sr-e0.sym with
-  init_video_clear / clear_gvram_plane / plane_clear_ldir labels;
-  sr-n88 0x38e9 boot_io_init_or_spin path (NOT on default boot
-  path — keyboard row 0 = 0xff bypasses it; only deadlocks if
-  RAM[0xef4e] gets set to a port that returns 0 in bit 0).
-  Outer loop CONFIRMED — ~3188 writes to port 0x71 in an 80M-op
-  boot trace, of which 798 fire at sr-n88 0x4571 (standard
-  `erom_dispatch_helper` bank-out) and 796 at sr-n88 0x3a66 (a
-  second E-ROM bank-switch trampoline). With ~2 writes per
-  dispatch call that's ~1594 distinct dispatch invocations
-  over 80M ops.
-  ROOT CAUSE FOUND — the boot loops because **the CPU's PC walks
-  off the end of TVRAM and wraps to 0x0000 (reset)**. Captured
-  the PC trace at the wraparound moment:
-  ```
-  ...ffea NOP, ffeb NOP, ..., ffff NOP, 0000 DI (reset_vector!)
-  ```
-  The CPU is executing the zero-fill bytes that
-  `init_video_clear` (sr-e0 0x6700) wrote across 0xC000-0xFFF7,
-  including the TVRAM half. Those NOPs slide PC to 0xFFFF, then
-  PC wraps to 0x0000 = `reset_vector`. Each "wrap-reset" re-runs
-  boot_full_init from scratch, which is why we see ~400 calls to
-  `sys_init_dispatch` (writing port 0x30 = 0x22 at PC 0x72d6).
-  The PROXIMATE cause is a CALL chain that lands at PC=0x7842
-  while sr-e0 is still mapped at 0x6000-0x7FFF — so a `RET` that
-  was pushed expecting to return into sr-n88 0x7842
-  (`boot_disk_detect: CALL sr_disk_detect`) instead reads sr-e0
-  0x7842 (`LD B,0x0B; POP HL; RET`). The mis-mapped POP+RET
-  unwinds to data bytes in sr-n88 0x00d6+, slides through them
-  to 0x00e9 = `CD 98 D6` (CALL 0xd698 → main RAM, currently
-  zero-filled by init_video_clear), CALL into NOPs, slides to
-  0xffff, wraps to 0x0000.
-  Verified at break 0x7842: chip state shows `erom slot=0
-  enabled=true` — confirming E-ROM was NOT correctly disabled
-  before the RET.
-  LEAKER ISOLATED: logging every `OUT (0x71)` write before
-  the bad PC=0x7842 lands shows the pattern:
-  ```
-  PC=4571 OUT 71=fe  (simple helper bank-IN)
-  PC=4589 OUT 71=ff  (simple helper bank-OUT) ✓ paired
-  PC=3a66 OUT 71=fe  (alt helper bank-IN)
-  PC=3dc7 OUT 71=ff  (alt helper bank-OUT) ✓ paired
-  PC=3a66 OUT 71=fe  (alt helper bank-IN)  ← leaker; no 0x3dc7 follows
-  ```
-  The third dispatch via sr-n88 0x3a66 (alt trampoline at 0x3ab4)
-  bank-ins slot 0 but never reaches the matching 0x3DBE
-  bank-out. The handler invoked from this dispatch lands at
-  sr-e0 0x7340-0x7357 — three CP / JR-checks ending in `POP HL;
-  SCF; RET` at 0x7355, which RETs to PC=0x7842 (the value just
-  popped from the stack). With E-ROM still mapped, 0x7842 reads
-  sr-e0's `LD B,0x0B; POP HL; RET` instead of sr-n88's
-  `boot_disk_detect: CALL sr_disk_detect`, and the cascade
-  begins.
-  ROOT CAUSE PINPOINTED: the SR BIOS at 0x391f is a CALL 0x3AB4
-  alt-trampoline whose inline data (= 0x64E5) names a handler
-  in sr-e0 that DELIBERATELY bypasses the 0x3DBE bank-out via a
-  three-POP-then-RET pattern:
-  ```
-  sr-e0 0x64E5: OR A
-                JP m, 0x64f1
-                JR z, 0x64f1
-                POP DE      ; eats the 0x3DBE bank-out marker
-                POP HL      ; eats the saved-ports word
-                POP BC      ; eats the post-table HL (0x3924)
-                LD B, 0x00
-                RET         ; returns past 0x391f's frame entirely
-  ```
-  After this, control resumes at sr-n88 0x3AF0 (= the byte
-  after `CALL 0x391F`) with E-ROM still mapped at 0x6000-0x7FFF
-  (port 0x71 = 0xFE, slot 0). The eventual unwind back to
-  PC=0x7842 (= sr_disk_detect entry, in the E-ROM range) then
-  reads sr-e0's `LD B,0x0B; POP HL; RET` instead of sr-n88's
-  `boot_disk_detect: CALL sr_disk_detect`, kicking off the
-  cascade into TVRAM NOPs and reset wraparound.
-  mkI doesn't have this trampoline at all — its 0x391f is the
-  simple `LD A,(0xef4e); LD C,A; IN A,(C); AND 0x01; RET nz`
-  keyboard probe. The whole bypass mechanism is SR-specific.
-  Open question: where does the SR BIOS expect E-ROM to be
-  disabled after this bypass? Three candidates:
-   1. In the BASIC-ROM continuation at sr-n88 0x3AF0+ (it does
-      `LD A,0; LD (0xef0f),A; RET` then unwinds — no port-71
-      writes seen there yet).
-   2. Via a RAM hook (`CALL 0xedf3` inside the 0x4551 helper —
-      currently `C9 00 00 = RET` by default in our emulation).
-   3. Via the `CALL 0x3AA6` (erom_disable; OUT 0x71,A; POP BC;
-      RET) idiom invoked later in 0x38e9's body — port-write
-      accounting shows 399 hits at 0x3aa8 in 80M ops, so it
-      DOES fire, just not before the unwind to 0x7842 in our
-      run.
-  Symbols added: 0x3ab4 erom_alt_trampoline_in, 0x3a35 alt
-  entry, 0x3a66/0x3a7b/0x3dbe/0x3dc7 in/out points; new
-  sr-e0 handler_64e5/handler_650f/handler_64e5_alt labels for
-  the dispatch-table targets.
-  E-ROM port handling re-validated against MAME pc8801.cpp
-  `mem_r`. The exact mapping condition is
-  `(offset >= 0x6000 && offset <= 0x7fff && (m_ext_rom_bank & 1) == 0)`
-  with slot from `m_misc_ctrl & 3`. Two divergences fixed:
-  (a) `applyEROMEnable` now keys on port 0x71 bit 0 alone (was
-  "any of bits 0-3 clear"); and (b) `handle71` no longer picks
-  the slot from "lowest clear bit" (slot index is purely from
-  port 0x32 bits 0-1, which `handle32` already sets via
-  `setEROMSlot`). MAME notes bits 1-3 of port 0x71 as TODO
-  ("selection for EXP slot ROMs?") so we log when they're
-  cleared but don't act on them. Doesn't fix the SR boot stall
-  on its own (the bypass-handler's missing bank-out is a
-  separate issue), but locks in MAME-correct behavior for
-  inputs not exercised by SR boot — sysctrl tests gained 4
-  cases covering port 0x71 = 0xFD/0xFC/0xF8/0xF0 etc. and
-  slot selection across multiple port-32 writes with port-71
-  fixed.
+- [x] **SR boot — port-71 POST sequence**. The SR BIOS POSTs
+  port 0x71 with values 0xFD / 0xFB / 0xF7 / 0xEF / 0xDF / 0xBF /
+  0x7F as part of a slot-test sequence. Our prior "any of bits
+  0-3 clear → enable" logic incorrectly enabled E-ROM with the
+  wrong slot on those writes, leaving E-ROM mapped at 0x6000-
+  0x7FFF when the BIOS later RET'd to sr_disk_detect (sr-n88
+  0x7842). With sr-e0 still mapped, that byte was read as `LD
+  B,0x0B; POP HL; RET`, which unwound the stack into TVRAM NOPs
+  and wrapped PC = 0xFFFF → 0x0000 = reset, kicking off the
+  ~400-iteration retry loop that the diagnosis chased for
+  several sessions through misleading hypotheses (the bypass
+  handler at sr-e0 0x64E5, the 0x3a66 trampoline, the 0x6700
+  GVRAM-clear LDIR). The actual fix was MAME-alignment of port
+  0x71's bit 0 (commit e26d66b): only bit 0 gates enable; bits
+  1-3 are MAME-TODO ("EXP slot ROMs?") and don't pick a slot
+  (slot index is purely from port 0x32 bits 0-1). Locked in by
+  the SR-N88 banner smoke at tests/machines/pc88-real-rom.test.ts.
+  Symbols captured during the chase: sr-n88 0x37C9 ppi_send_byte,
+  0x36e2 disk_detect_entry, 0x433f vsync_wait, 0x6fd1
+  crtc_dmac_init, 0x72cd sys_init_dispatch, 0x3ab4
+  erom_alt_trampoline_in family, 0x3a66/0x3a7b/0x3dbe/0x3dc7
+  in/out points; sr-e0 init_video_clear / clear_gvram_plane /
+  plane_clear_ldir / handler_64e5/650f labels; mkI-disk 0x06d9
+  ppi_recv_byte. The lesson: validate port handlers against MAME
+  early — the divergence cases the boot exercises may be entirely
+  outside the values the trace shows during normal operation.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

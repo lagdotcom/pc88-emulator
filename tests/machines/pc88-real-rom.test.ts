@@ -17,6 +17,7 @@ import { PC88Machine, runMachine } from "../../src/machines/pc88.js";
 import type { LoadedROMs } from "../../src/machines/pc88-memory.js";
 import { loadRoms } from "../../src/machines/rom-loader.js";
 import { MKI } from "../../src/machines/variants/mk1.js";
+import { MKII_SR } from "../../src/machines/variants/mk2sr.js";
 import { PC88_SHIFT_ROW_COL, pc88KeyFor } from "../tools.js";
 
 // Run the machine until row `row` has been read `count` times. The
@@ -219,5 +220,39 @@ describe.runIf(REAL)("PC-8801 mkI N-BASIC boot (real ROMs)", () => {
     expect(dump).toContain("NEC N-88 BASIC");
     expect(dump).toContain("Copyright (C) 1981 by Microsoft");
     expect(dump).toContain("Ok");
+  });
+});
+
+describe.runIf(REAL)("PC-8801 mkII SR N88-BASIC boot (real ROMs)", () => {
+  it("reaches the disk-files prompt", { timeout: 30_000 }, async () => {
+    // Locks in the SR-N88 boot path past the bypass-handler chain
+    // that previously left E-ROM enabled at the unwind to 0x7842.
+    // The fix landed in commit e26d66b: aligning port 0x71 with
+    // MAME (only bit 0 gates enable; bits 1-3 are MAME-TODO and
+    // do NOT pick a slot) made the BIOS's POST writes —
+    // 0xfd, 0xfb, 0xf7, 0xef, 0xdf, 0xbf, 0x7f — correctly
+    // disable E-ROM instead of enabling it with the wrong slot.
+    // Once the POST sequence ends with port 0x71 = 0xff, E-ROM
+    // is properly off and the unwind back to sr_disk_detect
+    // reads the correct sr-n88 byte at 0x7842.
+    const loaded = await loadRoms(MKII_SR, { dir: ROM_DIR });
+    if (!loaded.n88 || !loaded.e0) {
+      throw new Error(
+        `SR requires n88 + e0..e3 ROMs in ${ROM_DIR}/ (got ${Object.keys(loaded).join(", ")})`,
+      );
+    }
+    const config = {
+      ...MKII_SR,
+      dipSwitches: {
+        ...MKII_SR.dipSwitches,
+        // N88 mode = port31 bit 2 cleared (RMODE).
+        port31: MKII_SR.dipSwitches.port31 & ~0x04,
+      },
+    };
+    const machine = new PC88Machine(config, loaded as LoadedROMs);
+    machine.reset();
+    runMachine(machine, { maxOps: kOps(30000) });
+
+    expect(machine.display.toASCIIDump()).toContain("How many files(0-15)?");
   });
 });
