@@ -7,8 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git commit *)",
-            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Reminder: CLAUDE.md treats the README TODO list as part of the deliverable. If this commit adds, changes, or removes a feature, verify the TODO list in README.md reflects the change in the same commit. The commit has not run yet — update README.md now and re-stage before invoking the commit, rather than amending afterwards.\"}}'"
+            "command": "cmd=$(jq -r '.tool_input.command // empty'); case \"$cmd\" in \"git commit\"*) printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Reminder: CLAUDE.md treats the README TODO list as part of the deliverable. If this commit adds, changes, or removes a feature, verify the TODO list in README.md reflects the change in the same commit. The commit has not run yet — update README.md now and re-stage before invoking the commit, rather than amending afterwards.\"}}' ;; esac"
           }
         ]
       }
