@@ -247,6 +247,14 @@ parsed into separate `D88Disk` instances. Real disk dumps go in
 `disks/` (gitignored, parallel to `roms/`); the test fixture is
 `disks/rogue.d88`.
 
+`docs/mame-port-validation.md` carries a port-by-port comparison
+of our I/O handlers against MAME's `src/mame/nec/pc8801.cpp` —
+keep that table in sync when adding or changing a chip surface.
+The doc records which divergences are intentional (e.g. 0xE6 IRQ
+mask bit-swap is internal to MAME's storage, not BIOS-visible)
+and which are TODOs awaiting a real driver path (0x34/0x35 ALU,
+0xE2/0xE3 extended RAM, 0x70 text-window mapping).
+
 ## TODO
 
 Roughly ordered by what's blocking what.
