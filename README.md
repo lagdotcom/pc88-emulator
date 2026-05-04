@@ -526,20 +526,46 @@ Roughly ordered by what's blocking what.
   sr-e0's `LD B,0x0B; POP HL; RET` instead of sr-n88's
   `boot_disk_detect: CALL sr_disk_detect`, and the cascade
   begins.
-  Open question: is the BIOS deliberately bypassing the
-  bank-out (relying on the caller to restore E-ROM later), or
-  is the trampoline's stack-rewrite math off by one for this
-  specific dispatch? The handler exit `POP HL; SCF; RET` is
-  consistent with the BIOS expecting POP-HL to consume the
-  trampoline-pushed `0x3DBE` bank-out marker — but the bytes
-  popped are `0xFFFF` (the saved-ports word) and the RET pops
-  `0x7842` (which would be the actual return address). That
-  mismatch suggests the trampoline's IY-offset writes at
-  sr-n88 0x3a4d-0x3a53 might be one slot off in our emulation
-  vs. real silicon, OR the AF-as-target dispatch ABI requires
-  an additional condition we haven't decoded yet. Symbols
-  added: 0x3ab4 erom_alt_trampoline_in, 0x3a35 alt entry,
-  0x3a66/0x3a7b/0x3dbe/0x3dc7 in/out points.
+  ROOT CAUSE PINPOINTED: the SR BIOS at 0x391f is a CALL 0x3AB4
+  alt-trampoline whose inline data (= 0x64E5) names a handler
+  in sr-e0 that DELIBERATELY bypasses the 0x3DBE bank-out via a
+  three-POP-then-RET pattern:
+  ```
+  sr-e0 0x64E5: OR A
+                JP m, 0x64f1
+                JR z, 0x64f1
+                POP DE      ; eats the 0x3DBE bank-out marker
+                POP HL      ; eats the saved-ports word
+                POP BC      ; eats the post-table HL (0x3924)
+                LD B, 0x00
+                RET         ; returns past 0x391f's frame entirely
+  ```
+  After this, control resumes at sr-n88 0x3AF0 (= the byte
+  after `CALL 0x391F`) with E-ROM still mapped at 0x6000-0x7FFF
+  (port 0x71 = 0xFE, slot 0). The eventual unwind back to
+  PC=0x7842 (= sr_disk_detect entry, in the E-ROM range) then
+  reads sr-e0's `LD B,0x0B; POP HL; RET` instead of sr-n88's
+  `boot_disk_detect: CALL sr_disk_detect`, kicking off the
+  cascade into TVRAM NOPs and reset wraparound.
+  mkI doesn't have this trampoline at all — its 0x391f is the
+  simple `LD A,(0xef4e); LD C,A; IN A,(C); AND 0x01; RET nz`
+  keyboard probe. The whole bypass mechanism is SR-specific.
+  Open question: where does the SR BIOS expect E-ROM to be
+  disabled after this bypass? Three candidates:
+   1. In the BASIC-ROM continuation at sr-n88 0x3AF0+ (it does
+      `LD A,0; LD (0xef0f),A; RET` then unwinds — no port-71
+      writes seen there yet).
+   2. Via a RAM hook (`CALL 0xedf3` inside the 0x4551 helper —
+      currently `C9 00 00 = RET` by default in our emulation).
+   3. Via the `CALL 0x3AA6` (erom_disable; OUT 0x71,A; POP BC;
+      RET) idiom invoked later in 0x38e9's body — port-write
+      accounting shows 399 hits at 0x3aa8 in 80M ops, so it
+      DOES fire, just not before the unwind to 0x7842 in our
+      run.
+  Symbols added: 0x3ab4 erom_alt_trampoline_in, 0x3a35 alt
+  entry, 0x3a66/0x3a7b/0x3dbe/0x3dc7 in/out points; new
+  sr-e0 handler_64e5/handler_650f/handler_64e5_alt labels for
+  the dispatch-table targets.
 - [x] **V2 analogue palette — 2-byte protocol**. Port 0x32 bit 5
   (PMODE) selects digital (mkI/mkII; 1 byte/port at 0x54-0x5B,
   3-bit GRB code) vs analogue (SR+; 2 bytes/port: low = G+R, high

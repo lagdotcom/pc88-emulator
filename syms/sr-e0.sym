@@ -28,6 +28,29 @@
 0x6734 clear_gvram_plane    ; per-plane clear: select via C, LD HL,0xC000, LDIR fill
 0x6740 plane_clear_ldir     ; the 16K-iteration LDIR (PC=0x6744 dominates SR boot)
 
+# --- Inline-data trampoline handlers (called via sr-n88 0x3AB4) ---
+# 0x650F is the "normal" handler — runs CALL 0x20EB / CALL 0x1F53,
+# RETs cleanly; the trailing RET pops the 0x3DBE bank-out marker
+# the trampoline placed on the stack, so port 0x71 gets restored
+# via the standard 0x3DBE → OUT (0x71), saved-byte path.
+0x650f handler_650f         ; SBC A,H; RET p; CALL ...; RET (pops 0x3DBE marker)
+
+# 0x64E5 is the SR's "double-return-with-no-bank-out" handler.
+# Three POPs eat the trampoline-pushed stack rewrites — the
+# 0x3DBE bank-out marker (POP DE), the saved-ports word (POP HL),
+# and the post-table HL slot the trampoline wrote (POP BC) — then
+# RETs past the trampoline's caller's frame entirely. After this
+# the BIOS continues at sr-n88 0x3AF0 (the byte after CALL 0x391F)
+# with E-ROM still mapped (port 0x71 = 0xFE), and is expected to
+# disable E-ROM via some other path before any 0x6000-0x7FFF
+# read in BASIC ROM happens. Both mkI and SR have BIOS code that
+# expects sr-n88 at 0x6000-0x7FFF for sr_disk_detect at 0x7842;
+# if that disable doesn't happen in our emulation, the RET that
+# unwinds back to 0x7842 reads sr-e0 instead — which is the SR
+# boot-stall blocker.
+0x64e5 handler_64e5         ; SR-specific bypass: POP DE/HL/BC; RET past trampoline frame
+0x64f1 handler_64e5_alt     ; alt path on JP M / JR Z (POP BC; POP HL; LD C,(HL); ...)
+
 # --- Dispatch table at 0x600D ---
 # 31 16-bit entries (0x00..0x1E). Indexed by the post-CALL byte at
 # main-side dispatch sites in sr-n88 0x6e96-0x6f12.
